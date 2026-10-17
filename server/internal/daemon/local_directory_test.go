@@ -1396,3 +1396,30 @@ func TestRunTaskNoneModeLeavesLocalDirectoryUntouched(t *testing.T) {
 		t.Fatalf("sentinel changed: %q %v", content, err)
 	}
 }
+
+func TestLocalDirectoryGCExemptSkipsScratchModes(t *testing.T) {
+	const daemonID = "daemon"
+	raw, _ := json.Marshal(localDirectoryRef{LocalPath: t.TempDir(), DaemonID: daemonID, ExecutionMode: "in_place"})
+	for _, tc := range []struct {
+		name, config string
+		want         bool
+	}{
+		{"in place keeps the exemption", `{}`, true},
+		{"none runs in task scratch", `{"local_directory_mode":"none"}`, false},
+		{"worktree runs in a disposable worktree", `{"local_directory_mode":"worktree"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			task := Task{ProjectResources: []ProjectResourceData{{ResourceType: localDirectoryResourceType, ResourceRef: raw}}, Agent: &AgentData{RuntimeConfig: json.RawMessage(tc.config)}}
+			assignment, err := localDirectoryAssignmentForTask(task, daemonID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := localDirectoryGCExempt(assignment); got != tc.want {
+				t.Fatalf("localDirectoryGCExempt = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	if localDirectoryGCExempt(nil) {
+		t.Fatal("no assignment must not be exempt")
+	}
+}

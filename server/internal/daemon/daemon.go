@@ -5893,7 +5893,11 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 			// exempt env root, so the directory would accumulate one env
 			// root per task forever — the exact cost the exemption was
 			// meant to trade away for a user's own files.
-			if assignment, _ := localDirectoryAssignmentForTask(task, d.cfg.DaemonID); assignment != nil && !assignment.UsesWorktree() {
+			//
+			// none mode is excluded for the same reason: its workdir is
+			// task-owned scratch inside envRoot and nothing in the user's
+			// tree needs protecting.
+			if assignment, _ := localDirectoryAssignmentForTask(task, d.cfg.DaemonID); localDirectoryGCExempt(assignment) {
 				meta.LocalDirectory = true
 			}
 			if err := execenv.WriteGCMeta(result.EnvRoot, meta, taskLog); err != nil {

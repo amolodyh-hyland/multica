@@ -65,6 +65,13 @@ func (a *localDirectoryAssignment) SkipsCheckout() bool {
 	return a != nil && strings.TrimSpace(a.Ref.ExecutionMode) == localDirectoryModeNone
 }
 
+// localDirectoryGCExempt reports whether a finished task's env root must be
+// stamped LocalDirectory so GC leaves it alone. Worktree and none modes run in
+// a disposable directory inside the env root, so they stay fully collectable.
+func localDirectoryGCExempt(a *localDirectoryAssignment) bool {
+	return a != nil && !a.UsesWorktree() && !a.SkipsCheckout()
+}
+
 // DisplayName is the human-facing name for this directory, safe to render in
 // UI. It is deliberately NOT the absolute path: the wait reason built from it
 // is stored server-side and pushed to every client on the session, and a chip
