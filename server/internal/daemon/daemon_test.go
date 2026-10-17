@@ -2314,6 +2314,7 @@ func TestGateLocalDirectoryResumeBinding(t *testing.T) {
 	}{
 		{"same in-place directory", &localDirectoryAssignment{AbsPath: previous}},
 		{"worktree mode changes directories by design", &localDirectoryAssignment{Ref: localDirectoryRef{ExecutionMode: localDirectoryModeWorktree}, AbsPath: current}},
+		{"none mode runs in task-owned scratch by design", &localDirectoryAssignment{Ref: localDirectoryRef{ExecutionMode: localDirectoryModeNone}, AbsPath: current}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			keptTask := Task{PriorSessionID: "session-file", PriorWorkDir: previous}

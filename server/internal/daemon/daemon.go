@@ -6556,9 +6556,10 @@ func gateResumeToReachableSession(task *Task, taskCtx *execenv.TaskContextForEnv
 // gateLocalDirectoryResumeBinding prevents a provider with a cwd-independent
 // session store (notably Pi/OMP) from resuming a conversation in a different
 // persistent workspace after an agent's local_directory binding changes.
-// Worktree mode is excluded: changing per-task workdirs is its normal contract.
+// Worktree and none modes are excluded: changing per-task workdirs is their
+// normal contract (none runs in a task-owned scratch directory).
 func gateLocalDirectoryResumeBinding(task *Task, taskCtx *execenv.TaskContextForEnv, assignment *localDirectoryAssignment, taskLog *slog.Logger) bool {
-	if assignment == nil || assignment.UsesWorktree() || task.PriorSessionID == "" ||
+	if assignment == nil || assignment.UsesWorktree() || assignment.SkipsCheckout() || task.PriorSessionID == "" ||
 		sameExistingDir(assignment.AbsPath, task.PriorWorkDir) {
 		return true
 	}
