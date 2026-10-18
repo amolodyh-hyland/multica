@@ -33,7 +33,7 @@ func TestFindLocalDirectoryAssignment(t *testing.T) {
 	tmp := t.TempDir()
 
 	t.Run("no resources returns nil", func(t *testing.T) {
-		got, err := findLocalDirectoryAssignment(nil, thisDaemon)
+		got, err := findLocalDirectoryAssignment(nil, thisDaemon, "")
 		if err != nil || got != nil {
 			t.Fatalf("expected (nil, nil), got (%+v, %v)", got, err)
 		}
@@ -42,7 +42,7 @@ func TestFindLocalDirectoryAssignment(t *testing.T) {
 	t.Run("other daemon is skipped", func(t *testing.T) {
 		got, err := findLocalDirectoryAssignment([]ProjectResourceData{
 			{ID: "r1", ResourceType: localDirectoryResourceType, ResourceRef: mkRef(t, localDirectoryRef{LocalPath: tmp, DaemonID: otherDaemon})},
-		}, thisDaemon)
+		}, thisDaemon, "")
 		if err != nil || got != nil {
 			t.Fatalf("expected (nil, nil), got (%+v, %v)", got, err)
 		}
@@ -51,7 +51,7 @@ func TestFindLocalDirectoryAssignment(t *testing.T) {
 	t.Run("non-matching type is skipped", func(t *testing.T) {
 		got, err := findLocalDirectoryAssignment([]ProjectResourceData{
 			{ID: "r1", ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"https://x"}`)},
-		}, thisDaemon)
+		}, thisDaemon, "")
 		if err != nil || got != nil {
 			t.Fatalf("expected (nil, nil), got (%+v, %v)", got, err)
 		}
@@ -60,7 +60,7 @@ func TestFindLocalDirectoryAssignment(t *testing.T) {
 	t.Run("matching daemon returns assignment", func(t *testing.T) {
 		got, err := findLocalDirectoryAssignment([]ProjectResourceData{
 			{ID: "r1", ResourceType: localDirectoryResourceType, ResourceRef: mkRef(t, localDirectoryRef{LocalPath: tmp, DaemonID: thisDaemon})},
-		}, thisDaemon)
+		}, thisDaemon, "")
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -75,10 +75,82 @@ func TestFindLocalDirectoryAssignment(t *testing.T) {
 		}
 	})
 
+	t.Run("exact agent binding wins over daemon default regardless of order", func(t *testing.T) {
+		exactPath := t.TempDir()
+		for _, resources := range [][]ProjectResourceData{
+			{
+				{ID: "default", ResourceType: localDirectoryResourceType, ResourceRef: mkRef(t, localDirectoryRef{LocalPath: tmp, DaemonID: thisDaemon})},
+				{ID: "exact", ResourceType: localDirectoryResourceType, ResourceRef: mkRef(t, localDirectoryRef{LocalPath: exactPath, DaemonID: thisDaemon, AgentID: "agent-a"})},
+			},
+			{
+				{ID: "exact", ResourceType: localDirectoryResourceType, ResourceRef: mkRef(t, localDirectoryRef{LocalPath: exactPath, DaemonID: thisDaemon, AgentID: "agent-a"})},
+				{ID: "default", ResourceType: localDirectoryResourceType, ResourceRef: mkRef(t, localDirectoryRef{LocalPath: tmp, DaemonID: thisDaemon})},
+			},
+		} {
+			got, err := findLocalDirectoryAssignment(resources, thisDaemon, "agent-a")
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			if got == nil || got.AbsPath != filepath.Clean(exactPath) || got.Ref.AgentID != "agent-a" {
+				t.Fatalf("assignment = %+v, want exact agent binding", got)
+			}
+		}
+	})
+
+	t.Run("other agents fall back to daemon default", func(t *testing.T) {
+		got, err := findLocalDirectoryAssignment([]ProjectResourceData{
+			{ID: "other", ResourceType: localDirectoryResourceType, ResourceRef: mkRef(t, localDirectoryRef{LocalPath: t.TempDir(), DaemonID: thisDaemon, AgentID: "agent-b"})},
+			{ID: "default", ResourceType: localDirectoryResourceType, ResourceRef: mkRef(t, localDirectoryRef{LocalPath: tmp, DaemonID: thisDaemon})},
+		}, thisDaemon, "agent-a")
+		if err != nil || got == nil || got.AbsPath != filepath.Clean(tmp) {
+			t.Fatalf("assignment = %+v, err = %v; want daemon default", got, err)
+		}
+	})
+
+	t.Run("agent-specific bindings coexist without a default", func(t *testing.T) {
+		aPath := t.TempDir()
+		bPath := t.TempDir()
+		resources := []ProjectResourceData{
+			{ID: "a", ResourceType: localDirectoryResourceType, ResourceRef: mkRef(t, localDirectoryRef{LocalPath: aPath, DaemonID: thisDaemon, AgentID: "agent-a"})},
+			{ID: "b", ResourceType: localDirectoryResourceType, ResourceRef: mkRef(t, localDirectoryRef{LocalPath: bPath, DaemonID: thisDaemon, AgentID: "agent-b"})},
+		}
+		got, err := findLocalDirectoryAssignment(resources, thisDaemon, "agent-b")
+		if err != nil || got == nil || got.AbsPath != filepath.Clean(bPath) {
+			t.Fatalf("agent-b assignment = %+v, err = %v", got, err)
+		}
+		got, err = findLocalDirectoryAssignment(resources, thisDaemon, "agent-c")
+		if err != nil || got != nil {
+			t.Fatalf("unbound agent assignment = %+v, err = %v; want nil", got, err)
+		}
+	})
+
+	t.Run("agent bindings to symlink aliases retain one realpath lock key", func(t *testing.T) {
+		realDir := t.TempDir()
+		alias := filepath.Join(t.TempDir(), "workspace-link")
+		if err := os.Symlink(realDir, alias); err != nil {
+			t.Fatalf("symlink: %v", err)
+		}
+		resources := []ProjectResourceData{
+			{ID: "a", ResourceType: localDirectoryResourceType, ResourceRef: mkRef(t, localDirectoryRef{LocalPath: realDir, DaemonID: thisDaemon, AgentID: "agent-a"})},
+			{ID: "b", ResourceType: localDirectoryResourceType, ResourceRef: mkRef(t, localDirectoryRef{LocalPath: alias, DaemonID: thisDaemon, AgentID: "agent-b"})},
+		}
+		a, err := findLocalDirectoryAssignment(resources, thisDaemon, "agent-a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := findLocalDirectoryAssignment(resources, thisDaemon, "agent-b")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a.RealPath != b.RealPath {
+			t.Fatalf("real paths differ: %q != %q", a.RealPath, b.RealPath)
+		}
+	})
+
 	t.Run("missing daemon_id is rejected", func(t *testing.T) {
 		_, err := findLocalDirectoryAssignment([]ProjectResourceData{
 			{ID: "r1", ResourceType: localDirectoryResourceType, ResourceRef: mkRef(t, localDirectoryRef{LocalPath: tmp})},
-		}, thisDaemon)
+		}, thisDaemon, "")
 		if err == nil {
 			t.Fatalf("expected error for missing daemon_id")
 		}
@@ -87,7 +159,7 @@ func TestFindLocalDirectoryAssignment(t *testing.T) {
 	t.Run("relative path is rejected", func(t *testing.T) {
 		_, err := findLocalDirectoryAssignment([]ProjectResourceData{
 			{ID: "r1", ResourceType: localDirectoryResourceType, ResourceRef: mkRef(t, localDirectoryRef{LocalPath: "relative/path", DaemonID: thisDaemon})},
-		}, thisDaemon)
+		}, thisDaemon, "")
 		if err == nil {
 			t.Fatalf("expected error for relative path")
 		}
@@ -96,22 +168,22 @@ func TestFindLocalDirectoryAssignment(t *testing.T) {
 	t.Run("malformed ref json fails", func(t *testing.T) {
 		_, err := findLocalDirectoryAssignment([]ProjectResourceData{
 			{ID: "r1", ResourceType: localDirectoryResourceType, ResourceRef: json.RawMessage(`{not json`)},
-		}, thisDaemon)
+		}, thisDaemon, "")
 		if err == nil {
 			t.Fatalf("expected error for malformed json")
 		}
 	})
 
 	t.Run("two local_directory rows on this daemon fail fast", func(t *testing.T) {
-		// Server-side findLocalDirectoryConflict enforces one
-		// local_directory per (project, daemon). If two rows are
+		// Server-side findLocalDirectoryConflict enforces one default
+		// local_directory per (project, daemon). If two default rows are
 		// somehow present (older API client, direct DB writes), the
 		// daemon must refuse to guess which directory to execute in.
 		tmp2 := t.TempDir()
 		_, err := findLocalDirectoryAssignment([]ProjectResourceData{
 			{ID: "r1", ResourceType: localDirectoryResourceType, ResourceRef: mkRef(t, localDirectoryRef{LocalPath: tmp, DaemonID: thisDaemon})},
 			{ID: "r2", ResourceType: localDirectoryResourceType, ResourceRef: mkRef(t, localDirectoryRef{LocalPath: tmp2, DaemonID: thisDaemon})},
-		}, thisDaemon)
+		}, thisDaemon, "")
 		if err == nil {
 			t.Fatalf("expected error for two local_directory rows pinned to this daemon")
 		}
@@ -128,7 +200,7 @@ func TestFindLocalDirectoryAssignment(t *testing.T) {
 		got, err := findLocalDirectoryAssignment([]ProjectResourceData{
 			{ID: "r1", ResourceType: localDirectoryResourceType, ResourceRef: mkRef(t, localDirectoryRef{LocalPath: tmp, DaemonID: thisDaemon})},
 			{ID: "r2", ResourceType: localDirectoryResourceType, ResourceRef: mkRef(t, localDirectoryRef{LocalPath: tmp, DaemonID: otherDaemon})},
-		}, thisDaemon)
+		}, thisDaemon, "")
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -1212,4 +1284,142 @@ func TestIssueTasksStillSerialiseOnPathMutex(t *testing.T) {
 		t.Error("waiting task never reported waiting_local_directory to the server")
 	}
 	release()
+}
+
+func TestAgentLocalDirectoryMode(t *testing.T) {
+	const daemonID = "daemon"
+	raw, _ := json.Marshal(localDirectoryRef{LocalPath: t.TempDir(), DaemonID: daemonID, ExecutionMode: "worktree"})
+	for _, tc := range []struct {
+		name, config, want string
+		invalid            bool
+	}{
+		{"inherit", `{}`, "worktree", false},
+		{"null", `null`, "worktree", false},
+		{"empty", `{"local_directory_mode":""}`, "worktree", false},
+		{"none", `{"local_directory_mode":"none"}`, "none", false},
+		{"in place", `{"local_directory_mode":"in_place"}`, "in_place", false},
+		{"worktree", `{"local_directory_mode":"worktree"}`, "worktree", false},
+		{"unknown", `{"local_directory_mode":"snapshot"}`, "", true},
+		{"wrong type", `{"local_directory_mode":true}`, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			task := Task{ProjectResources: []ProjectResourceData{{ResourceType: localDirectoryResourceType, ResourceRef: raw}}, Agent: &AgentData{RuntimeConfig: json.RawMessage(tc.config)}}
+			got, err := localDirectoryAssignmentForTask(task, daemonID)
+			if tc.invalid {
+				if err == nil {
+					t.Fatal("invalid override accepted")
+				}
+				return
+			}
+			if err != nil || got == nil || got.Ref.ExecutionMode != tc.want {
+				t.Fatalf("assignment=%+v err=%v want=%s", got, err, tc.want)
+			}
+			if got.SkipsCheckout() != (tc.want == "none") {
+				t.Fatal("incorrect checkout decision")
+			}
+			task.IsLeaderTask = true
+			if got, err := localDirectoryAssignmentForTask(task, daemonID); err != nil || got != nil {
+				t.Fatalf("leader bound to repository: %+v %v", got, err)
+			}
+		})
+	}
+}
+
+func TestNoneModeSkipsHeldRepositoryLockAndPreservesWriterLock(t *testing.T) {
+	const daemonID = "daemon"
+	path := t.TempDir()
+	raw, _ := json.Marshal(localDirectoryRef{LocalPath: path, DaemonID: daemonID, ExecutionMode: "in_place"})
+	task := Task{ID: "review", ProjectResources: []ProjectResourceData{{ResourceType: localDirectoryResourceType, ResourceRef: raw}}, Agent: &AgentData{RuntimeConfig: json.RawMessage(`{"local_directory_mode":"none"}`)}}
+	assignment, err := localDirectoryAssignmentForTask(task, daemonID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &Daemon{cfg: Config{DaemonID: daemonID}, localPathLocks: NewLocalPathLocker(), logger: slog.Default()}
+	release, err := d.localPathLocks.Acquire(context.Background(), assignment.RealPath, "writer", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	unlock, abort := d.acquireLocalDirectoryLockIfNeeded(context.Background(), task, slog.Default())
+	if abort || unlock != nil {
+		t.Fatal("none-mode turn acquired a repository lock")
+	}
+	if holder := d.localPathLocks.Holder(assignment.RealPath); holder != "writer" {
+		t.Fatalf("writer lock lost: %q", holder)
+	}
+	task.PriorWorkDir = path
+	if _, reuse := shouldReusePriorWorkdir(task, assignment, t.TempDir()); reuse {
+		t.Fatal("none mode reused a previous repository cwd")
+	}
+	prompt := BuildPrompt(task, "codex", WithReadOnlyLocalDirectory(path))
+	for _, want := range []string{path, "read-only by convention", "no repository checkout", "not an OS-enforced sandbox"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q", want)
+		}
+	}
+}
+
+func TestRunTaskNoneModeLeavesLocalDirectoryUntouched(t *testing.T) {
+	d, _, cleanup := newLeaderReuseTestDaemon(t)
+	defer cleanup()
+	d.cfg.DaemonID = "daemon"
+	shared := t.TempDir()
+	if err := os.WriteFile(filepath.Join(shared, "sentinel"), []byte("unchanged"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(localDirectoryRef{LocalPath: shared, DaemonID: d.cfg.DaemonID, ExecutionMode: "worktree"})
+	task := leaderReuseTestTask("task-none")
+	task.IsLeaderTask = false
+	task.Agent.RuntimeConfig = json.RawMessage(`{"local_directory_mode":"none"}`)
+	task.ProjectResources = []ProjectResourceData{{ResourceType: localDirectoryResourceType, ResourceRef: raw}}
+	task.Repos = []RepoData{{URL: "https://example.invalid/no-automatic-checkout.git"}}
+	task.PriorWorkDir = shared
+	result, err := d.runTask(context.Background(), task, "claude", 0, d.logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.WorkDir == shared || result.WorkDir == "" || result.DurableWorkDir != "" || result.BranchName != "" {
+		t.Fatalf("unexpected repository binding: %+v", result)
+	}
+	if rel, err := filepath.Rel(result.EnvRoot, result.WorkDir); err != nil || rel != "workdir" {
+		t.Fatalf("workdir outside task env: %q %v", rel, err)
+	}
+	files, err := os.ReadDir(shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Name() != "sentinel" {
+		t.Fatalf("shared directory changed: %v", files)
+	}
+	content, err := os.ReadFile(filepath.Join(shared, "sentinel"))
+	if err != nil || string(content) != "unchanged" {
+		t.Fatalf("sentinel changed: %q %v", content, err)
+	}
+}
+
+func TestLocalDirectoryGCExemptSkipsScratchModes(t *testing.T) {
+	const daemonID = "daemon"
+	raw, _ := json.Marshal(localDirectoryRef{LocalPath: t.TempDir(), DaemonID: daemonID, ExecutionMode: "in_place"})
+	for _, tc := range []struct {
+		name, config string
+		want         bool
+	}{
+		{"in place keeps the exemption", `{}`, true},
+		{"none runs in task scratch", `{"local_directory_mode":"none"}`, false},
+		{"worktree runs in a disposable worktree", `{"local_directory_mode":"worktree"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			task := Task{ProjectResources: []ProjectResourceData{{ResourceType: localDirectoryResourceType, ResourceRef: raw}}, Agent: &AgentData{RuntimeConfig: json.RawMessage(tc.config)}}
+			assignment, err := localDirectoryAssignmentForTask(task, daemonID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := localDirectoryGCExempt(assignment); got != tc.want {
+				t.Fatalf("localDirectoryGCExempt = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	if localDirectoryGCExempt(nil) {
+		t.Fatal("no assignment must not be exempt")
+	}
 }
