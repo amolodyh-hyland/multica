@@ -19,11 +19,10 @@ import (
 // constant — keep in sync if the type string is ever renamed.
 const localDirectoryResourceType = "local_directory"
 
-// Execution modes for local_directory resources. Mirrors the server-side
-// constants in handler/project_resource.go — keep in sync. An absent or empty
-// value means in_place, so resources created before worktree mode existed keep
-// their original behavior.
+// Effective execution modes. in_place and worktree mirror project resources;
+// none is an agent runtime_config override. An absent project mode means in_place.
 const (
+	localDirectoryModeNone     = "none"
 	localDirectoryModeInPlace  = "in_place"
 	localDirectoryModeWorktree = "worktree"
 )
@@ -34,6 +33,7 @@ const (
 type localDirectoryRef struct {
 	LocalPath     string `json:"local_path"`
 	DaemonID      string `json:"daemon_id"`
+	AgentID       string `json:"agent_id,omitempty"`
 	Label         string `json:"label,omitempty"`
 	ExecutionMode string `json:"execution_mode,omitempty"`
 }
@@ -57,6 +57,19 @@ type localDirectoryAssignment struct {
 // on this rather than on "is there a local_directory assignment at all".
 func (a *localDirectoryAssignment) UsesWorktree() bool {
 	return a != nil && strings.TrimSpace(a.Ref.ExecutionMode) == localDirectoryModeWorktree
+}
+
+// SkipsCheckout keeps repository access advisory: no sidecars, checkout or mutex
+// are created in the user's directory. It is not an OS write barrier.
+func (a *localDirectoryAssignment) SkipsCheckout() bool {
+	return a != nil && strings.TrimSpace(a.Ref.ExecutionMode) == localDirectoryModeNone
+}
+
+// localDirectoryGCExempt reports whether a finished task's env root must be
+// stamped LocalDirectory so GC leaves it alone. Worktree and none modes run in
+// a disposable directory inside the env root, so they stay fully collectable.
+func localDirectoryGCExempt(a *localDirectoryAssignment) bool {
+	return a != nil && !a.UsesWorktree() && !a.SkipsCheckout()
 }
 
 // DisplayName is the human-facing name for this directory, safe to render in
@@ -93,14 +106,14 @@ func (a *localDirectoryAssignment) ValidateExecutionMode() error {
 		return nil
 	}
 	switch strings.TrimSpace(a.Ref.ExecutionMode) {
-	case "", localDirectoryModeInPlace, localDirectoryModeWorktree:
+	case "", localDirectoryModeNone, localDirectoryModeInPlace, localDirectoryModeWorktree:
 		return nil
 	default:
 		return fmt.Errorf(
 			"local_directory: this daemon does not support execution_mode %q for %q "+
-				"(update the daemon, or set the resource's execution mode to %q or %q); "+
+				"(update the daemon, or choose a supported local_directory mode); "+
 				"refusing to run in place, since that would modify a directory the resource asked to isolate",
-			a.Ref.ExecutionMode, a.AbsPath, localDirectoryModeInPlace, localDirectoryModeWorktree)
+			a.Ref.ExecutionMode, a.AbsPath)
 	}
 }
 
@@ -122,7 +135,22 @@ func localDirectoryAssignmentForTask(task Task, daemonID string) (*localDirector
 	if task.IsLeaderTask {
 		return nil, nil
 	}
-	return findLocalDirectoryAssignment(task.ProjectResources, daemonID)
+	assignment, err := findLocalDirectoryAssignment(task.ProjectResources, daemonID, task.AgentID)
+	if err != nil || assignment == nil || task.Agent == nil {
+		return assignment, err
+	}
+	var config struct {
+		Mode string `json:"local_directory_mode"`
+	}
+	if len(task.Agent.RuntimeConfig) > 0 {
+		if err := json.Unmarshal(task.Agent.RuntimeConfig, &config); err != nil {
+			return nil, fmt.Errorf("local_directory: decode agent runtime_config: %w", err)
+		}
+	}
+	if mode := strings.TrimSpace(config.Mode); mode != "" {
+		assignment.Ref.ExecutionMode = mode
+	}
+	return assignment, assignment.ValidateExecutionMode()
 }
 
 // localDirectoryLockExempt reports whether a task may run inside an in_place
@@ -153,7 +181,8 @@ func localDirectoryLockExempt(task Task) bool {
 }
 
 // findLocalDirectoryAssignment scans the task's project resources for one of
-// type local_directory whose daemon_id matches this daemon. Returns nil
+// type local_directory whose daemon_id matches this daemon. An exact agent_id
+// binding wins; otherwise a ref without agent_id is the daemon default. Returns nil
 // (without error) when no such resource exists — the task takes the regular
 // github_repo / worktree code path. Returns an error only when the matching
 // resource is structurally broken (bad JSON, missing fields) OR when more
@@ -161,12 +190,11 @@ func localDirectoryLockExempt(task Task) bool {
 // invariant violation, and silently picking the first match would let the
 // agent write into an arbitrary directory the user didn't intend.
 //
-// Server-side `findLocalDirectoryConflict` enforces a single local_directory
-// per (project, daemon), so two matches here means either the constraint
-// was bypassed (older API client) or the data was corrupted. Either way,
-// fail fast rather than guess.
-func findLocalDirectoryAssignment(resources []ProjectResourceData, daemonID string) (*localDirectoryAssignment, error) {
-	var match *localDirectoryAssignment
+// Server-side `findLocalDirectoryConflict` enforces a single row for each
+// (project, daemon, agent selector), so duplicate defaults or duplicate exact
+// matches mean the constraint was bypassed or the data was corrupted.
+func findLocalDirectoryAssignment(resources []ProjectResourceData, daemonID, agentID string) (*localDirectoryAssignment, error) {
+	var exactRef, defaultRef *localDirectoryRef
 	for _, r := range resources {
 		if r.ResourceType != localDirectoryResourceType {
 			continue
@@ -176,6 +204,7 @@ func findLocalDirectoryAssignment(resources []ProjectResourceData, daemonID stri
 			return nil, fmt.Errorf("local_directory: parse resource_ref: %w", err)
 		}
 		ref.DaemonID = strings.TrimSpace(ref.DaemonID)
+		ref.AgentID = strings.TrimSpace(ref.AgentID)
 		if ref.DaemonID == "" {
 			return nil, errors.New("local_directory: resource_ref missing daemon_id")
 		}
@@ -185,32 +214,37 @@ func findLocalDirectoryAssignment(resources []ProjectResourceData, daemonID stri
 			// per daemon, and other daemons will resolve their own row.
 			continue
 		}
-		if match != nil {
-			// Server-side invariant: at most one local_directory per
-			// (project, daemon). Two matches here means the constraint
-			// was bypassed by an older API client or by direct DB writes.
-			// Either way, refuse to guess which directory the user meant.
-			return nil, fmt.Errorf(
-				"local_directory: project has multiple local_directory resources for this daemon (%q and %q); remove the extra in project settings",
-				match.AbsPath,
-				strings.TrimSpace(ref.LocalPath),
-			)
+		var target **localDirectoryRef
+		switch {
+		case ref.AgentID != "" && ref.AgentID == strings.TrimSpace(agentID):
+			target = &exactRef
+		case ref.AgentID == "":
+			target = &defaultRef
+		default:
+			continue
 		}
-		absPath, err := normalizeLocalPath(ref.LocalPath)
-		if err != nil {
-			return nil, err
+		if *target != nil {
+			return nil, fmt.Errorf("local_directory: project has multiple local_directory resources for this daemon and agent binding; remove the extra in project settings")
 		}
-		realPath, err := resolveRealPath(absPath)
-		if err != nil {
-			return nil, err
-		}
-		match = &localDirectoryAssignment{
-			Ref:      ref,
-			AbsPath:  absPath,
-			RealPath: realPath,
-		}
+		copyRef := ref
+		*target = &copyRef
 	}
-	return match, nil
+	selected := exactRef
+	if selected == nil {
+		selected = defaultRef
+	}
+	if selected == nil {
+		return nil, nil
+	}
+	absPath, err := normalizeLocalPath(selected.LocalPath)
+	if err != nil {
+		return nil, err
+	}
+	realPath, err := resolveRealPath(absPath)
+	if err != nil {
+		return nil, err
+	}
+	return &localDirectoryAssignment{Ref: *selected, AbsPath: absPath, RealPath: realPath}, nil
 }
 
 // normalizeLocalPath strips whitespace and resolves the path to an absolute
@@ -262,6 +296,10 @@ func resolveRealPath(absPath string) (string, error) {
 // Each failure returns a typed error message so the daemon can forward it
 // onto the task's fail comment verbatim.
 func validateLocalPath(absPath string) error {
+	return validateLocalPathAccess(absPath, true)
+}
+
+func validateLocalPathAccess(absPath string, writable bool) error {
 	if absPath == "" {
 		return errors.New("local_directory: local_path is empty")
 	}
@@ -306,6 +344,13 @@ func validateLocalPath(absPath string) error {
 			return fmt.Errorf("local_directory: %s (symlink target of %q is %q)", reason, absPath, realPath)
 		}
 		return fmt.Errorf("local_directory: %s (canonical path %q)", reason, absPath)
+	}
+	if !writable {
+		dir, err := os.Open(absPath)
+		if err != nil {
+			return fmt.Errorf("local_directory: read directory: %w", err)
+		}
+		return dir.Close()
 	}
 	if err := checkDirReadWrite(absPath); err != nil {
 		return fmt.Errorf("local_directory: %w", err)
