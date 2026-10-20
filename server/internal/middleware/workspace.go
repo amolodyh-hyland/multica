@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	publicapiv1 "github.com/multica-ai/multica/server/pkg/publicapi/v1"
 )
 
 // Context keys for workspace-scoped request data.
@@ -100,6 +101,11 @@ func ResolveWorkspaceIDFromRequest(r *http.Request, queries *db.Queries) string 
 // Returns (uuid, nil) on success.
 type workspaceResolver func(r *http.Request) (string, error)
 
+type workspaceQueryer interface {
+	GetWorkspaceBySlug(context.Context, string) (db.Workspace, error)
+	GetMemberByUserAndWorkspace(context.Context, db.GetMemberByUserAndWorkspaceParams) (db.Member, error)
+}
+
 // resolveWorkspaceUUID builds a resolver that accepts slug-first identification.
 //
 // Priority:
@@ -110,7 +116,7 @@ type workspaceResolver func(r *http.Request) (string, error)
 //  3. X-Workspace-ID header / ?workspace_id query → UUID directly (CLI/daemon compat)
 //
 // TODO: cache slug→UUID lookup (slug is immutable, safe to cache with short TTL)
-func resolveWorkspaceUUID(queries *db.Queries) workspaceResolver {
+func resolveWorkspaceUUID(queries workspaceQueryer) workspaceResolver {
 	return func(r *http.Request) (string, error) {
 		// Task-token-authenticated requests must operate on the
 		// token's bound workspace. The auth middleware wrote that ID
@@ -162,6 +168,28 @@ func RequireWorkspaceMember(queries *db.Queries) func(http.Handler) http.Handler
 	return buildMiddleware(queries, resolveWorkspaceUUID(queries), nil)
 }
 
+// RequirePublicAPIWorkspaceMember applies the same membership check as the
+// App API while writing failures with the stable Public API problem envelope.
+func RequirePublicAPIWorkspaceMember(queries *db.Queries) func(http.Handler) http.Handler {
+	return requirePublicAPIWorkspaceMember(queries)
+}
+
+func requirePublicAPIWorkspaceMember(queries workspaceQueryer) func(http.Handler) http.Handler {
+	base := buildMiddlewareWithErrorWriter(queries, resolveWorkspaceUUID(queries), nil, func(w http.ResponseWriter, r *http.Request, status int, message string) {
+		publicapiv1.WriteProblem(w, r, status, "", message)
+	})
+	return func(next http.Handler) http.Handler {
+		workspaceGate := base(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, ok := PublicAPIUserCredentialFromContext(r.Context()); !ok {
+				publicapiv1.WriteProblem(w, r, http.StatusUnauthorized, "unauthorized", "missing authenticated user credential")
+				return
+			}
+			workspaceGate.ServeHTTP(w, r)
+		})
+	}
+}
+
 // RequireWorkspaceRole is like RequireWorkspaceMember but additionally checks
 // that the member has one of the specified roles.
 func RequireWorkspaceRole(queries *db.Queries, roles ...string) func(http.Handler) http.Handler {
@@ -192,16 +220,24 @@ func RequireWorkspaceRoleFromURL(queries *db.Queries, param string, roles ...str
 	}, roles)
 }
 
-func buildMiddleware(queries *db.Queries, resolve workspaceResolver, roles []string) func(http.Handler) http.Handler {
+type workspaceErrorWriter func(http.ResponseWriter, *http.Request, int, string)
+
+func buildMiddleware(queries workspaceQueryer, resolve workspaceResolver, roles []string) func(http.Handler) http.Handler {
+	return buildMiddlewareWithErrorWriter(queries, resolve, roles, func(w http.ResponseWriter, _ *http.Request, status int, message string) {
+		writeError(w, status, message)
+	})
+}
+
+func buildMiddlewareWithErrorWriter(queries workspaceQueryer, resolve workspaceResolver, roles []string, write workspaceErrorWriter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			workspaceID, resolveErr := resolve(r)
 			if resolveErr != nil {
-				writeError(w, http.StatusNotFound, "workspace not found")
+				write(w, r, http.StatusNotFound, "workspace not found")
 				return
 			}
 			if workspaceID == "" {
-				writeError(w, http.StatusBadRequest, "workspace_id or workspace_slug is required")
+				write(w, r, http.StatusBadRequest, "workspace_id or workspace_slug is required")
 				return
 			}
 
@@ -214,25 +250,32 @@ func buildMiddleware(queries *db.Queries, resolve workspaceResolver, roles []str
 			if r.Header.Get("X-Actor-Source") == "task_token" {
 				bound := r.Header.Get("X-Workspace-ID")
 				if bound == "" || workspaceID != bound {
-					writeError(w, http.StatusForbidden, "task token is bound to a different workspace")
+					write(w, r, http.StatusForbidden, "task token is bound to a different workspace")
 					return
 				}
 			}
 
 			userID := r.Header.Get("X-User-ID")
+			if credential, ok := PublicAPIUserCredentialFromContext(r.Context()); ok {
+				if credential.WorkspaceID == "" || credential.WorkspaceID != workspaceID {
+					write(w, r, http.StatusNotFound, "workspace not found")
+					return
+				}
+				userID = credential.UserID
+			}
 			if userID == "" {
-				writeError(w, http.StatusUnauthorized, "user not authenticated")
+				write(w, r, http.StatusUnauthorized, "user not authenticated")
 				return
 			}
 
 			userUUID, err := util.ParseUUID(userID)
 			if err != nil {
-				writeError(w, http.StatusUnauthorized, "user not authenticated")
+				write(w, r, http.StatusUnauthorized, "user not authenticated")
 				return
 			}
 			wsUUID, err := util.ParseUUID(workspaceID)
 			if err != nil {
-				writeError(w, http.StatusBadRequest, "invalid workspace_id")
+				write(w, r, http.StatusBadRequest, "invalid workspace_id")
 				return
 			}
 			member, err := queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
@@ -240,7 +283,7 @@ func buildMiddleware(queries *db.Queries, resolve workspaceResolver, roles []str
 				WorkspaceID: wsUUID,
 			})
 			if err != nil {
-				writeError(w, http.StatusNotFound, "workspace not found")
+				write(w, r, http.StatusNotFound, "workspace not found")
 				return
 			}
 
@@ -253,7 +296,7 @@ func buildMiddleware(queries *db.Queries, resolve workspaceResolver, roles []str
 					}
 				}
 				if !allowed {
-					writeError(w, http.StatusForbidden, "insufficient permissions")
+					write(w, r, http.StatusForbidden, "insufficient permissions")
 					return
 				}
 			}

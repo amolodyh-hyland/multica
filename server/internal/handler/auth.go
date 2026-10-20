@@ -24,7 +24,9 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	publicapiv1 "github.com/multica-ai/multica/server/pkg/publicapi/v1"
 )
 
 // SignupError represents signup restriction errors
@@ -171,12 +173,13 @@ func (h *Handler) issueJWT(user db.User) (string, error) {
 		return "", err
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":   uuidToString(user.ID),
-		"email": user.Email,
-		"name":  user.Name,
-		"sid":   sid,
-		"exp":   time.Now().Add(auth.AuthTokenTTL()).Unix(),
-		"iat":   time.Now().Unix(),
+		"sub":                       uuidToString(user.ID),
+		"email":                     user.Email,
+		"name":                      user.Name,
+		"sid":                       sid,
+		"exp":                       time.Now().Add(auth.AuthTokenTTL()).Unix(),
+		"iat":                       time.Now().Unix(),
+		auth.SessionProvenanceClaim: auth.InteractiveSessionProvenance,
 	})
 	return token.SignedString(auth.JWTSecret())
 }
@@ -742,10 +745,20 @@ func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// IssueCliToken returns a fresh JWT for the authenticated user.
-// This allows cookie-authenticated browser sessions to obtain a bearer token
-// that can be handed off to the CLI via the cli_callback redirect.
+// IssueCliToken returns a fresh JWT for an interactive member session. The
+// token can be handed off to the CLI via the cli_callback redirect, but other
+// credential types cannot be exchanged for a user session.
 func (h *Handler) IssueCliToken(w http.ResponseWriter, r *http.Request) {
+	credential, authenticated := middleware.AuthCredentialFromContext(r.Context())
+	if !authenticated {
+		publicapiv1.WriteProblem(w, r, http.StatusUnauthorized, "issuer_required", "CLI token issuance requires an interactive member session")
+		return
+	}
+	if credential.Kind != middleware.AuthCredentialSessionJWT {
+		publicapiv1.WriteProblem(w, r, http.StatusForbidden, "cli_token_issuer_not_allowed", "this credential cannot issue a CLI session token")
+		return
+	}
+
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return

@@ -21,10 +21,11 @@ import (
 func sessionToken(t *testing.T, remaining time.Duration, sid string) string {
 	t.Helper()
 	claims := jwt.MapClaims{
-		"sub":   "test-user-id",
-		"email": "test@multica.ai",
-		"exp":   time.Now().Add(remaining).Unix(),
-		"iat":   time.Now().Add(-time.Hour).Unix(),
+		"sub":                       "test-user-id",
+		"email":                     "test@multica.ai",
+		"exp":                       time.Now().Add(remaining).Unix(),
+		"iat":                       time.Now().Add(-time.Hour).Unix(),
+		auth.SessionProvenanceClaim: auth.InteractiveSessionProvenance,
 	}
 	if sid != "" {
 		claims["sid"] = sid
@@ -151,6 +152,23 @@ func TestAuth_DoesNotRenewBearerSessions(t *testing.T) {
 	}
 	if got := renewedAuthCookie(rec); got != "" {
 		t.Error("a bearer-authenticated request must not be answered with a session cookie")
+	}
+}
+
+func TestAuth_DoesNotRenewUnmarkedCookieJWT(t *testing.T) {
+	claims := jwt.MapClaims{
+		"sub": "test-user-id",
+		"exp": time.Now().Add(auth.AuthRenewThreshold() / 2).Unix(),
+		"iat": time.Now().Add(-time.Hour).Unix(),
+	}
+	token := generateToken(claims, auth.JWTSecret())
+
+	rec, called := runAuth(t, cookieRequest(http.MethodGet, token))
+	if !called {
+		t.Fatal("an unmarked JWT must continue to authenticate ordinary API requests")
+	}
+	if got := renewedAuthCookie(rec); got != "" {
+		t.Error("an unmarked JWT must not be renewed into an interactive session")
 	}
 }
 

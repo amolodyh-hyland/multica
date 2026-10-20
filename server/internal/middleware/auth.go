@@ -13,9 +13,30 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	publicapiv1 "github.com/multica-ai/multica/server/pkg/publicapi/v1"
 )
 
 func uuidToString(u pgtype.UUID) string { return util.UUIDToString(u) }
+
+type authPATQueryer interface {
+	GetPersonalAccessTokenByHash(context.Context, string) (db.PersonalAccessToken, error)
+	UpdatePersonalAccessTokenLastUsed(context.Context, pgtype.UUID) error
+}
+
+func rejectScopedPATOnLegacySurface(w http.ResponseWriter, r *http.Request) {
+	publicapiv1.WriteProblem(w, r, http.StatusForbidden, "public_api_credential_only", "scoped PATs can only access the member Public API")
+}
+
+func patCacheEntry(pat db.PersonalAccessToken) auth.PATCacheEntry {
+	entry := auth.PATCacheEntry{
+		UserID: uuidToString(pat.UserID),
+		Scopes: append([]string{}, pat.Scopes...),
+	}
+	if pat.ScopeWorkspaceID.Valid {
+		entry.ScopeWorkspaceID = uuidToString(pat.ScopeWorkspaceID)
+	}
+	return entry
+}
 
 func rejectTemporarilyDisabledUser(w http.ResponseWriter, r *http.Request, userID, email, authPath string) bool {
 	if !auth.IsTemporarilyDisabledUser(userID, email) {
@@ -57,6 +78,14 @@ func rejectTemporarilyDisabledUser(w http.ResponseWriter, r *http.Request, userI
 // prefix branch — we don't fall through to the mul_ / JWT paths, since
 // an mcn_ string is by construction not a valid mul_ PAT or JWT.
 func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATVerifier, cfSigner *auth.CloudFrontSigner) func(http.Handler) http.Handler {
+	var patQueries authPATQueryer
+	if queries != nil {
+		patQueries = queries
+	}
+	return authWithPATQueryer(queries, patQueries, patCache, cloudPAT, cfSigner)
+}
+
+func authWithPATQueryer(queries *db.Queries, patQueries authPATQueryer, patCache *auth.PATCache, cloudPAT *auth.CloudPATVerifier, cfSigner *auth.CloudFrontSigner) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// X-Actor-Source is server-set only — any value supplied by
@@ -133,7 +162,8 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				// this header is allowed to carry — strip anything else a
 				// client tried to send.
 				r.Header.Set("X-Actor-Source", "task_token")
-				next.ServeHTTP(w, r)
+				ctx := WithAuthCredential(r.Context(), AuthCredential{Kind: AuthCredentialTaskToken})
+				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 
@@ -193,7 +223,8 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				// treated as the owner having approved an account-
 				// level action.
 				r.Header.Set("X-Actor-Source", "cloud_pat")
-				next.ServeHTTP(w, r)
+				ctx := WithAuthCredential(r.Context(), AuthCredential{Kind: AuthCredentialCloudPAT})
+				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 
@@ -205,20 +236,25 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				// last time we looked, and nothing has invalidated the
 				// entry since. Skip the DB SELECT and the last_used_at
 				// UPDATE — last_used_at is bumped once per TTL window.
-				if userID, ok := patCache.Get(r.Context(), hash); ok {
-					if rejectTemporarilyDisabledUser(w, r, userID, "", "pat_cache") {
+				if entry, ok := patCache.Get(r.Context(), hash); ok {
+					if len(entry.Scopes) > 0 {
+						rejectScopedPATOnLegacySurface(w, r)
 						return
 					}
-					r.Header.Set("X-User-ID", userID)
-					next.ServeHTTP(w, r)
+					if rejectTemporarilyDisabledUser(w, r, entry.UserID, "", "pat_cache") {
+						return
+					}
+					r.Header.Set("X-User-ID", entry.UserID)
+					ctx := WithAuthCredential(r.Context(), AuthCredential{Kind: AuthCredentialPersonalAccess})
+					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
 
-				if queries == nil {
+				if patQueries == nil {
 					http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 					return
 				}
-				pat, err := queries.GetPersonalAccessTokenByHash(r.Context(), hash)
+				pat, err := patQueries.GetPersonalAccessTokenByHash(r.Context(), hash)
 				if err != nil {
 					slog.Warn("auth: invalid PAT", "path", r.URL.Path, "error", err)
 					http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
@@ -229,7 +265,6 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				if rejectTemporarilyDisabledUser(w, r, userID, "", "pat") {
 					return
 				}
-				r.Header.Set("X-User-ID", userID)
 
 				// Clamp cache TTL to the token's remaining lifetime so a
 				// PAT expiring in <AuthCacheTTL can't continue passing
@@ -238,14 +273,22 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				if pat.ExpiresAt.Valid {
 					expiresAt = pat.ExpiresAt.Time
 				}
-				patCache.Set(r.Context(), hash, userID, auth.TTLForExpiry(time.Now(), expiresAt))
+				entry := patCacheEntry(pat)
+				patCache.Set(r.Context(), hash, entry, auth.TTLForExpiry(time.Now(), expiresAt))
 
 				// Cache miss = TTL expired (or first use after revoke /
 				// process restart). Refresh last_used_at; subsequent hits
 				// within the TTL window skip this write entirely.
-				go queries.UpdatePersonalAccessTokenLastUsed(context.Background(), pat.ID)
+				go patQueries.UpdatePersonalAccessTokenLastUsed(context.Background(), pat.ID)
+				if len(pat.Scopes) > 0 {
+					rejectScopedPATOnLegacySurface(w, r)
+					return
+				}
 
-				next.ServeHTTP(w, r)
+				r.Header.Set("X-User-ID", userID)
+
+				ctx := WithAuthCredential(r.Context(), AuthCredential{Kind: AuthCredentialPersonalAccess})
+				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 
@@ -289,8 +332,12 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 			// login. No-op until the session drops below half its TTL
 			// (MUL-7436).
 			r = renewCookieSession(w, r, claims, fromCookie, cfSigner)
-
-			next.ServeHTTP(w, r)
+			credentialKind := AuthCredentialJWT
+			if auth.HasInteractiveSessionProvenance(claims) {
+				credentialKind = AuthCredentialSessionJWT
+			}
+			ctx := WithAuthCredential(r.Context(), AuthCredential{Kind: credentialKind})
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }

@@ -114,6 +114,28 @@ func registerPluginActionRoutes(r chi.Router, h *handler.Handler) {
 	r.Delete(publicapiv1.PathStorageValue, h.DeletePluginStorage)
 }
 
+func registerMemberPublicAPIRoutes(r chi.Router, h *handler.Handler) {
+	operations := map[string]http.Handler{
+		http.MethodGet + " " + publicapiv1.PathIssue:          http.HandlerFunc(h.GetPluginIssue),
+		http.MethodPatch + " " + publicapiv1.PathIssue:        http.HandlerFunc(h.PatchPluginIssue),
+		http.MethodGet + " " + publicapiv1.PathIssueComments:  http.HandlerFunc(h.ListPluginComments),
+		http.MethodPost + " " + publicapiv1.PathIssueComments: http.HandlerFunc(h.CreatePluginComment),
+	}
+	for _, operation := range publicapiv1.Operations {
+		if operation.Contract != publicapiv1.ContractSharedResource {
+			continue
+		}
+		endpoint := operations[operation.Method+" "+operation.Path]
+		if endpoint == nil {
+			panic(fmt.Sprintf("member Public API handler not registered for %s %s", operation.Method, operation.Path))
+		}
+		if operation.Policy.Scope == "" {
+			panic(fmt.Sprintf("member Public API operation %s %s has no scope", operation.Method, operation.Path))
+		}
+		r.With(middleware.RequirePublicAPIScope(operation.Policy.Scope)).Method(operation.Method, operation.Path, endpoint)
+	}
+}
+
 func allowedOrigins() []string {
 	raw := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS"))
 	if raw == "" {
@@ -1612,6 +1634,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/session", h.PinTaskSession)
 	})
 
+	// Member Public API surface. It accepts only scoped member PATs today; a
+	// future OAuth verifier can install the same typed principal after validating
+	// its issuer, audience, member identity, and token scopes. It is mounted
+	// outside Auth so session, task, Cloud, and Plugin credentials cannot cross
+	// this trust boundary. Only shared-resource ledger operations are registered.
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.PublicAPIUserPAT(queries))
+		r.Use(middleware.PublicAPIUserRateLimit(rdb, envPositiveInt("RATE_LIMIT_USER_PUBLIC_API", publicapiv1.UserDefaultRateLimitPerMinute), time.Minute))
+		r.Route(publicapiv1.MemberBasePath, func(r chi.Router) {
+			r.Use(middleware.RequirePublicAPIWorkspaceMember(queries))
+			registerMemberPublicAPIRoutes(r, h)
+			r.NotFound(publicapiv1.NotFound)
+			r.MethodNotAllowed(publicapiv1.MethodNotAllowed)
+		})
+	})
+
 	// Public Plugin Action API. This is the stable, globally versioned contract
 	// exposed on the Plugin API origin. It accepts only mpi_/mpc_ bearer tokens;
 	// browser sessions use the bridge group below and cannot cross this trust
@@ -2624,8 +2662,11 @@ type patResolver struct {
 func (pr *patResolver) ResolveToken(ctx context.Context, token string) (string, bool) {
 	hash := auth.HashToken(token)
 
-	if userID, ok := pr.cache.Get(ctx, hash); ok {
-		return userID, true
+	if entry, ok := pr.cache.Get(ctx, hash); ok {
+		if len(entry.Scopes) > 0 {
+			return "", false
+		}
+		return entry.UserID, true
 	}
 
 	pat, err := pr.queries.GetPersonalAccessTokenByHash(ctx, hash)
@@ -2634,12 +2675,24 @@ func (pr *patResolver) ResolveToken(ctx context.Context, token string) (string, 
 	}
 
 	userID := util.UUIDToString(pat.UserID)
+	if len(pat.Scopes) > 0 {
+		var expiresAt time.Time
+		if pat.ExpiresAt.Valid {
+			expiresAt = pat.ExpiresAt.Time
+		}
+		pr.cache.Set(ctx, hash, auth.PATCacheEntry{
+			UserID:           userID,
+			Scopes:           append([]string{}, pat.Scopes...),
+			ScopeWorkspaceID: util.UUIDToString(pat.ScopeWorkspaceID),
+		}, auth.TTLForExpiry(time.Now(), expiresAt))
+		return "", false
+	}
 
 	var expiresAt time.Time
 	if pat.ExpiresAt.Valid {
 		expiresAt = pat.ExpiresAt.Time
 	}
-	pr.cache.Set(ctx, hash, userID, auth.TTLForExpiry(time.Now(), expiresAt))
+	pr.cache.Set(ctx, hash, auth.PATCacheEntry{UserID: userID}, auth.TTLForExpiry(time.Now(), expiresAt))
 
 	// Cache miss = first WS auth in this TTL window. Refresh last_used_at;
 	// subsequent connects within the window skip the write.

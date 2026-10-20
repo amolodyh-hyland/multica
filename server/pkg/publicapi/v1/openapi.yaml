@@ -4,8 +4,12 @@ info:
   version: v1
   description: >-
     Canonical v1 resource contract shared by Multica API surfaces. The Plugin
-    API is the first deployed consumer and applies installation identity plus
-    manifest scopes. Plugin-specific context and storage remain extensions.
+    API applies installation identity plus manifest scopes. The member
+    surface is mounted at /api/v1 and currently accepts workspace-bound scoped
+    member PATs. Scoped PATs are rejected on legacy /api and realtime surfaces;
+    unscoped legacy PATs remain available there. Use Plugin credentials only
+    with the Plugin server and member PATs only with the member server.
+    Plugin-specific context and storage remain extensions.
 servers:
   - url: https://plugin-api.multica.ai/v1
     description: Installed Plugin and invocation callback tokens
@@ -17,6 +21,8 @@ paths:
       operationId: getPluginContext
       summary: Get the authorized Plugin invocation context
       x-multica-contract: plugin_extension
+      x-multica-audit: not_required
+      x-multica-rate-limit-profiles: [plugin_strict]
       responses:
         "200":
           description: Plugin context
@@ -28,12 +34,29 @@ paths:
           $ref: "#/components/responses/Problem"
   /issues/{issue_ref}:
     parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
       - $ref: "#/components/parameters/IssueRef"
     get:
       operationId: getIssue
       summary: Get an issue
+      description: >-
+        Use pluginBearer only with the Plugin server and memberPAT only with the
+        member server. Member requests must include X-Workspace-ID matching the
+        PAT's workspace binding, and current membership is checked on every
+        request. Plugin requests derive their workspace from the installation.
       x-multica-contract: shared_resource
       x-multica-scope: issues:read
+      x-multica-workspace-roles: [member, admin, owner]
+      x-multica-audit: planned
+      x-multica-rate-limit-profiles: [user_default, plugin_strict]
+      security:
+        - pluginBearer: []
+        - memberPAT: []
+      servers:
+        - url: https://plugin-api.multica.ai/v1
+          description: Existing Plugin bearer surface
+        - url: https://api.multica.ai/api/v1
+          description: Scoped member PAT surface
       responses:
         "200":
           description: Issue
@@ -49,8 +72,24 @@ paths:
     patch:
       operationId: patchIssue
       summary: Update an issue title or description
+      description: >-
+        Use pluginBearer only with the Plugin server and memberPAT only with the
+        member server. Member requests must include X-Workspace-ID matching the
+        PAT's workspace binding, and current membership is checked on every
+        request. Plugin requests derive their workspace from the installation.
       x-multica-contract: shared_resource
       x-multica-scope: issues:write
+      x-multica-workspace-roles: [member, admin, owner]
+      x-multica-audit: planned
+      x-multica-rate-limit-profiles: [user_default, plugin_strict]
+      security:
+        - pluginBearer: []
+        - memberPAT: []
+      servers:
+        - url: https://plugin-api.multica.ai/v1
+          description: Existing Plugin bearer surface
+        - url: https://api.multica.ai/api/v1
+          description: Scoped member PAT surface
       parameters:
         - $ref: "#/components/parameters/IfMatch"
       requestBody:
@@ -73,12 +112,29 @@ paths:
           $ref: "#/components/responses/Problem"
   /issues/{issue_ref}/comments:
     parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
       - $ref: "#/components/parameters/IssueRef"
     get:
       operationId: listIssueComments
       summary: List the newest 200 comments in chronological order
+      description: >-
+        Use pluginBearer only with the Plugin server and memberPAT only with the
+        member server. Member requests must include X-Workspace-ID matching the
+        PAT's workspace binding, and current membership is checked on every
+        request. Plugin requests derive their workspace from the installation.
       x-multica-contract: shared_resource
       x-multica-scope: comments:read
+      x-multica-workspace-roles: [member, admin, owner]
+      x-multica-audit: planned
+      x-multica-rate-limit-profiles: [user_default, plugin_strict]
+      security:
+        - pluginBearer: []
+        - memberPAT: []
+      servers:
+        - url: https://plugin-api.multica.ai/v1
+          description: Existing Plugin bearer surface
+        - url: https://api.multica.ai/api/v1
+          description: Scoped member PAT surface
       responses:
         "200":
           description: Comments
@@ -91,8 +147,24 @@ paths:
     post:
       operationId: createIssueComment
       summary: Create an issue comment without mention dispatch
+      description: >-
+        Use pluginBearer only with the Plugin server and memberPAT only with the
+        member server. Member requests must include X-Workspace-ID matching the
+        PAT's workspace binding, and current membership is checked on every
+        request. Plugin requests derive their workspace from the installation.
       x-multica-contract: shared_resource
       x-multica-scope: comments:write
+      x-multica-workspace-roles: [member, admin, owner]
+      x-multica-audit: planned
+      x-multica-rate-limit-profiles: [user_default, plugin_strict]
+      security:
+        - pluginBearer: []
+        - memberPAT: []
+      servers:
+        - url: https://plugin-api.multica.ai/v1
+          description: Existing Plugin bearer surface
+        - url: https://api.multica.ai/api/v1
+          description: Scoped member PAT surface
       requestBody:
         required: true
         content:
@@ -113,6 +185,8 @@ paths:
       operationId: listPluginStorageKeys
       summary: List Plugin storage keys
       x-multica-contract: plugin_extension
+      x-multica-audit: not_required
+      x-multica-rate-limit-profiles: [plugin_strict]
       parameters:
         - $ref: "#/components/parameters/StorageScope"
       responses:
@@ -132,6 +206,8 @@ paths:
       operationId: getPluginStorageValue
       summary: Get a Plugin storage value
       x-multica-contract: plugin_extension
+      x-multica-audit: not_required
+      x-multica-rate-limit-profiles: [plugin_strict]
       responses:
         "200":
           description: Storage value
@@ -145,6 +221,8 @@ paths:
       operationId: putPluginStorageValue
       summary: Put a Plugin storage value
       x-multica-contract: plugin_extension
+      x-multica-audit: planned
+      x-multica-rate-limit-profiles: [plugin_strict]
       requestBody:
         required: true
         content:
@@ -160,6 +238,8 @@ paths:
       operationId: deletePluginStorageValue
       summary: Delete a Plugin storage value
       x-multica-contract: plugin_extension
+      x-multica-audit: planned
+      x-multica-rate-limit-profiles: [plugin_strict]
       responses:
         "204":
           description: Deleted
@@ -171,7 +251,19 @@ components:
       type: http
       scheme: bearer
       bearerFormat: mpi_ or mpc_ token
+    memberPAT:
+      type: http
+      scheme: bearer
+      bearerFormat: mul_ scoped member PAT
   parameters:
+    WorkspaceID:
+      name: X-Workspace-ID
+      in: header
+      required: false
+      description: Required on the member server and must match the scoped PAT binding; ignored by the Plugin server, which derives workspace from installation
+      schema:
+        type: string
+        format: uuid
     IssueRef:
       name: issue_ref
       in: path

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,13 +12,16 @@ import (
 
 func TestPluginActionRouteTrustBoundaries(t *testing.T) {
 	tests := []struct {
-		name          string
-		method        string
-		path          string
-		authorization string
-		wantStatus    int
-		wantHandler   bool
-		wantProblem   bool
+		name              string
+		method            string
+		path              string
+		authorization     string
+		scopedPAT         bool
+		wantStatus        int
+		wantHandler       bool
+		wantProblem       bool
+		wantProblemCode   string
+		wantProblemDetail string
 	}{
 		{
 			name:       "public API rejects a missing token before the handler",
@@ -43,9 +47,21 @@ func TestPluginActionRouteTrustBoundaries(t *testing.T) {
 			wantHandler:   true,
 		},
 		{
-			name:       "removed legacy prefix is not routed",
-			path:       "/api/v1/plugin/context",
-			wantStatus: http.StatusNotFound,
+			name:              "removed legacy prefix is not routed",
+			path:              "/api/v1/plugin/context",
+			wantStatus:        http.StatusUnauthorized,
+			wantProblem:       true,
+			wantProblemCode:   "credential_required",
+			wantProblemDetail: "a scoped member PAT bearer token is required",
+		},
+		{
+			name:              "removed legacy prefix with a scoped member PAT is not routed",
+			path:              "/api/v1/plugin/context",
+			scopedPAT:         true,
+			wantStatus:        http.StatusNotFound,
+			wantProblem:       true,
+			wantProblemCode:   "not_found",
+			wantProblemDetail: "resource not found",
 		},
 		{
 			name:          "public API does not expose person-triggered hooks",
@@ -87,8 +103,13 @@ func TestPluginActionRouteTrustBoundaries(t *testing.T) {
 			if err != nil {
 				t.Fatalf("build request: %v", err)
 			}
-			if tt.authorization != "" {
-				req.Header.Set("Authorization", tt.authorization)
+			authorization := tt.authorization
+			if tt.scopedPAT {
+				authorization = "Bearer " + createScopedMemberTestPAT(t)
+				req.Header.Set("X-Workspace-ID", testWorkspaceID)
+			}
+			if authorization != "" {
+				req.Header.Set("Authorization", authorization)
 			}
 			response, err := http.DefaultClient.Do(req)
 			if err != nil {
@@ -117,9 +138,67 @@ func TestPluginActionRouteTrustBoundaries(t *testing.T) {
 				if problem.Status != tt.wantStatus || problem.RequestID == "" {
 					t.Fatalf("unexpected problem: %+v", problem)
 				}
+				if tt.wantProblemCode != "" && problem.Code != tt.wantProblemCode {
+					t.Fatalf("problem code = %q, want %q", problem.Code, tt.wantProblemCode)
+				}
+				if tt.wantProblemDetail != "" && problem.Detail != tt.wantProblemDetail {
+					t.Fatalf("problem detail = %q, want %q", problem.Detail, tt.wantProblemDetail)
+				}
 			}
 		})
 	}
+}
+
+func createScopedMemberTestPAT(t *testing.T) string {
+	t.Helper()
+
+	body := []byte(`{"name":"plugin route boundary test","workspace_id":"` + testWorkspaceID + `","scopes":["issues:read"]}`)
+	request, err := http.NewRequest(http.MethodPost, testServer.URL+"/api/tokens", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("build scoped PAT request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+testToken)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("create scoped PAT: %v", err)
+	}
+	defer response.Body.Close()
+	responseBody, _ := io.ReadAll(response.Body)
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("create scoped PAT status = %d, want %d; body=%s", response.StatusCode, http.StatusCreated, responseBody)
+	}
+	var created struct {
+		ID    string `json:"id"`
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(responseBody, &created); err != nil {
+		t.Fatalf("decode scoped PAT response: %v; body=%s", err, responseBody)
+	}
+	if created.ID == "" || created.Token == "" {
+		t.Fatalf("created PAT response is missing its id or token: %s", responseBody)
+	}
+
+	t.Cleanup(func() {
+		revokeRequest, err := http.NewRequest(http.MethodDelete, testServer.URL+"/api/tokens/"+created.ID, nil)
+		if err != nil {
+			t.Errorf("build scoped PAT revoke request: %v", err)
+			return
+		}
+		revokeRequest.Header.Set("Authorization", "Bearer "+testToken)
+		revokeResponse, err := http.DefaultClient.Do(revokeRequest)
+		if err != nil {
+			t.Errorf("revoke scoped PAT: %v", err)
+			return
+		}
+		defer revokeResponse.Body.Close()
+		if revokeResponse.StatusCode != http.StatusNoContent {
+			body, _ := io.ReadAll(revokeResponse.Body)
+			t.Errorf("revoke scoped PAT status = %d, want %d; body=%s", revokeResponse.StatusCode, http.StatusNoContent, body)
+		}
+	})
+
+	return created.Token
 }
 
 func TestPluginActionBaseURLPrefersDedicatedVersionedBase(t *testing.T) {
