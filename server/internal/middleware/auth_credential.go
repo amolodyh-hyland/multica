@@ -8,6 +8,7 @@ type AuthCredentialKind string
 
 const (
 	AuthCredentialSessionJWT       AuthCredentialKind = "session_jwt"
+	AuthCredentialJWT              AuthCredentialKind = "jwt"
 	AuthCredentialPersonalAccess   AuthCredentialKind = "personal_access_token"
 	AuthCredentialTaskToken        AuthCredentialKind = "task_token"
 	AuthCredentialCloudPAT         AuthCredentialKind = "cloud_pat"

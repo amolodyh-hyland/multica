@@ -35,6 +35,15 @@ import (
 // TTL from that moment.
 
 const (
+	// SessionProvenanceClaim is included only in JWTs issued from an
+	// interactive member login. It lets downstream credential boundaries
+	// distinguish those sessions from other valid server-signed JWTs.
+	SessionProvenanceClaim = "multica_auth_provenance"
+	// InteractiveSessionProvenance marks JWTs issued from an interactive
+	// member login. Exchange and refresh paths preserve this value only after
+	// verifying it on the incoming token.
+	InteractiveSessionProvenance = "interactive_session"
+
 	// sessionIDClaim carries a per-login identifier that is STABLE across
 	// renewals and changes only when the user authenticates again. It is
 	// what the CSRF token is bound to, so re-signing the auth cookie does
@@ -68,10 +77,11 @@ const (
 	maxSessionRenewCheckInterval = 7 * 24 * time.Hour
 )
 
-// ErrNotSessionToken is returned by RenewSessionToken when handed something
-// that is not one of our own UI session JWTs. PATs (mul_), agent task tokens
-// (mat_) and cloud-node PATs (mcn_) authenticate fine at the middleware but
-// must never be exchanged for an interactive session.
+// ErrNotSessionToken is returned when a refresh path is handed something
+// without verified interactive-session provenance. PATs (mul_), agent task
+// tokens (mat_), cloud-node PATs (mcn_), and unmarked JWTs can authenticate on
+// their respective paths but must never be exchanged for an interactive
+// session.
 var ErrNotSessionToken = errors.New("not an interactive session token")
 
 // AuthRenewThreshold is the remaining lifetime at or below which a session
@@ -145,6 +155,13 @@ func SessionExpiry(claims jwt.MapClaims) time.Time {
 	return exp.Time
 }
 
+// HasInteractiveSessionProvenance reports whether verified claims carry the
+// marker used to distinguish interactive member sessions from other JWTs.
+func HasInteractiveSessionProvenance(claims jwt.MapClaims) bool {
+	provenance, _ := claims[SessionProvenanceClaim].(string)
+	return provenance == InteractiveSessionProvenance
+}
+
 func parseSignedToken(tokenString string, opts ...jwt.ParserOption) (jwt.MapClaims, error) {
 	token, err := jwt.Parse(tokenString, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -164,13 +181,17 @@ func parseSignedToken(tokenString string, opts ...jwt.ParserOption) (jwt.MapClai
 
 // ParseSessionToken verifies a raw token string as one of our UI session
 // JWTs and returns its claims. Anything that is not a validly signed,
-// unexpired HS256 JWT — including every opaque token prefix — comes back as
-// ErrNotSessionToken.
+// unexpired HS256 JWT carrying interactive-session provenance — including
+// opaque token prefixes and unmarked JWTs — comes back as ErrNotSessionToken.
 //
 // This is the AUTHENTICATION parser: use it wherever the answer decides
 // whether the caller is logged in or whether a session may be extended.
 func ParseSessionToken(tokenString string) (jwt.MapClaims, error) {
-	return parseSignedToken(tokenString)
+	claims, err := parseSignedToken(tokenString)
+	if err != nil || !HasInteractiveSessionProvenance(claims) {
+		return nil, ErrNotSessionToken
+	}
+	return claims, nil
 }
 
 // SessionIDFromToken returns the `sid` claim of a token we signed, or "" for
@@ -200,10 +221,10 @@ func SessionIDFromToken(tokenString string) string {
 // RenewSessionToken re-signs the identity carried by claims with a fresh
 // lifetime, returning the new token and its expiry.
 //
-// Only `exp` and `iat` move. `sub`, `email`, `name` and `sid` are copied
-// forward verbatim, which is what makes renewal free of any database read:
-// the claims were signed by this server, so they are already authoritative
-// for exactly the fields the auth middleware reads back out.
+// Only `exp` and `iat` move. `sub`, `email`, `name`, `sid`, and interactive
+// session provenance are copied forward, which is what makes renewal free of
+// any database read: the claims were signed by this server, so they are
+// already authoritative for exactly the fields the auth middleware reads.
 //
 // A pre-MUL-7436 token carries no `sid`. Renewal mints one, which is the
 // migration path for sessions that predate this code — and the one moment
@@ -211,6 +232,9 @@ func SessionIDFromToken(tokenString string) string {
 // once per legacy session, on a safe-method request; clients retry a CSRF
 // rejection once (packages/core/api/client.ts).
 func RenewSessionToken(claims jwt.MapClaims) (string, time.Time, error) {
+	if !HasInteractiveSessionProvenance(claims) {
+		return "", time.Time{}, ErrNotSessionToken
+	}
 	sub, _ := claims["sub"].(string)
 	if sub == "" {
 		return "", time.Time{}, ErrNotSessionToken
@@ -235,10 +259,11 @@ func RenewSessionToken(claims jwt.MapClaims) (string, time.Time, error) {
 	now := time.Now()
 	expiresAt := now.Add(AuthTokenTTL())
 	next := jwt.MapClaims{
-		"sub":          sub,
-		"exp":          expiresAt.Unix(),
-		"iat":          now.Unix(),
-		sessionIDClaim: sid,
+		"sub":                  sub,
+		"exp":                  expiresAt.Unix(),
+		"iat":                  now.Unix(),
+		sessionIDClaim:         sid,
+		SessionProvenanceClaim: InteractiveSessionProvenance,
 	}
 	if email != "" {
 		next["email"] = email

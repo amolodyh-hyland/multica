@@ -30,11 +30,12 @@ func sessionClaims(t *testing.T, exp time.Time, sid string) jwt.MapClaims {
 	// at runtime, and the test would be asserting against a shape that does
 	// not exist.
 	claims := jwt.MapClaims{
-		"sub":   "user-1",
-		"email": "user-1@multica.ai",
-		"name":  "User One",
-		"exp":   float64(exp.Unix()),
-		"iat":   float64(time.Now().Add(-time.Hour).Unix()),
+		"sub":                  "user-1",
+		"email":                "user-1@multica.ai",
+		"name":                 "User One",
+		"exp":                  float64(exp.Unix()),
+		"iat":                  float64(time.Now().Add(-time.Hour).Unix()),
+		SessionProvenanceClaim: InteractiveSessionProvenance,
 	}
 	if sid != "" {
 		claims["sid"] = sid
@@ -213,7 +214,7 @@ func TestRenewSessionToken_CarriesIdentityForward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renewed token does not parse: %v", err)
 	}
-	for _, claim := range []string{"sub", "email", "name", "sid"} {
+	for _, claim := range []string{"sub", "email", "name", "sid", SessionProvenanceClaim} {
 		if next[claim] != old[claim] {
 			t.Errorf("claim %q = %v, want %v", claim, next[claim], old[claim])
 		}
@@ -267,6 +268,24 @@ func TestRenewSessionToken_RejectsClaimsWithoutSubject(t *testing.T) {
 	_, _, err := RenewSessionToken(jwt.MapClaims{"email": "nobody@multica.ai"})
 	if err != ErrNotSessionToken {
 		t.Fatalf("err = %v, want ErrNotSessionToken", err)
+	}
+}
+
+func TestRenewSessionToken_RejectsUnmarkedJWT(t *testing.T) {
+	claims := sessionClaims(t, time.Now().Add(time.Hour), "sid-unmarked")
+	delete(claims, SessionProvenanceClaim)
+
+	if _, _, err := RenewSessionToken(claims); err != ErrNotSessionToken {
+		t.Fatalf("RenewSessionToken err = %v, want ErrNotSessionToken", err)
+	}
+}
+
+func TestParseSessionToken_RejectsUnmarkedJWT(t *testing.T) {
+	claims := sessionClaims(t, time.Now().Add(time.Hour), "sid-unmarked")
+	delete(claims, SessionProvenanceClaim)
+
+	if _, err := ParseSessionToken(signSession(t, claims)); err != ErrNotSessionToken {
+		t.Fatalf("ParseSessionToken err = %v, want ErrNotSessionToken", err)
 	}
 }
 

@@ -332,7 +332,11 @@ func authWithPATQueryer(queries *db.Queries, patQueries authPATQueryer, patCache
 			// login. No-op until the session drops below half its TTL
 			// (MUL-7436).
 			r = renewCookieSession(w, r, claims, fromCookie, cfSigner)
-			ctx := WithAuthCredential(r.Context(), AuthCredential{Kind: AuthCredentialSessionJWT})
+			credentialKind := AuthCredentialJWT
+			if auth.HasInteractiveSessionProvenance(claims) {
+				credentialKind = AuthCredentialSessionJWT
+			}
+			ctx := WithAuthCredential(r.Context(), AuthCredential{Kind: credentialKind})
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

@@ -18,11 +18,12 @@ import (
 func refreshSessionToken(t *testing.T, remaining time.Duration, sid string) string {
 	t.Helper()
 	claims := jwt.MapClaims{
-		"sub":   testUserID,
-		"email": handlerTestEmail,
-		"name":  handlerTestName,
-		"exp":   time.Now().Add(remaining).Unix(),
-		"iat":   time.Now().Add(-time.Hour).Unix(),
+		"sub":                       testUserID,
+		"email":                     handlerTestEmail,
+		"name":                      handlerTestName,
+		"exp":                       time.Now().Add(remaining).Unix(),
+		"iat":                       time.Now().Add(-time.Hour).Unix(),
+		auth.SessionProvenanceClaim: auth.InteractiveSessionProvenance,
 	}
 	if sid != "" {
 		claims["sid"] = sid
@@ -166,9 +167,10 @@ func TestRefreshSession_DoesNotReviveExpiredSession(t *testing.T) {
 // claims, so a mismatch means a header was forged past it.
 func TestRefreshSession_RejectsSubjectMismatch(t *testing.T) {
 	claims := jwt.MapClaims{
-		"sub":   "00000000-0000-0000-0000-00000000dead",
-		"email": handlerTestEmail,
-		"exp":   time.Now().Add(auth.AuthRenewThreshold() / 2).Unix(),
+		"sub":                       "00000000-0000-0000-0000-00000000dead",
+		"email":                     handlerTestEmail,
+		"exp":                       time.Now().Add(auth.AuthRenewThreshold() / 2).Unix(),
+		auth.SessionProvenanceClaim: auth.InteractiveSessionProvenance,
 	}
 	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(auth.JWTSecret())
 	if err != nil {
@@ -177,6 +179,21 @@ func TestRefreshSession_RejectsSubjectMismatch(t *testing.T) {
 
 	testutil.Call(t, testHandler.RefreshSession, bearerRefreshRequest(t, signed)).
 		Want(http.StatusUnauthorized)
+}
+
+func TestRefreshSession_RejectsUnmarkedJWT(t *testing.T) {
+	claims := jwt.MapClaims{
+		"sub":   testUserID,
+		"email": handlerTestEmail,
+		"exp":   time.Now().Add(auth.AuthRenewThreshold() / 2).Unix(),
+	}
+	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(auth.JWTSecret())
+	if err != nil {
+		t.Fatalf("sign unmarked JWT: %v", err)
+	}
+
+	testutil.Call(t, testHandler.RefreshSession, bearerRefreshRequest(t, signed)).
+		Want(http.StatusBadRequest)
 }
 
 // A legacy session (no sid) refreshes and acquires one, which is how clients

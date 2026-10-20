@@ -56,9 +56,10 @@ func generateToken(claims jwt.MapClaims, secret []byte) string {
 
 func validClaims() jwt.MapClaims {
 	return jwt.MapClaims{
-		"sub":   "test-user-id",
-		"email": "test@multica.ai",
-		"exp":   time.Now().Add(time.Hour).Unix(),
+		"sub":                       "test-user-id",
+		"email":                     "test@multica.ai",
+		"exp":                       time.Now().Add(time.Hour).Unix(),
+		auth.SessionProvenanceClaim: auth.InteractiveSessionProvenance,
 	}
 }
 
@@ -202,6 +203,31 @@ func TestAuth_ValidToken(t *testing.T) {
 	}
 	if !gotCredentialOK || gotCredential.Kind != AuthCredentialSessionJWT {
 		t.Fatalf("session credential = %+v, present=%v", gotCredential, gotCredentialOK)
+	}
+}
+
+func TestAuth_UnmarkedJWTIsNotAnInteractiveSession(t *testing.T) {
+	claims := validClaims()
+	delete(claims, auth.SessionProvenanceClaim)
+	token := generateToken(claims, auth.JWTSecret())
+
+	var gotCredential AuthCredential
+	called := false
+	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		gotCredential, _ = AuthCredentialFromContext(r.Context())
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+
+	if response.Code != http.StatusNoContent || !called {
+		t.Fatalf("ordinary API authentication status=%d called=%v body=%s", response.Code, called, response.Body.String())
+	}
+	if gotCredential.Kind != AuthCredentialJWT {
+		t.Fatalf("unmarked JWT credential = %+v, want generic JWT", gotCredential)
 	}
 }
 

@@ -145,6 +145,7 @@ func TestCreatePATRejectsTaskCloudPluginAndScopedPATIssuers(t *testing.T) {
 	}{
 		{name: "task token", credential: middleware.AuthCredential{Kind: middleware.AuthCredentialTaskToken}, wantCode: "pat_issuer_not_allowed"},
 		{name: "Cloud PAT", credential: middleware.AuthCredential{Kind: middleware.AuthCredentialCloudPAT}, wantCode: "pat_issuer_not_allowed"},
+		{name: "unmarked JWT", credential: middleware.AuthCredential{Kind: middleware.AuthCredentialJWT}, wantCode: "pat_issuer_not_allowed"},
 		{name: "Plugin installation token", credential: middleware.AuthCredential{Kind: middleware.AuthCredentialPluginInstall}, wantCode: "pat_issuer_not_allowed"},
 		{name: "Plugin invocation token", credential: middleware.AuthCredential{Kind: middleware.AuthCredentialPluginInvocation}, wantCode: "pat_issuer_not_allowed"},
 		{name: "scoped PAT", credential: middleware.AuthCredential{Kind: middleware.AuthCredentialPersonalAccess, Scopes: []string{"issues:read"}}, wantCode: "public_api_credential_only"},

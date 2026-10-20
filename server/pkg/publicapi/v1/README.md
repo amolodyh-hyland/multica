@@ -43,7 +43,13 @@ endpoint-specific concurrency rules.
   credentials, and scoped PATs cannot issue PATs. The issuer must be a member
   of the requested workspace; scope grants are checked against the role policy
   in the capability ledger. The current issue and comment scopes are available
-  to `member`, `admin`, and `owner` roles.
+  to `member`, `admin`, and `owner` roles. The `/api/cli-token` exchange accepts
+  only an interactive session JWT with signed provenance; task tokens, Cloud
+  PATs, Plugin credentials, PATs, and JWTs without that provenance cannot be
+  exchanged into a session. `/api/auth/refresh` applies the same provenance
+  check. Existing unmarked JWTs continue to authenticate regular `/api`
+  requests until expiry, but cannot be refreshed or exchanged and require a
+  fresh login for those operations.
 - The member surface does not currently accept session JWTs or cookies, task
   tokens (`mat_`), Cloud PATs (`mcn_`), or Plugin tokens (`mpi_`, `mpc_`).
   These credentials are rejected before resource routing. OAuth access tokens
@@ -76,7 +82,8 @@ endpoint-specific concurrency rules.
   `insufficient_scope`; PAT issuance also documents `issuer_required`,
   `pat_issuer_not_allowed`, `public_api_credential_only`,
   `workspace_id_required`, `workspace_binding_required`, and
-  `scope_not_permitted_for_role`. Workspace isolation returns `not_found` for
+  `scope_not_permitted_for_role`; CLI token exchange uses
+  `cli_token_issuer_not_allowed`. Workspace isolation returns `not_found` for
   a workspace the member cannot access; limiter failures return `rate_limited`
   and `Retry-After`.
 - Audit requirements use an explicit lifecycle (`planned` or `enforced`). The

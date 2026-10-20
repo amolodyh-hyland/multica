@@ -47,6 +47,9 @@ func renewCookieSession(w http.ResponseWriter, r *http.Request, claims jwt.MapCl
 	if !fromCookie || !auth.IsSafeMethod(r.Method) {
 		return r
 	}
+	if !auth.HasInteractiveSessionProvenance(claims) {
+		return r
+	}
 	if !auth.ShouldRenewSession(time.Now(), auth.SessionExpiry(claims)) {
 		return r
 	}

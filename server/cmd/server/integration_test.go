@@ -200,11 +200,12 @@ func readJSON(t *testing.T, resp *http.Response, v any) {
 
 func generateTestJWT(userID, email, name string) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":   userID,
-		"email": email,
-		"name":  name,
-		"exp":   time.Now().Add(72 * time.Hour).Unix(),
-		"iat":   time.Now().Unix(),
+		"sub":                       userID,
+		"email":                     email,
+		"name":                      name,
+		"exp":                       time.Now().Add(72 * time.Hour).Unix(),
+		"iat":                       time.Now().Unix(),
+		auth.SessionProvenanceClaim: auth.InteractiveSessionProvenance,
 	})
 	return token.SignedString(auth.JWTSecret())
 }
