@@ -50,6 +50,11 @@ const (
 	RateLimitPluginStrict RateLimitProfile = "plugin_strict"
 )
 
+// UserDefaultRateLimitPerMinute is the default budget for a member PAT on the
+// user Public API surface. Deployments may override it with
+// RATE_LIMIT_USER_PUBLIC_API.
+const UserDefaultRateLimitPerMinute = 300
+
 // AuditStatus distinguishes a declared requirement from an implemented audit
 // sink. A capability must not claim enforcement merely because it is listed in
 // the contract ledger.

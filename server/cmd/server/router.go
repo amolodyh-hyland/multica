@@ -114,6 +114,28 @@ func registerPluginActionRoutes(r chi.Router, h *handler.Handler) {
 	r.Delete(publicapiv1.PathStorageValue, h.DeletePluginStorage)
 }
 
+func registerMemberPublicAPIRoutes(r chi.Router, h *handler.Handler) {
+	operations := map[string]http.Handler{
+		http.MethodGet + " " + publicapiv1.PathIssue:          http.HandlerFunc(h.GetPluginIssue),
+		http.MethodPatch + " " + publicapiv1.PathIssue:        http.HandlerFunc(h.PatchPluginIssue),
+		http.MethodGet + " " + publicapiv1.PathIssueComments:  http.HandlerFunc(h.ListPluginComments),
+		http.MethodPost + " " + publicapiv1.PathIssueComments: http.HandlerFunc(h.CreatePluginComment),
+	}
+	for _, operation := range publicapiv1.Operations {
+		if operation.Contract != publicapiv1.ContractSharedResource {
+			continue
+		}
+		endpoint := operations[operation.Method+" "+operation.Path]
+		if endpoint == nil {
+			panic(fmt.Sprintf("member Public API handler not registered for %s %s", operation.Method, operation.Path))
+		}
+		if operation.Policy.Scope == "" {
+			panic(fmt.Sprintf("member Public API operation %s %s has no scope", operation.Method, operation.Path))
+		}
+		r.With(middleware.RequirePublicAPIScope(operation.Policy.Scope)).Method(operation.Method, operation.Path, endpoint)
+	}
+}
+
 func allowedOrigins() []string {
 	raw := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS"))
 	if raw == "" {
@@ -1610,6 +1632,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 		r.Post("/runtimes/{runtimeId}/recover-orphans", h.RecoverOrphanedTasks)
 		r.Post("/tasks/{taskId}/session", h.PinTaskSession)
+	})
+
+	// Member Public API surface. It accepts only scoped member PATs today; a
+	// future OAuth verifier can install the same typed principal after validating
+	// its issuer, audience, member identity, and token scopes. It is mounted
+	// outside Auth so session, task, Cloud, and Plugin credentials cannot cross
+	// this trust boundary. Only shared-resource ledger operations are registered.
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.PublicAPIUserPAT(queries))
+		r.Use(middleware.PublicAPIUserRateLimit(rdb, envPositiveInt("RATE_LIMIT_USER_PUBLIC_API", publicapiv1.UserDefaultRateLimitPerMinute), time.Minute))
+		r.Route(publicapiv1.MemberBasePath, func(r chi.Router) {
+			r.Use(middleware.RequirePublicAPIWorkspaceMember(queries))
+			registerMemberPublicAPIRoutes(r, h)
+			r.NotFound(publicapiv1.NotFound)
+			r.MethodNotAllowed(publicapiv1.MethodNotAllowed)
+		})
 	})
 
 	// Public Plugin Action API. This is the stable, globally versioned contract

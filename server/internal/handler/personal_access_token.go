@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	publicapiv1 "github.com/multica-ai/multica/server/pkg/publicapi/v1"
 )
 
 // PATRenewThreshold is the remaining-lifetime window at which a PAT becomes
@@ -28,12 +29,13 @@ const PATRenewThreshold = 7 * 24 * time.Hour
 const PATRenewExtension = 90 * 24 * time.Hour
 
 type PersonalAccessTokenResponse struct {
-	ID         string  `json:"id"`
-	Name       string  `json:"name"`
-	Prefix     string  `json:"token_prefix"`
-	ExpiresAt  *string `json:"expires_at"`
-	LastUsedAt *string `json:"last_used_at"`
-	CreatedAt  string  `json:"created_at"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Prefix     string   `json:"token_prefix"`
+	ExpiresAt  *string  `json:"expires_at"`
+	LastUsedAt *string  `json:"last_used_at"`
+	CreatedAt  string   `json:"created_at"`
+	Scopes     []string `json:"scopes"`
 }
 
 type CreatePATResponse struct {
@@ -49,12 +51,14 @@ func patToResponse(pat db.PersonalAccessToken) PersonalAccessTokenResponse {
 		ExpiresAt:  timestampToPtr(pat.ExpiresAt),
 		LastUsedAt: timestampToPtr(pat.LastUsedAt),
 		CreatedAt:  timestampToString(pat.CreatedAt),
+		Scopes:     append([]string{}, pat.Scopes...),
 	}
 }
 
 type CreatePATRequest struct {
-	Name          string `json:"name"`
-	ExpiresInDays *int   `json:"expires_in_days"`
+	Name          string   `json:"name"`
+	ExpiresInDays *int     `json:"expires_in_days"`
+	Scopes        []string `json:"scopes"`
 }
 
 func (h *Handler) CreatePersonalAccessToken(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +74,11 @@ func (h *Handler) CreatePersonalAccessToken(w http.ResponseWriter, r *http.Reque
 	}
 	if req.Name == "" {
 		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	scopes, err := publicapiv1.ValidateUserScopes(req.Scopes)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -98,6 +107,7 @@ func (h *Handler) CreatePersonalAccessToken(w http.ResponseWriter, r *http.Reque
 		TokenHash:   auth.HashToken(rawToken),
 		TokenPrefix: prefix,
 		ExpiresAt:   expiresAt,
+		Scopes:      scopes,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create token")

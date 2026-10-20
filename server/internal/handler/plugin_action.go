@@ -110,6 +110,27 @@ func writePluginActionError(w http.ResponseWriter, r *http.Request, err error, f
 
 // pluginCaller runs checks 1 and 2 and returns the authorized caller.
 func (h *Handler) pluginCaller(w http.ResponseWriter, r *http.Request, scope string) (service.PluginActionCaller, pluginActor, bool) {
+	if credential, ok := middleware.PublicAPIUserCredentialFromContext(r.Context()); ok {
+		if credential.Credential != publicapiv1.CredentialPersonalAccess && credential.Credential != publicapiv1.CredentialUserOAuth {
+			publicapiv1.WriteProblem(w, r, http.StatusUnauthorized, "unsupported_credential", "the credential is not a member Public API credential")
+			return service.PluginActionCaller{}, pluginActor{}, false
+		}
+		if !hasGrantedScope(credential.Scopes, scope) {
+			publicapiv1.WriteProblem(w, r, http.StatusForbidden, "insufficient_scope", "the credential lacks the "+scope+" scope")
+			return service.PluginActionCaller{}, pluginActor{}, false
+		}
+		member, ok := middleware.MemberFromContext(r.Context())
+		workspaceID := middleware.WorkspaceIDFromContext(r.Context())
+		if !ok || workspaceID == "" || uuidToString(member.WorkspaceID) != workspaceID || uuidToString(member.UserID) != credential.UserID {
+			publicapiv1.WriteProblem(w, r, http.StatusNotFound, "not_found", "workspace membership not found")
+			return service.PluginActionCaller{}, pluginActor{}, false
+		}
+		return service.PluginActionCaller{
+			WorkspaceID: member.WorkspaceID,
+			UserID:      member.UserID,
+			Scopes:      append([]string{}, credential.Scopes...),
+		}, pluginActor{Type: "member", Member: member}, true
+	}
 	if !h.requirePluginActionV1(w, r) {
 		return service.PluginActionCaller{}, pluginActor{}, false
 	}
