@@ -57,13 +57,14 @@ var pluginCredentials = []CredentialKind{
 
 var sharedRateLimits = []RateLimitProfile{RateLimitUserDefault, RateLimitPluginStrict}
 var pluginRateLimits = []RateLimitProfile{RateLimitPluginStrict}
+var memberWorkspaceRoles = []string{"member", "admin", "owner"}
 
 var Operations = []Operation{
 	{Method: http.MethodGet, Path: PathContext, Contract: ContractPluginExtension, Policy: OperationPolicy{Credentials: pluginCredentials, Risk: RiskRead, Audit: AuditNotRequired, RateLimits: pluginRateLimits}},
-	{Method: http.MethodGet, Path: PathIssue, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: sharedCredentials, Scope: "issues:read", Risk: RiskRead, Audit: AuditPlanned, RateLimits: sharedRateLimits}},
-	{Method: http.MethodPatch, Path: PathIssue, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: sharedCredentials, Scope: "issues:write", Risk: RiskContentWrite, Audit: AuditPlanned, RateLimits: sharedRateLimits}},
-	{Method: http.MethodGet, Path: PathIssueComments, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: sharedCredentials, Scope: "comments:read", Risk: RiskRead, Audit: AuditPlanned, RateLimits: sharedRateLimits}},
-	{Method: http.MethodPost, Path: PathIssueComments, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: sharedCredentials, Scope: "comments:write", Risk: RiskContentWrite, Audit: AuditPlanned, RateLimits: sharedRateLimits}},
+	{Method: http.MethodGet, Path: PathIssue, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: sharedCredentials, Scope: "issues:read", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskRead, Audit: AuditPlanned, RateLimits: sharedRateLimits}},
+	{Method: http.MethodPatch, Path: PathIssue, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: sharedCredentials, Scope: "issues:write", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskContentWrite, Audit: AuditPlanned, RateLimits: sharedRateLimits}},
+	{Method: http.MethodGet, Path: PathIssueComments, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: sharedCredentials, Scope: "comments:read", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskRead, Audit: AuditPlanned, RateLimits: sharedRateLimits}},
+	{Method: http.MethodPost, Path: PathIssueComments, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: sharedCredentials, Scope: "comments:write", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskContentWrite, Audit: AuditPlanned, RateLimits: sharedRateLimits}},
 	{Method: http.MethodGet, Path: PathStorageScope, Contract: ContractPluginExtension, Policy: OperationPolicy{Credentials: pluginCredentials, Risk: RiskRead, Audit: AuditNotRequired, RateLimits: pluginRateLimits}},
 	{Method: http.MethodGet, Path: PathStorageValue, Contract: ContractPluginExtension, Policy: OperationPolicy{Credentials: pluginCredentials, Risk: RiskRead, Audit: AuditNotRequired, RateLimits: pluginRateLimits}},
 	{Method: http.MethodPut, Path: PathStorageValue, Contract: ContractPluginExtension, Policy: OperationPolicy{Credentials: pluginCredentials, Risk: RiskContentWrite, Audit: AuditPlanned, RateLimits: pluginRateLimits}},
@@ -115,4 +116,51 @@ func ValidateUserScopes(scopes []string) ([]string, error) {
 		validated = append(validated, scope)
 	}
 	return validated, nil
+}
+
+// ValidateUserScopesForRole bounds a requested PAT grant to the capabilities
+// explicitly assigned to the issuer's workspace role in the ledger.
+func ValidateUserScopesForRole(scopes []string, role string) ([]string, error) {
+	validated, err := ValidateUserScopes(scopes)
+	if err != nil {
+		return nil, err
+	}
+	for _, scope := range validated {
+		if !UserScopeAllowedForRole(scope, role) {
+			return nil, fmt.Errorf("Public API scope %q is not permitted for workspace role %q", scope, role)
+		}
+	}
+	return validated, nil
+}
+
+// UserScopeAllowedForRole fails closed unless every shared-resource
+// operation represented by the scope grants it to the issuer's workspace role.
+func UserScopeAllowedForRole(scope, role string) bool {
+	matched := false
+	for _, operation := range Operations {
+		if operation.Contract != ContractSharedResource || operation.Policy.Scope != scope || !hasLedgerCredential(operation.Policy.Credentials, CredentialPersonalAccess) {
+			continue
+		}
+		matched = true
+		allowed := false
+		for _, allowedRole := range operation.Policy.WorkspaceRoles {
+			if allowedRole == role {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return false
+		}
+	}
+	return matched
+}
+
+func hasLedgerCredential(credentials []CredentialKind, want CredentialKind) bool {
+	for _, credential := range credentials {
+		if credential == want {
+			return true
+		}
+	}
+	return false
 }

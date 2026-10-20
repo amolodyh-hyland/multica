@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	publicapiv1 "github.com/multica-ai/multica/server/pkg/publicapi/v1"
 )
@@ -29,13 +30,14 @@ const PATRenewThreshold = 7 * 24 * time.Hour
 const PATRenewExtension = 90 * 24 * time.Hour
 
 type PersonalAccessTokenResponse struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	Prefix     string   `json:"token_prefix"`
-	ExpiresAt  *string  `json:"expires_at"`
-	LastUsedAt *string  `json:"last_used_at"`
-	CreatedAt  string   `json:"created_at"`
-	Scopes     []string `json:"scopes"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Prefix      string   `json:"token_prefix"`
+	ExpiresAt   *string  `json:"expires_at"`
+	LastUsedAt  *string  `json:"last_used_at"`
+	CreatedAt   string   `json:"created_at"`
+	Scopes      []string `json:"scopes"`
+	WorkspaceID string   `json:"workspace_id,omitempty"`
 }
 
 type CreatePATResponse struct {
@@ -44,7 +46,7 @@ type CreatePATResponse struct {
 }
 
 func patToResponse(pat db.PersonalAccessToken) PersonalAccessTokenResponse {
-	return PersonalAccessTokenResponse{
+	response := PersonalAccessTokenResponse{
 		ID:         uuidToString(pat.ID),
 		Name:       pat.Name,
 		Prefix:     pat.TokenPrefix,
@@ -53,15 +55,34 @@ func patToResponse(pat db.PersonalAccessToken) PersonalAccessTokenResponse {
 		CreatedAt:  timestampToString(pat.CreatedAt),
 		Scopes:     append([]string{}, pat.Scopes...),
 	}
+	if pat.ScopeWorkspaceID.Valid {
+		response.WorkspaceID = uuidToString(pat.ScopeWorkspaceID)
+	}
+	return response
 }
 
 type CreatePATRequest struct {
 	Name          string   `json:"name"`
 	ExpiresInDays *int     `json:"expires_in_days"`
 	Scopes        []string `json:"scopes"`
+	WorkspaceID   string   `json:"workspace_id"`
 }
 
 func (h *Handler) CreatePersonalAccessToken(w http.ResponseWriter, r *http.Request) {
+	credential, authenticated := middleware.AuthCredentialFromContext(r.Context())
+	if !authenticated {
+		publicapiv1.WriteProblem(w, r, http.StatusUnauthorized, "issuer_required", "PAT creation requires an authenticated member session or first-party PAT")
+		return
+	}
+	if credential.Kind != middleware.AuthCredentialSessionJWT && credential.Kind != middleware.AuthCredentialPersonalAccess {
+		publicapiv1.WriteProblem(w, r, http.StatusForbidden, "pat_issuer_not_allowed", "this credential cannot issue personal access tokens")
+		return
+	}
+	if credential.Kind == middleware.AuthCredentialPersonalAccess && len(credential.Scopes) > 0 {
+		publicapiv1.WriteProblem(w, r, http.StatusForbidden, "public_api_credential_only", "scoped PATs cannot issue personal access tokens")
+		return
+	}
+
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
@@ -79,6 +100,34 @@ func (h *Handler) CreatePersonalAccessToken(w http.ResponseWriter, r *http.Reque
 	scopes, err := publicapiv1.ValidateUserScopes(req.Scopes)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var scopeWorkspaceID pgtype.UUID
+	if len(scopes) > 0 {
+		if strings.TrimSpace(req.WorkspaceID) == "" {
+			publicapiv1.WriteProblem(w, r, http.StatusBadRequest, "workspace_id_required", "workspace_id is required when creating a scoped PAT")
+			return
+		}
+		var workspaceOK bool
+		scopeWorkspaceID, workspaceOK = parseUUIDOrBadRequest(w, req.WorkspaceID, "workspace_id")
+		if !workspaceOK {
+			return
+		}
+		member, err := h.Queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
+			UserID:      parseUUID(userID),
+			WorkspaceID: scopeWorkspaceID,
+		})
+		if err != nil {
+			publicapiv1.WriteProblem(w, r, http.StatusNotFound, "not_found", "workspace membership not found")
+			return
+		}
+		scopes, err = publicapiv1.ValidateUserScopesForRole(scopes, member.Role)
+		if err != nil {
+			publicapiv1.WriteProblem(w, r, http.StatusForbidden, "scope_not_permitted_for_role", err.Error())
+			return
+		}
+	} else if strings.TrimSpace(req.WorkspaceID) != "" {
+		publicapiv1.WriteProblem(w, r, http.StatusBadRequest, "invalid_request", "workspace_id requires at least one Public API scope")
 		return
 	}
 
@@ -102,12 +151,13 @@ func (h *Handler) CreatePersonalAccessToken(w http.ResponseWriter, r *http.Reque
 	}
 
 	pat, err := h.Queries.CreatePersonalAccessToken(r.Context(), db.CreatePersonalAccessTokenParams{
-		UserID:      parseUUID(userID),
-		Name:        req.Name,
-		TokenHash:   auth.HashToken(rawToken),
-		TokenPrefix: prefix,
-		ExpiresAt:   expiresAt,
-		Scopes:      scopes,
+		UserID:           parseUUID(userID),
+		Name:             req.Name,
+		TokenHash:        auth.HashToken(rawToken),
+		TokenPrefix:      prefix,
+		ExpiresAt:        expiresAt,
+		Scopes:           scopes,
+		ScopeWorkspaceID: scopeWorkspaceID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create token")

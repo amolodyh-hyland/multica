@@ -5,10 +5,11 @@ info:
   description: >-
     Canonical v1 resource contract shared by Multica API surfaces. The Plugin
     API applies installation identity plus manifest scopes. The member
-    surface is mounted at /api/v1 and currently accepts scoped member PATs.
-    Use Plugin credentials only with the Plugin server and member PATs only
-    with the member server. Plugin-specific context and storage remain
-    extensions.
+    surface is mounted at /api/v1 and currently accepts workspace-bound scoped
+    member PATs. Scoped PATs are rejected on legacy /api and realtime surfaces;
+    unscoped legacy PATs remain available there. Use Plugin credentials only
+    with the Plugin server and member PATs only with the member server.
+    Plugin-specific context and storage remain extensions.
 servers:
   - url: https://plugin-api.multica.ai/v1
     description: Installed Plugin and invocation callback tokens
@@ -40,10 +41,12 @@ paths:
       summary: Get an issue
       description: >-
         Use pluginBearer only with the Plugin server and memberPAT only with the
-        member server. Member requests must include X-Workspace-ID; Plugin
-        requests derive their workspace from the installation.
+        member server. Member requests must include X-Workspace-ID matching the
+        PAT's workspace binding, and current membership is checked on every
+        request. Plugin requests derive their workspace from the installation.
       x-multica-contract: shared_resource
       x-multica-scope: issues:read
+      x-multica-workspace-roles: [member, admin, owner]
       x-multica-audit: planned
       x-multica-rate-limit-profiles: [user_default, plugin_strict]
       security:
@@ -71,10 +74,12 @@ paths:
       summary: Update an issue title or description
       description: >-
         Use pluginBearer only with the Plugin server and memberPAT only with the
-        member server. Member requests must include X-Workspace-ID; Plugin
-        requests derive their workspace from the installation.
+        member server. Member requests must include X-Workspace-ID matching the
+        PAT's workspace binding, and current membership is checked on every
+        request. Plugin requests derive their workspace from the installation.
       x-multica-contract: shared_resource
       x-multica-scope: issues:write
+      x-multica-workspace-roles: [member, admin, owner]
       x-multica-audit: planned
       x-multica-rate-limit-profiles: [user_default, plugin_strict]
       security:
@@ -114,10 +119,12 @@ paths:
       summary: List the newest 200 comments in chronological order
       description: >-
         Use pluginBearer only with the Plugin server and memberPAT only with the
-        member server. Member requests must include X-Workspace-ID; Plugin
-        requests derive their workspace from the installation.
+        member server. Member requests must include X-Workspace-ID matching the
+        PAT's workspace binding, and current membership is checked on every
+        request. Plugin requests derive their workspace from the installation.
       x-multica-contract: shared_resource
       x-multica-scope: comments:read
+      x-multica-workspace-roles: [member, admin, owner]
       x-multica-audit: planned
       x-multica-rate-limit-profiles: [user_default, plugin_strict]
       security:
@@ -142,10 +149,12 @@ paths:
       summary: Create an issue comment without mention dispatch
       description: >-
         Use pluginBearer only with the Plugin server and memberPAT only with the
-        member server. Member requests must include X-Workspace-ID; Plugin
-        requests derive their workspace from the installation.
+        member server. Member requests must include X-Workspace-ID matching the
+        PAT's workspace binding, and current membership is checked on every
+        request. Plugin requests derive their workspace from the installation.
       x-multica-contract: shared_resource
       x-multica-scope: comments:write
+      x-multica-workspace-roles: [member, admin, owner]
       x-multica-audit: planned
       x-multica-rate-limit-profiles: [user_default, plugin_strict]
       security:
@@ -251,7 +260,7 @@ components:
       name: X-Workspace-ID
       in: header
       required: false
-      description: Required on the member server; ignored by the Plugin server, which derives workspace from installation
+      description: Required on the member server and must match the scoped PAT binding; ignored by the Plugin server, which derives workspace from installation
       schema:
         type: string
         format: uuid

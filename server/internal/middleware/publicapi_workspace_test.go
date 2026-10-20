@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	publicapiv1 "github.com/multica-ai/multica/server/pkg/publicapi/v1"
 )
 
 type publicAPIWorkspaceQueriesStub struct {
@@ -44,7 +45,13 @@ func TestRequirePublicAPIWorkspaceMemberAllowsMemberWorkspace(t *testing.T) {
 		members:   []db.Member{member},
 	})
 	called := false
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/issues/MUL-1", nil)
+	ctx := WithPublicAPIUserCredential(context.Background(), PublicAPIUserCredential{
+		UserID:      "00000000-0000-0000-0000-000000000001",
+		WorkspaceID: util.UUIDToString(workspaceID),
+		Scopes:      []string{"issues:read"},
+		Credential:  publicapiv1.CredentialPersonalAccess,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/issues/MUL-1", nil).WithContext(ctx)
 	req.Header.Set("X-User-ID", "00000000-0000-0000-0000-000000000001")
 	req.Header.Set("X-Workspace-ID", "00000000-0000-0000-0000-000000000002")
 	response := httptest.NewRecorder()
@@ -82,7 +89,13 @@ func TestRequirePublicAPIWorkspaceMemberHidesOtherWorkspace(t *testing.T) {
 			UserID: userID, WorkspaceID: memberWorkspaceID, Role: "member",
 		}},
 	})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/issues/MUL-1", nil)
+	ctx := WithPublicAPIUserCredential(context.Background(), PublicAPIUserCredential{
+		UserID:      "00000000-0000-0000-0000-000000000001",
+		WorkspaceID: util.UUIDToString(memberWorkspaceID),
+		Scopes:      []string{"issues:read"},
+		Credential:  publicapiv1.CredentialPersonalAccess,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/issues/MUL-1", nil).WithContext(ctx)
 	req.Header.Set("X-User-ID", "00000000-0000-0000-0000-000000000001")
 	req.Header.Set("X-Workspace-ID", "00000000-0000-0000-0000-000000000003")
 	response := httptest.NewRecorder()
@@ -90,6 +103,41 @@ func TestRequirePublicAPIWorkspaceMemberHidesOtherWorkspace(t *testing.T) {
 	gate(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })).ServeHTTP(response, req)
 	if called {
 		t.Fatal("request for a workspace without membership reached the handler")
+	}
+	assertPublicAPIProblem(t, response, http.StatusNotFound, "not_found")
+}
+
+func TestRequirePublicAPIWorkspaceMemberEnforcesTokenWorkspaceBinding(t *testing.T) {
+	userID, err := util.ParseUUID("00000000-0000-0000-0000-000000000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundWorkspaceID, err := util.ParseUUID("00000000-0000-0000-0000-000000000002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestedWorkspaceID, err := util.ParseUUID("00000000-0000-0000-0000-000000000003")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := requirePublicAPIWorkspaceMember(publicAPIWorkspaceQueriesStub{
+		workspace: db.Workspace{ID: requestedWorkspaceID},
+		members:   []db.Member{{UserID: userID, WorkspaceID: requestedWorkspaceID, Role: "member"}},
+	})
+	ctx := WithPublicAPIUserCredential(context.Background(), PublicAPIUserCredential{
+		UserID:      "00000000-0000-0000-0000-000000000001",
+		WorkspaceID: util.UUIDToString(boundWorkspaceID),
+		Scopes:      []string{"issues:read"},
+		Credential:  publicapiv1.CredentialPersonalAccess,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/issues/MUL-1", nil).WithContext(ctx)
+	req.Header.Set("X-User-ID", "00000000-0000-0000-0000-000000000001")
+	req.Header.Set("X-Workspace-ID", "00000000-0000-0000-0000-000000000003")
+	response := httptest.NewRecorder()
+	called := false
+	gate(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })).ServeHTTP(response, req)
+	if called {
+		t.Fatal("PAT reached a workspace outside its stored grant")
 	}
 	assertPublicAPIProblem(t, response, http.StatusNotFound, "not_found")
 }

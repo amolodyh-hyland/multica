@@ -201,11 +201,15 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 			if strings.HasPrefix(tokenString, "mul_") {
 				hash := auth.HashToken(tokenString)
 
-				if userID, ok := patCache.Get(r.Context(), hash); ok {
-					if rejectTemporarilyDisabledUser(w, r, userID, "", DaemonAuthPathPAT) {
+				if entry, ok := patCache.Get(r.Context(), hash); ok {
+					if len(entry.Scopes) > 0 {
+						rejectScopedPATOnLegacySurface(w, r)
 						return
 					}
-					r.Header.Set("X-User-ID", userID)
+					if rejectTemporarilyDisabledUser(w, r, entry.UserID, "", DaemonAuthPathPAT) {
+						return
+					}
+					r.Header.Set("X-User-ID", entry.UserID)
 					ctx := context.WithValue(r.Context(), ctxKeyDaemonAuthPath, DaemonAuthPathPAT)
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
@@ -226,17 +230,22 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 				if rejectTemporarilyDisabledUser(w, r, userID, "", DaemonAuthPathPAT) {
 					return
 				}
-				r.Header.Set("X-User-ID", userID)
 
 				var expiresAt time.Time
 				if pat.ExpiresAt.Valid {
 					expiresAt = pat.ExpiresAt.Time
 				}
-				patCache.Set(r.Context(), hash, userID, auth.TTLForExpiry(time.Now(), expiresAt))
+				patCache.Set(r.Context(), hash, patCacheEntry(pat), auth.TTLForExpiry(time.Now(), expiresAt))
 
 				// Cache miss = first request in this TTL window. Refresh
 				// last_used_at; subsequent hits skip the write entirely.
 				go queries.UpdatePersonalAccessTokenLastUsed(context.Background(), pat.ID)
+				if len(pat.Scopes) > 0 {
+					rejectScopedPATOnLegacySurface(w, r)
+					return
+				}
+
+				r.Header.Set("X-User-ID", userID)
 
 				ctx := context.WithValue(r.Context(), ctxKeyDaemonAuthPath, DaemonAuthPathPAT)
 				next.ServeHTTP(w, r.WithContext(ctx))

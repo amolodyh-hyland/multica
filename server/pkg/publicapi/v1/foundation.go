@@ -67,14 +67,16 @@ const (
 )
 
 // OperationPolicy records authorization and observability requirements next
-// to the route contract. Surface-specific middleware enforces the credential
-// kind and rate profile; resource authorization enforces workspace and scope.
+// to the route contract. WorkspaceRoles bounds PAT grants at issuance;
+// surface-specific middleware enforces credential kind and rate profile, and
+// resource authorization enforces workspace and scope.
 type OperationPolicy struct {
-	Credentials []CredentialKind
-	Scope       string
-	Risk        RiskLevel
-	Audit       AuditStatus
-	RateLimits  []RateLimitProfile
+	Credentials    []CredentialKind
+	Scope          string
+	WorkspaceRoles []string
+	Risk           RiskLevel
+	Audit          AuditStatus
+	RateLimits     []RateLimitProfile
 }
 
 // PageInfo is the common response metadata for cursor-paginated collections.

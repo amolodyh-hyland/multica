@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	publicapiv1 "github.com/multica-ai/multica/server/pkg/publicapi/v1"
 )
@@ -40,11 +41,16 @@ func (*publicAPIPATStoreStub) UpdatePersonalAccessTokenLastUsed(context.Context,
 func TestPublicAPIUserPATAcceptsScopedMemberPAT(t *testing.T) {
 	const token = "mul_public_api_test_token"
 	userID := pgtype.UUID{Bytes: [16]byte{1, 2, 3}, Valid: true}
+	workspaceID, err := util.ParseUUID("00000000-0000-0000-0000-000000000002")
+	if err != nil {
+		t.Fatal(err)
+	}
 	store := &publicAPIPATStoreStub{
 		tokenHash: auth.HashToken(token),
 		pat: db.PersonalAccessToken{
-			UserID: userID,
-			Scopes: []string{"issues:read", "comments:write"},
+			UserID:           userID,
+			Scopes:           []string{"issues:read", "comments:write"},
+			ScopeWorkspaceID: workspaceID,
 		},
 	}
 	called := false
@@ -57,6 +63,9 @@ func TestPublicAPIUserPATAcceptsScopedMemberPAT(t *testing.T) {
 		}
 		if credential.UserID != "01020300-0000-0000-0000-000000000000" || credential.Credential != publicapiv1.CredentialPersonalAccess {
 			t.Errorf("unexpected member credential: %+v", credential)
+		}
+		if credential.WorkspaceID != "00000000-0000-0000-0000-000000000002" {
+			t.Errorf("workspace binding = %q", credential.WorkspaceID)
 		}
 		if strings.Join(credential.Scopes, ",") != "issues:read,comments:write" {
 			t.Errorf("scopes = %v", credential.Scopes)
@@ -99,6 +108,18 @@ func TestPublicAPIUserPATRejectsUnscopedAndInvalidPATs(t *testing.T) {
 			},
 			want: http.StatusForbidden,
 			code: "scoped_token_required",
+		},
+		{
+			name: "scoped PAT without workspace binding",
+			store: &publicAPIPATStoreStub{
+				tokenHash: auth.HashToken(validToken),
+				pat: db.PersonalAccessToken{
+					UserID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
+					Scopes: []string{"issues:read"},
+				},
+			},
+			want: http.StatusForbidden,
+			code: "workspace_binding_required",
 		},
 		{
 			name:  "invalid PAT",

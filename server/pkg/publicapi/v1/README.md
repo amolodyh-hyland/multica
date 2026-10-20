@@ -28,12 +28,22 @@ endpoint-specific concurrency rules.
 ## Foundation rules
 
 - A scoped `mul_` PAT authenticates a member on `/api/v1`. Create one through
-  the existing authenticated `POST /api/tokens` endpoint with a `scopes` list,
-  for example `{"name":"AO","scopes":["issues:read","issues:write"]}`.
+  the existing authenticated `POST /api/tokens` endpoint with a workspace and
+  a `scopes` list, for example
+  `{"name":"AO","workspace_id":"<workspace-uuid>","scopes":["issues:read","issues:write"]}`.
   Accepted scopes come from the capability ledger: `issues:read`,
   `issues:write`, `comments:read`, and `comments:write`. A PAT created without
   scopes, including a legacy PAT, continues to work on the existing `/api`
-  surface but is rejected on `/api/v1` with `scoped_token_required`.
+  surface but is rejected on `/api/v1` with `scoped_token_required`. A scoped
+  PAT is bound to one workspace, must present that workspace on each request,
+  and is rejected on legacy `/api`, daemon, and realtime surfaces with
+  `public_api_credential_only`.
+- PAT creation accepts an interactive session JWT or an unscoped member PAT
+  through the first-party management endpoint. Task tokens, Cloud PATs, Plugin
+  credentials, and scoped PATs cannot issue PATs. The issuer must be a member
+  of the requested workspace; scope grants are checked against the role policy
+  in the capability ledger. The current issue and comment scopes are available
+  to `member`, `admin`, and `owner` roles.
 - The member surface does not currently accept session JWTs or cookies, task
   tokens (`mat_`), Cloud PATs (`mcn_`), or Plugin tokens (`mpi_`, `mpc_`).
   These credentials are rejected before resource routing. OAuth access tokens
@@ -63,9 +73,12 @@ endpoint-specific concurrency rules.
   `code`, `status`, `detail`, `request_id`, and compatibility `error` fields.
   User-surface credential codes include `credential_required`,
   `unsupported_credential`, `invalid_token`, `scoped_token_required`, and
-  `insufficient_scope`; workspace isolation returns `not_found` for a workspace
-  the member cannot access; limiter failures return `rate_limited` and
-  `Retry-After`.
+  `insufficient_scope`; PAT issuance also documents `issuer_required`,
+  `pat_issuer_not_allowed`, `public_api_credential_only`,
+  `workspace_id_required`, `workspace_binding_required`, and
+  `scope_not_permitted_for_role`. Workspace isolation returns `not_found` for
+  a workspace the member cannot access; limiter failures return `rate_limited`
+  and `Retry-After`.
 - Audit requirements use an explicit lifecycle (`planned` or `enforced`). The
   migrated issue/comment operations remain `planned` until a durable audit
   sink is wired. This surface does not claim that a durable audit write is

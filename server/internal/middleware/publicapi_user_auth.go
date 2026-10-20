@@ -19,9 +19,10 @@ type publicAPIUserContextKey struct{}
 // verifier wired today. A future OAuth verifier can populate the same context
 // after validating issuer, audience, member identity, and token scopes.
 type PublicAPIUserCredential struct {
-	UserID     string
-	Scopes     []string
-	Credential publicapiv1.CredentialKind
+	UserID      string
+	WorkspaceID string
+	Scopes      []string
+	Credential  publicapiv1.CredentialKind
 }
 
 // WithPublicAPIUserCredential stores a verified user credential for Public API
@@ -95,11 +96,16 @@ func PublicAPIUserPAT(queries publicAPIPATQueryer) func(http.Handler) http.Handl
 				publicapiv1.WriteProblem(w, r, http.StatusForbidden, "scoped_token_required", "this PAT has no Public API scopes")
 				return
 			}
+			if !pat.ScopeWorkspaceID.Valid {
+				publicapiv1.WriteProblem(w, r, http.StatusForbidden, "workspace_binding_required", "this scoped PAT is not bound to a workspace")
+				return
+			}
 
 			credential := PublicAPIUserCredential{
-				UserID:     userID,
-				Scopes:     append([]string{}, pat.Scopes...),
-				Credential: publicapiv1.CredentialPersonalAccess,
+				UserID:      userID,
+				WorkspaceID: util.UUIDToString(pat.ScopeWorkspaceID),
+				Scopes:      append([]string{}, pat.Scopes...),
+				Credential:  publicapiv1.CredentialPersonalAccess,
 			}
 			r.Header.Set("X-User-ID", userID)
 			ctx := WithPublicAPIUserCredential(r.Context(), credential)

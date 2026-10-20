@@ -640,12 +640,17 @@ export interface PersonalAccessToken {
   expires_at: string | null;
   last_used_at: string | null;
   created_at: string;
+  scopes?: string[];
+  workspace_id?: string;
 }
 
-export interface CreatePersonalAccessTokenRequest {
+export type CreatePersonalAccessTokenRequest = {
   name: string;
   expires_in_days?: number;
-}
+} & (
+  | { scopes?: never; workspace_id?: never }
+  | { scopes: string[]; workspace_id: string }
+);
 
 export interface CreatePersonalAccessTokenResponse extends PersonalAccessToken {
   token: string;

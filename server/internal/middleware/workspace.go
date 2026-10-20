@@ -175,9 +175,19 @@ func RequirePublicAPIWorkspaceMember(queries *db.Queries) func(http.Handler) htt
 }
 
 func requirePublicAPIWorkspaceMember(queries workspaceQueryer) func(http.Handler) http.Handler {
-	return buildMiddlewareWithErrorWriter(queries, resolveWorkspaceUUID(queries), nil, func(w http.ResponseWriter, r *http.Request, status int, message string) {
+	base := buildMiddlewareWithErrorWriter(queries, resolveWorkspaceUUID(queries), nil, func(w http.ResponseWriter, r *http.Request, status int, message string) {
 		publicapiv1.WriteProblem(w, r, status, "", message)
 	})
+	return func(next http.Handler) http.Handler {
+		workspaceGate := base(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, ok := PublicAPIUserCredentialFromContext(r.Context()); !ok {
+				publicapiv1.WriteProblem(w, r, http.StatusUnauthorized, "unauthorized", "missing authenticated user credential")
+				return
+			}
+			workspaceGate.ServeHTTP(w, r)
+		})
+	}
 }
 
 // RequireWorkspaceRole is like RequireWorkspaceMember but additionally checks
@@ -246,6 +256,13 @@ func buildMiddlewareWithErrorWriter(queries workspaceQueryer, resolve workspaceR
 			}
 
 			userID := r.Header.Get("X-User-ID")
+			if credential, ok := PublicAPIUserCredentialFromContext(r.Context()); ok {
+				if credential.WorkspaceID == "" || credential.WorkspaceID != workspaceID {
+					write(w, r, http.StatusNotFound, "workspace not found")
+					return
+				}
+				userID = credential.UserID
+			}
 			if userID == "" {
 				write(w, r, http.StatusUnauthorized, "user not authenticated")
 				return

@@ -64,7 +64,7 @@ func TestDaemonAuth_PATCacheHit(t *testing.T) {
 
 	const rawToken = "mul_daemon_pat_cache_hit_test"
 	hash := auth.HashToken(rawToken)
-	cache.Set(context.Background(), hash, "cached-user-id", auth.AuthCacheTTL)
+	cache.Set(context.Background(), hash, auth.PATCacheEntry{UserID: "cached-user-id"}, auth.AuthCacheTTL)
 
 	var gotUserID, gotPath string
 	mw := DaemonAuth(nil, cache, nil, nil)
@@ -88,6 +88,26 @@ func TestDaemonAuth_PATCacheHit(t *testing.T) {
 	if gotPath != DaemonAuthPathPAT {
 		t.Fatalf("expected auth path %q, got %q", DaemonAuthPathPAT, gotPath)
 	}
+}
+
+func TestDaemonAuthRejectsScopedPATsFromCache(t *testing.T) {
+	rdb := newRedisTestClient(t)
+	cache := auth.NewPATCache(rdb)
+	const rawToken = "mul_scoped_daemon_pat_test"
+	cache.Set(context.Background(), auth.HashToken(rawToken), auth.PATCacheEntry{
+		UserID: "cached-user-id",
+		Scopes: []string{"issues:read"},
+	}, auth.AuthCacheTTL)
+	called := false
+	handler := DaemonAuth(nil, cache, nil, nil)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	req := httptest.NewRequest(http.MethodPost, "/api/daemon/heartbeat", nil)
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if called {
+		t.Fatal("scoped PAT reached a legacy daemon route")
+	}
+	assertPublicAPIProblem(t, response, http.StatusForbidden, "public_api_credential_only")
 }
 
 func TestDaemonAuth_MissingAuth(t *testing.T) {
@@ -323,7 +343,6 @@ func TestDaemonAuth_MCN_FleetUnreachable(t *testing.T) {
 		t.Fatalf("expected 503 when fleet is unavailable, got %d", w.Code)
 	}
 }
-
 
 // TestDaemonAuth_MCN_OwnerNotInLocalDB pins the new owner-existence
 // guard end-to-end through the middleware. Cloud verifies the token

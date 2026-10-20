@@ -9,7 +9,10 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -172,9 +175,12 @@ func TestAuth_WrongSigningMethod(t *testing.T) {
 
 func TestAuth_ValidToken(t *testing.T) {
 	var gotUserID, gotEmail string
+	var gotCredential AuthCredential
+	var gotCredentialOK bool
 	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotUserID = r.Header.Get("X-User-ID")
 		gotEmail = r.Header.Get("X-User-Email")
+		gotCredential, gotCredentialOK = AuthCredentialFromContext(r.Context())
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -193,6 +199,9 @@ func TestAuth_ValidToken(t *testing.T) {
 	}
 	if gotEmail != "test@multica.ai" {
 		t.Fatalf("expected X-User-Email 'test@multica.ai', got '%s'", gotEmail)
+	}
+	if !gotCredentialOK || gotCredential.Kind != AuthCredentialSessionJWT {
+		t.Fatalf("session credential = %+v, present=%v", gotCredential, gotCredentialOK)
 	}
 }
 
@@ -268,6 +277,122 @@ func TestAuth_InvalidPAT(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+type authPATQueryStub struct {
+	tokenHash string
+	pat       db.PersonalAccessToken
+	err       error
+}
+
+func (s authPATQueryStub) GetTaskTokenByHash(context.Context, string) (db.TaskToken, error) {
+	return db.TaskToken{}, pgx.ErrNoRows
+}
+
+func (s authPATQueryStub) GetPersonalAccessTokenByHash(_ context.Context, hash string) (db.PersonalAccessToken, error) {
+	if s.err != nil {
+		return db.PersonalAccessToken{}, s.err
+	}
+	if hash != s.tokenHash {
+		return db.PersonalAccessToken{}, pgx.ErrNoRows
+	}
+	return s.pat, nil
+}
+
+func (authPATQueryStub) UpdatePersonalAccessTokenLastUsed(context.Context, pgtype.UUID) error {
+	return nil
+}
+
+func TestAuthRejectsScopedPATsOnLegacyRoutes(t *testing.T) {
+	const rawToken = "mul_scoped_legacy_rejection_test"
+	queries := authPATQueryStub{
+		tokenHash: auth.HashToken(rawToken),
+		pat: db.PersonalAccessToken{
+			UserID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
+			Scopes: []string{"issues:read"},
+		},
+	}
+	for _, route := range []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/api/me"},
+		{method: http.MethodGet, path: "/api/issues"},
+		{method: http.MethodPost, path: "/api/tokens"},
+	} {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			called := false
+			handler := authWithPATQueryer(nil, queries, nil, nil, nil)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+			req := httptest.NewRequest(route.method, route.path, nil)
+			req.Header.Set("Authorization", "Bearer "+rawToken)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, req)
+			if called {
+				t.Fatal("scoped PAT reached a legacy API route")
+			}
+			assertPublicAPIProblem(t, response, http.StatusForbidden, "public_api_credential_only")
+		})
+	}
+}
+
+func TestAuthRejectsScopedPATFromCacheOnLegacyRoute(t *testing.T) {
+	rdb := newRedisTestClient(t)
+	cache := auth.NewPATCache(rdb)
+	const rawToken = "mul_scoped_legacy_cache_test"
+	cache.Set(context.Background(), auth.HashToken(rawToken), auth.PATCacheEntry{
+		UserID: "cached-user-id",
+		Scopes: []string{"issues:read"},
+	}, auth.AuthCacheTTL)
+	called := false
+	handler := Auth(nil, cache, nil, nil)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	req := httptest.NewRequest(http.MethodGet, "/api/issues", nil)
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if called {
+		t.Fatal("cached scoped PAT reached a legacy API route")
+	}
+	assertPublicAPIProblem(t, response, http.StatusForbidden, "public_api_credential_only")
+}
+
+func TestAuthStillAcceptsUnscopedPATsOnLegacyRoutes(t *testing.T) {
+	const rawToken = "mul_unscoped_legacy_acceptance_test"
+	queries := authPATQueryStub{
+		tokenHash: auth.HashToken(rawToken),
+		pat:       db.PersonalAccessToken{UserID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true}},
+	}
+	called := false
+	handler := authWithPATQueryer(nil, queries, nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		credential, ok := AuthCredentialFromContext(r.Context())
+		if !ok || credential.Kind != AuthCredentialPersonalAccess {
+			t.Errorf("legacy PAT source = %+v, present=%v", credential, ok)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/issues", nil)
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if !called || response.Code != http.StatusNoContent {
+		t.Fatalf("unscoped PAT status=%d called=%v body=%s", response.Code, called, response.Body.String())
+	}
+}
+
+func TestAuthRejectsPluginTokensOnPATManagementRoute(t *testing.T) {
+	for _, rawToken := range []string{"mpi_installation_token", "mpc_callback_token"} {
+		t.Run(rawToken[:3], func(t *testing.T) {
+			called := false
+			handler := Auth(nil, nil, nil, nil)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+			req := httptest.NewRequest(http.MethodPost, "/api/tokens", nil)
+			req.Header.Set("Authorization", "Bearer "+rawToken)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, req)
+			if called || response.Code != http.StatusUnauthorized {
+				t.Fatalf("Plugin bearer reached PAT management: status=%d called=%v body=%s", response.Code, called, response.Body.String())
+			}
+		})
 	}
 }
 
@@ -355,7 +480,7 @@ func TestAuth_PATCacheHit(t *testing.T) {
 
 	const rawToken = "mul_cache_hit_test_token"
 	hash := auth.HashToken(rawToken)
-	cache.Set(context.Background(), hash, "cached-user-id", auth.AuthCacheTTL)
+	cache.Set(context.Background(), hash, auth.PATCacheEntry{UserID: "cached-user-id"}, auth.AuthCacheTTL)
 
 	var gotUserID string
 	mw := Auth(nil, cache, nil, nil) // nil queries — only safe on cache hit

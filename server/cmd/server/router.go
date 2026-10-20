@@ -2662,8 +2662,11 @@ type patResolver struct {
 func (pr *patResolver) ResolveToken(ctx context.Context, token string) (string, bool) {
 	hash := auth.HashToken(token)
 
-	if userID, ok := pr.cache.Get(ctx, hash); ok {
-		return userID, true
+	if entry, ok := pr.cache.Get(ctx, hash); ok {
+		if len(entry.Scopes) > 0 {
+			return "", false
+		}
+		return entry.UserID, true
 	}
 
 	pat, err := pr.queries.GetPersonalAccessTokenByHash(ctx, hash)
@@ -2672,12 +2675,24 @@ func (pr *patResolver) ResolveToken(ctx context.Context, token string) (string, 
 	}
 
 	userID := util.UUIDToString(pat.UserID)
+	if len(pat.Scopes) > 0 {
+		var expiresAt time.Time
+		if pat.ExpiresAt.Valid {
+			expiresAt = pat.ExpiresAt.Time
+		}
+		pr.cache.Set(ctx, hash, auth.PATCacheEntry{
+			UserID:           userID,
+			Scopes:           append([]string{}, pat.Scopes...),
+			ScopeWorkspaceID: util.UUIDToString(pat.ScopeWorkspaceID),
+		}, auth.TTLForExpiry(time.Now(), expiresAt))
+		return "", false
+	}
 
 	var expiresAt time.Time
 	if pat.ExpiresAt.Valid {
 		expiresAt = pat.ExpiresAt.Time
 	}
-	pr.cache.Set(ctx, hash, userID, auth.TTLForExpiry(time.Now(), expiresAt))
+	pr.cache.Set(ctx, hash, auth.PATCacheEntry{UserID: userID}, auth.TTLForExpiry(time.Now(), expiresAt))
 
 	// Cache miss = first WS auth in this TTL window. Refresh last_used_at;
 	// subsequent connects within the window skip the write.

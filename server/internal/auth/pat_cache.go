@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"time"
@@ -29,6 +30,15 @@ type PATCache struct {
 	rdb redis.UniversalClient
 }
 
+// PATCacheEntry carries the authorization metadata required by each token
+// surface. Older cache values contain only a user ID and are treated as a
+// miss so cached pre-scope credentials cannot bypass the new boundary.
+type PATCacheEntry struct {
+	UserID           string   `json:"user_id"`
+	Scopes           []string `json:"scopes"`
+	ScopeWorkspaceID string   `json:"scope_workspace_id,omitempty"`
+}
+
 // NewPATCache returns a cache backed by rdb. Pass nil to disable caching;
 // the returned *PATCache is safe to call but never hits Redis.
 func NewPATCache(rdb redis.UniversalClient) *PATCache {
@@ -40,20 +50,25 @@ func NewPATCache(rdb redis.UniversalClient) *PATCache {
 
 func patCacheKey(hash string) string { return patCachePrefix + hash }
 
-// Get returns the cached user_id for a token hash. ok=false on cache miss
-// or any Redis error — a dead Redis must not take down auth.
-func (c *PATCache) Get(ctx context.Context, hash string) (userID string, ok bool) {
+// Get returns cached token authorization metadata. ok=false on cache miss,
+// an old cache value, or any Redis error — a dead Redis must not take down
+// auth.
+func (c *PATCache) Get(ctx context.Context, hash string) (entry PATCacheEntry, ok bool) {
 	if c == nil {
-		return "", false
+		return PATCacheEntry{}, false
 	}
 	v, err := c.rdb.Get(ctx, patCacheKey(hash)).Result()
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
 			slog.Warn("pat_cache: get failed; falling back to DB", "error", err)
 		}
-		return "", false
+		return PATCacheEntry{}, false
 	}
-	return v, true
+	if err := json.Unmarshal([]byte(v), &entry); err != nil || entry.UserID == "" {
+		return PATCacheEntry{}, false
+	}
+	entry.Scopes = append([]string{}, entry.Scopes...)
+	return entry, true
 }
 
 // Set populates the cache with the given TTL. Callers MUST pass a TTL no
@@ -63,11 +78,16 @@ func (c *PATCache) Get(ctx context.Context, hash string) (userID string, ok bool
 //
 // Errors are logged and swallowed — a cache write failure is not a
 // request failure.
-func (c *PATCache) Set(ctx context.Context, hash, userID string, ttl time.Duration) {
+func (c *PATCache) Set(ctx context.Context, hash string, entry PATCacheEntry, ttl time.Duration) {
 	if c == nil || ttl <= 0 {
 		return
 	}
-	if err := c.rdb.Set(ctx, patCacheKey(hash), userID, ttl).Err(); err != nil {
+	raw, err := json.Marshal(entry)
+	if err != nil {
+		slog.Warn("pat_cache: encode failed", "error", err)
+		return
+	}
+	if err := c.rdb.Set(ctx, patCacheKey(hash), raw, ttl).Err(); err != nil {
 		slog.Warn("pat_cache: set failed", "error", err)
 	}
 }

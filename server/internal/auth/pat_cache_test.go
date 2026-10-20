@@ -44,11 +44,11 @@ func TestPATCache_NilSafe(t *testing.T) {
 	var c *PATCache // nil
 	ctx := context.Background()
 
-	if v, ok := c.Get(ctx, "any-hash"); ok || v != "" {
-		t.Fatalf("nil cache must miss; got (%q, %v)", v, ok)
+	if v, ok := c.Get(ctx, "any-hash"); ok || v.UserID != "" {
+		t.Fatalf("nil cache must miss; got (%+v, %v)", v, ok)
 	}
-	c.Set(ctx, "any-hash", "user-1", AuthCacheTTL) // no panic
-	c.Invalidate(ctx, "any-hash")                  // no panic
+	c.Set(ctx, "any-hash", PATCacheEntry{UserID: "user-1"}, AuthCacheTTL) // no panic
+	c.Invalidate(ctx, "any-hash")                                         // no panic
 }
 
 func TestNewPATCache_NilRedisReturnsNil(t *testing.T) {
@@ -69,14 +69,27 @@ func TestPATCache_SetGetInvalidate(t *testing.T) {
 		t.Fatal("expected miss before set")
 	}
 
-	c.Set(ctx, "hash-A", "user-A", AuthCacheTTL)
-	if v, ok := c.Get(ctx, "hash-A"); !ok || v != "user-A" {
-		t.Fatalf("expected hit user-A, got (%q, %v)", v, ok)
+	want := PATCacheEntry{UserID: "user-A", Scopes: []string{"issues:read"}, ScopeWorkspaceID: "workspace-A"}
+	c.Set(ctx, "hash-A", want, AuthCacheTTL)
+	if v, ok := c.Get(ctx, "hash-A"); !ok || v.UserID != want.UserID || len(v.Scopes) != 1 || v.Scopes[0] != want.Scopes[0] || v.ScopeWorkspaceID != want.ScopeWorkspaceID {
+		t.Fatalf("expected hit %+v, got (%+v, %v)", want, v, ok)
 	}
 
 	c.Invalidate(ctx, "hash-A")
 	if v, ok := c.Get(ctx, "hash-A"); ok {
-		t.Fatalf("expected miss after invalidate, got (%q, %v)", v, ok)
+		t.Fatalf("expected miss after invalidate, got (%+v, %v)", v, ok)
+	}
+}
+
+func TestPATCacheTreatsLegacyUserIDValuesAsMisses(t *testing.T) {
+	rdb := newRedisTestClient(t)
+	c := NewPATCache(rdb)
+	ctx := context.Background()
+	if err := rdb.Set(ctx, patCacheKey("legacy-hash"), "legacy-user-id", AuthCacheTTL).Err(); err != nil {
+		t.Fatalf("seed legacy cache value: %v", err)
+	}
+	if entry, ok := c.Get(ctx, "legacy-hash"); ok {
+		t.Fatalf("legacy user-only cache entry bypassed PAT metadata lookup: %+v", entry)
 	}
 }
 
@@ -94,7 +107,7 @@ func TestPATCache_TTL(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	c.Set(ctx, "hash-T", "user-T", AuthCacheTTL)
+	c.Set(ctx, "hash-T", PATCacheEntry{UserID: "user-T"}, AuthCacheTTL)
 	ttl, err := rdb.TTL(ctx, patCacheKey("hash-T")).Result()
 	if err != nil {
 		t.Fatalf("TTL: %v", err)
@@ -148,7 +161,7 @@ func TestPATCache_Set_RespectsClampedTTL(t *testing.T) {
 
 	// Cache with a 5s TTL — what TTLForExpiry would return for a token
 	// expiring 5s from now.
-	c.Set(ctx, "hash-short", "user-short", 5*time.Second)
+	c.Set(ctx, "hash-short", PATCacheEntry{UserID: "user-short"}, 5*time.Second)
 	ttl, err := rdb.TTL(ctx, patCacheKey("hash-short")).Result()
 	if err != nil {
 		t.Fatalf("TTL: %v", err)
@@ -159,11 +172,11 @@ func TestPATCache_Set_RespectsClampedTTL(t *testing.T) {
 
 	// Zero / negative TTL must skip caching entirely (already-expired
 	// token's TOCTOU-safe path).
-	c.Set(ctx, "hash-zero", "user-zero", 0)
+	c.Set(ctx, "hash-zero", PATCacheEntry{UserID: "user-zero"}, 0)
 	if _, ok := c.Get(ctx, "hash-zero"); ok {
 		t.Fatal("zero-TTL Set must not cache")
 	}
-	c.Set(ctx, "hash-neg", "user-neg", -time.Second)
+	c.Set(ctx, "hash-neg", PATCacheEntry{UserID: "user-neg"}, -time.Second)
 	if _, ok := c.Get(ctx, "hash-neg"); ok {
 		t.Fatal("negative-TTL Set must not cache")
 	}

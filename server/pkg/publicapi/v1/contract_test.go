@@ -60,6 +60,9 @@ func TestOpenAPICoversCapabilityLedger(t *testing.T) {
 		if gotScope != operation.Policy.Scope {
 			t.Errorf("%s %s x-multica-scope = %q, want %q", operation.Method, operation.Path, gotScope, operation.Policy.Scope)
 		}
+		if operation.Contract == ContractSharedResource && !hasWorkspaceRoles(raw["x-multica-workspace-roles"], operation.Policy.WorkspaceRoles) {
+			t.Errorf("%s %s workspace roles do not match the ledger", operation.Method, operation.Path)
+		}
 		if gotAudit, _ := raw["x-multica-audit"].(string); gotAudit != string(operation.Policy.Audit) {
 			t.Errorf("%s %s x-multica-audit = %q, want %q", operation.Method, operation.Path, gotAudit, operation.Policy.Audit)
 		}
@@ -88,6 +91,19 @@ func TestOpenAPICoversCapabilityLedger(t *testing.T) {
 	}
 }
 
+func hasWorkspaceRoles(raw any, want []string) bool {
+	got, ok := raw.([]any)
+	if !ok || len(got) != len(want) {
+		return false
+	}
+	for i, role := range want {
+		if got[i] != role {
+			return false
+		}
+	}
+	return true
+}
+
 func TestDeclaredUserScopesComeFromTheCapabilityLedger(t *testing.T) {
 	want := []string{"comments:read", "comments:write", "issues:read", "issues:write"}
 	got := DeclaredUserScopes()
@@ -111,6 +127,22 @@ func TestDeclaredUserScopesComeFromTheCapabilityLedger(t *testing.T) {
 	}
 	if scopes, err := ValidateUserScopes(nil); err != nil || scopes == nil || len(scopes) != 0 {
 		t.Fatalf("empty scopes = %v, error=%v; want a non-nil empty set", scopes, err)
+	}
+}
+
+func TestUserScopesAreBoundToWorkspaceRoleCapabilities(t *testing.T) {
+	for _, role := range []string{"member", "admin", "owner"} {
+		for _, scope := range DeclaredUserScopes() {
+			if !UserScopeAllowedForRole(scope, role) {
+				t.Errorf("workspace role %q cannot grant declared member capability %q", role, scope)
+			}
+		}
+	}
+	if _, err := ValidateUserScopesForRole([]string{"issues:write"}, "unknown"); err == nil {
+		t.Fatal("valid scope was granted to a role with no ledger capabilities")
+	}
+	if _, err := ValidateUserScopesForRole([]string{"workspace:admin"}, "member"); err == nil {
+		t.Fatal("undeclared elevated scope was granted to a member")
 	}
 }
 
