@@ -1,5 +1,42 @@
 package publicapiv1
 
+// Agent is a picker projection, never an App API agent or configuration DTO.
+// CanInvoke reports permission only; availability does not reserve capacity.
+type Agent struct {
+	AgentID           string             `json:"agent_id"`
+	WorkspaceID       string             `json:"workspace_id"`
+	Name              string             `json:"name"`
+	RuntimeID         string             `json:"runtime_id"`
+	RuntimeBound      bool               `json:"runtime_bound"`
+	PermissionMode    string             `json:"permission_mode"`
+	CanInvoke         bool               `json:"can_invoke"`
+	InvocationTargets []InvocationTarget `json:"invocation_targets"`
+	Archived          bool               `json:"archived"`
+	Availability      string             `json:"availability"`
+}
+
+type InvocationTarget struct {
+	TargetType string  `json:"target_type"`
+	TargetID   *string `json:"target_id"`
+}
+
+type AgentListResponse struct {
+	Agents []Agent `json:"agents"`
+	PageInfo
+}
+
+// Runtime omits machine identity, owner data, timestamps and configuration.
+type Runtime struct {
+	RuntimeID    string `json:"runtime_id"`
+	WorkspaceID  string `json:"workspace_id"`
+	Availability string `json:"availability"`
+}
+
+type RuntimeListResponse struct {
+	Runtimes []Runtime `json:"runtimes"`
+	PageInfo
+}
+
 // Context is Plugin-specific bootstrap data. It lives in the versioned
 // contract package so service-layer fields cannot leak into the wire format.
 type Context struct {
