@@ -33,3 +33,34 @@ SELECT * FROM agent_invocation_target
 WHERE agent_id = $1
 ORDER BY target_type, created_at, id
 FOR SHARE;
+
+-- name: GetPublicDelegationForActor :one
+SELECT * FROM public_delegation
+WHERE id = @id AND workspace_id = @workspace_id
+  AND (requester_id = @requester_id OR @is_admin::boolean);
+
+-- name: ListPublicDelegationStatuses :many
+SELECT sqlc.embed(d), COALESCE(t.status, 'unavailable')::text AS status,
+       COALESCE(t.failure_reason, '')::text AS failure_reason
+FROM public_delegation d
+LEFT JOIN agent_task_queue t ON t.id = d.task_id AND t.agent_id = d.agent_id AND t.runtime_id = d.runtime_id
+WHERE d.workspace_id = @workspace_id AND d.requester_id = @requester_id
+  AND (sqlc.narg('idempotency_key')::text IS NULL OR d.idempotency_key = sqlc.narg('idempotency_key'))
+  AND (sqlc.narg('delegation_id')::uuid IS NULL OR d.id = sqlc.narg('delegation_id'))
+  AND (sqlc.narg('after_id')::uuid IS NULL OR d.id > sqlc.narg('after_id'))
+ORDER BY d.id
+LIMIT @page_limit;
+
+-- name: LockPublicDelegationTask :one
+SELECT t.* FROM agent_task_queue t
+JOIN public_delegation d ON d.task_id = t.id AND d.agent_id = t.agent_id AND d.runtime_id = t.runtime_id
+WHERE d.id = @delegation_id AND d.workspace_id = @workspace_id
+FOR UPDATE OF t;
+
+-- name: GetPublicDelegationStatusForActor :one
+SELECT sqlc.embed(d), COALESCE(t.status, 'unavailable')::text AS status,
+       COALESCE(t.failure_reason, '')::text AS failure_reason
+FROM public_delegation d
+LEFT JOIN agent_task_queue t ON t.id = d.task_id AND t.agent_id = d.agent_id AND t.runtime_id = d.runtime_id
+WHERE d.id = @id AND d.workspace_id = @workspace_id
+  AND (d.requester_id = @requester_id OR @is_admin::boolean);

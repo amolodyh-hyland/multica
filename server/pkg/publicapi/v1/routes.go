@@ -16,16 +16,18 @@ const BasePath = "/v1"
 const MemberBasePath = "/api/v1"
 
 const (
-	PathDelegations   = "/delegations"
-	PathContext       = "/context"
-	PathIssue         = "/issues/{issue_ref}"
-	PathIssueComments = "/issues/{issue_ref}/comments"
-	PathStorageScope  = "/storage/{scope}"
-	PathStorageValue  = "/storage/{scope}/{key}"
-	PathAgents        = "/agents"
-	PathAgent         = "/agents/{agent_id}"
-	PathRuntimes      = "/runtimes"
-	PathRuntime       = "/runtimes/{runtime_id}"
+	PathDelegations      = "/delegations"
+	PathDelegation       = "/delegations/{delegation_id}"
+	PathDelegationCancel = "/delegations/{delegation_id}/cancel"
+	PathContext          = "/context"
+	PathIssue            = "/issues/{issue_ref}"
+	PathIssueComments    = "/issues/{issue_ref}/comments"
+	PathStorageScope     = "/storage/{scope}"
+	PathStorageValue     = "/storage/{scope}/{key}"
+	PathAgents           = "/agents"
+	PathAgent            = "/agents/{agent_id}"
+	PathRuntimes         = "/runtimes"
+	PathRuntime          = "/runtimes/{runtime_id}"
 )
 
 type ContractKind string
@@ -67,6 +69,9 @@ var memberCredentials = []CredentialKind{CredentialPersonalAccess}
 var memberRateLimits = []RateLimitProfile{RateLimitUserDefault}
 
 var Operations = []Operation{
+	{Method: http.MethodGet, Path: PathDelegations, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: memberCredentials, Scope: "delegations:read", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskRead, Audit: AuditPlanned, RateLimits: memberRateLimits}},
+	{Method: http.MethodGet, Path: PathDelegation, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: memberCredentials, Scope: "delegations:read", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskRead, Audit: AuditPlanned, RateLimits: memberRateLimits}},
+	{Method: http.MethodPost, Path: PathDelegationCancel, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: memberCredentials, Scope: "delegations:write", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskHigh, Audit: AuditPlanned, RateLimits: memberRateLimits}},
 	{Method: http.MethodPost, Path: PathDelegations, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: memberCredentials, Scope: "delegations:write", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskHigh, Audit: AuditPlanned, RateLimits: memberRateLimits}},
 	{Method: http.MethodGet, Path: PathAgents, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: memberCredentials, Scope: "agents:read", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskRead, Audit: AuditPlanned, RateLimits: memberRateLimits}},
 	{Method: http.MethodGet, Path: PathAgent, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: memberCredentials, Scope: "agents:read", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskRead, Audit: AuditPlanned, RateLimits: memberRateLimits}},

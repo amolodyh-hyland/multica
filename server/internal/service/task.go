@@ -2838,6 +2838,7 @@ type CancelTaskOptions struct {
 	// delegated-failure recovery signal planned into the task; automatic
 	// cancellations must leave that signal replayable.
 	UserInitiated bool
+	authorize     func(context.Context, *db.Queries) error
 }
 
 // CancelTask cancels a single task by ID for an automatic server path. It does
@@ -2947,6 +2948,11 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 		// other connection while the pointer still names the previous turn's
 		// session, and a queued follow-up can resume that older session.
 		err = s.runInTx(ctx, func(qtx *db.Queries) error {
+			if opts.authorize != nil {
+				if err := opts.authorize(ctx, qtx); err != nil {
+					return err
+				}
+			}
 			if err := lockChatSessionForTaskWrite(ctx, qtx, taskID); err != nil {
 				return err
 			}

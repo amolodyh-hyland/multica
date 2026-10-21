@@ -105,7 +105,7 @@ func hasWorkspaceRoles(raw any, want []string) bool {
 }
 
 func TestDeclaredUserScopesComeFromTheCapabilityLedger(t *testing.T) {
-	want := []string{"agents:read", "comments:read", "comments:write", "delegations:write", "issues:read", "issues:write", "runtimes:read"}
+	want := []string{"agents:read", "comments:read", "comments:write", "delegations:read", "delegations:write", "issues:read", "issues:write", "runtimes:read"}
 	got := DeclaredUserScopes()
 	if len(got) != len(want) {
 		t.Fatalf("declared user scopes = %v, want %v", got, want)
