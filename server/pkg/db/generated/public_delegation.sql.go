@@ -192,6 +192,157 @@ func (q *Queries) GetPublicDelegationByKey(ctx context.Context, arg GetPublicDel
 	return i, err
 }
 
+const getPublicDelegationForActor = `-- name: GetPublicDelegationForActor :one
+SELECT id, workspace_id, requester_id, idempotency_key, payload_hash, agent_id, runtime_id, task_id, source, created_at FROM public_delegation
+WHERE id = $1 AND workspace_id = $2
+  AND (requester_id = $3 OR $4::boolean)
+`
+
+type GetPublicDelegationForActorParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RequesterID pgtype.UUID `json:"requester_id"`
+	IsAdmin     bool        `json:"is_admin"`
+}
+
+func (q *Queries) GetPublicDelegationForActor(ctx context.Context, arg GetPublicDelegationForActorParams) (PublicDelegation, error) {
+	row := q.db.QueryRow(ctx, getPublicDelegationForActor,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.RequesterID,
+		arg.IsAdmin,
+	)
+	var i PublicDelegation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.RequesterID,
+		&i.IdempotencyKey,
+		&i.PayloadHash,
+		&i.AgentID,
+		&i.RuntimeID,
+		&i.TaskID,
+		&i.Source,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getPublicDelegationStatusForActor = `-- name: GetPublicDelegationStatusForActor :one
+SELECT d.id, d.workspace_id, d.requester_id, d.idempotency_key, d.payload_hash, d.agent_id, d.runtime_id, d.task_id, d.source, d.created_at, COALESCE(t.status, 'unavailable')::text AS status,
+       COALESCE(t.failure_reason, '')::text AS failure_reason
+FROM public_delegation d
+LEFT JOIN agent_task_queue t ON t.id = d.task_id AND t.agent_id = d.agent_id AND t.runtime_id = d.runtime_id
+WHERE d.id = $1 AND d.workspace_id = $2
+  AND (d.requester_id = $3 OR $4::boolean)
+`
+
+type GetPublicDelegationStatusForActorParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RequesterID pgtype.UUID `json:"requester_id"`
+	IsAdmin     bool        `json:"is_admin"`
+}
+
+type GetPublicDelegationStatusForActorRow struct {
+	PublicDelegation PublicDelegation `json:"public_delegation"`
+	Status           string           `json:"status"`
+	FailureReason    string           `json:"failure_reason"`
+}
+
+func (q *Queries) GetPublicDelegationStatusForActor(ctx context.Context, arg GetPublicDelegationStatusForActorParams) (GetPublicDelegationStatusForActorRow, error) {
+	row := q.db.QueryRow(ctx, getPublicDelegationStatusForActor,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.RequesterID,
+		arg.IsAdmin,
+	)
+	var i GetPublicDelegationStatusForActorRow
+	err := row.Scan(
+		&i.PublicDelegation.ID,
+		&i.PublicDelegation.WorkspaceID,
+		&i.PublicDelegation.RequesterID,
+		&i.PublicDelegation.IdempotencyKey,
+		&i.PublicDelegation.PayloadHash,
+		&i.PublicDelegation.AgentID,
+		&i.PublicDelegation.RuntimeID,
+		&i.PublicDelegation.TaskID,
+		&i.PublicDelegation.Source,
+		&i.PublicDelegation.CreatedAt,
+		&i.Status,
+		&i.FailureReason,
+	)
+	return i, err
+}
+
+const listPublicDelegationStatuses = `-- name: ListPublicDelegationStatuses :many
+SELECT d.id, d.workspace_id, d.requester_id, d.idempotency_key, d.payload_hash, d.agent_id, d.runtime_id, d.task_id, d.source, d.created_at, COALESCE(t.status, 'unavailable')::text AS status,
+       COALESCE(t.failure_reason, '')::text AS failure_reason
+FROM public_delegation d
+LEFT JOIN agent_task_queue t ON t.id = d.task_id AND t.agent_id = d.agent_id AND t.runtime_id = d.runtime_id
+WHERE d.workspace_id = $1 AND d.requester_id = $2
+  AND ($3::text IS NULL OR d.idempotency_key = $3)
+  AND ($4::uuid IS NULL OR d.id = $4)
+  AND ($5::uuid IS NULL OR d.id > $5)
+ORDER BY d.id
+LIMIT $6
+`
+
+type ListPublicDelegationStatusesParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	RequesterID    pgtype.UUID `json:"requester_id"`
+	IdempotencyKey pgtype.Text `json:"idempotency_key"`
+	DelegationID   pgtype.UUID `json:"delegation_id"`
+	AfterID        pgtype.UUID `json:"after_id"`
+	PageLimit      int32       `json:"page_limit"`
+}
+
+type ListPublicDelegationStatusesRow struct {
+	PublicDelegation PublicDelegation `json:"public_delegation"`
+	Status           string           `json:"status"`
+	FailureReason    string           `json:"failure_reason"`
+}
+
+func (q *Queries) ListPublicDelegationStatuses(ctx context.Context, arg ListPublicDelegationStatusesParams) ([]ListPublicDelegationStatusesRow, error) {
+	rows, err := q.db.Query(ctx, listPublicDelegationStatuses,
+		arg.WorkspaceID,
+		arg.RequesterID,
+		arg.IdempotencyKey,
+		arg.DelegationID,
+		arg.AfterID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPublicDelegationStatusesRow{}
+	for rows.Next() {
+		var i ListPublicDelegationStatusesRow
+		if err := rows.Scan(
+			&i.PublicDelegation.ID,
+			&i.PublicDelegation.WorkspaceID,
+			&i.PublicDelegation.RequesterID,
+			&i.PublicDelegation.IdempotencyKey,
+			&i.PublicDelegation.PayloadHash,
+			&i.PublicDelegation.AgentID,
+			&i.PublicDelegation.RuntimeID,
+			&i.PublicDelegation.TaskID,
+			&i.PublicDelegation.Source,
+			&i.PublicDelegation.CreatedAt,
+			&i.Status,
+			&i.FailureReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockPublicDelegationInvocationTargets = `-- name: LockPublicDelegationInvocationTargets :many
 SELECT id, agent_id, target_type, target_id, created_by, created_at FROM agent_invocation_target
 WHERE agent_id = $1
@@ -278,6 +429,86 @@ func (q *Queries) LockPublicDelegationRuntime(ctx context.Context, arg LockPubli
 		&i.Visibility,
 		&i.ProfileID,
 		&i.CustomName,
+	)
+	return i, err
+}
+
+const lockPublicDelegationTask = `-- name: LockPublicDelegationTask :one
+SELECT t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id, t.runtime_mcp_overlay, t.escalation_for_task_id, t.fire_at, t.originator_user_id, t.runtime_connected_apps, t.coalesced_comment_ids, t.delivered_comment_ids, t.chat_input_task_id, t.chat_finalize_deferred_at, t.originator_source, t.delegated_from_task_id, t.retry_of_task_id, t.rerun_of_task_id, t.rule_version_id, t.trigger_evidence_kind, t.trigger_evidence_ref_id, t.accountable_user_id, t.session_rollout_missing, t.retired_session_id, t.quick_actions_disabled, t.regenerate_quick_actions_for, t.branch_name, t.durable_work_dir, t.channel_context_revision, t.comment_thread_id, t.cancelled_by_type, t.cancelled_by_id, t.cancelled_by_name, t.issue_snapshot, t.workflow_step FROM agent_task_queue t
+JOIN public_delegation d ON d.task_id = t.id AND d.agent_id = t.agent_id AND d.runtime_id = t.runtime_id
+WHERE d.id = $1 AND d.workspace_id = $2
+FOR UPDATE OF t
+`
+
+type LockPublicDelegationTaskParams struct {
+	DelegationID pgtype.UUID `json:"delegation_id"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockPublicDelegationTask(ctx context.Context, arg LockPublicDelegationTaskParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, lockPublicDelegationTask, arg.DelegationID, arg.WorkspaceID)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.ChatFinalizeDeferredAt,
+		&i.OriginatorSource,
+		&i.DelegatedFromTaskID,
+		&i.RetryOfTaskID,
+		&i.RerunOfTaskID,
+		&i.RuleVersionID,
+		&i.TriggerEvidenceKind,
+		&i.TriggerEvidenceRefID,
+		&i.AccountableUserID,
+		&i.SessionRolloutMissing,
+		&i.RetiredSessionID,
+		&i.QuickActionsDisabled,
+		&i.RegenerateQuickActionsFor,
+		&i.BranchName,
+		&i.DurableWorkDir,
+		&i.ChannelContextRevision,
+		&i.CommentThreadID,
+		&i.CancelledByType,
+		&i.CancelledByID,
+		&i.CancelledByName,
+		&i.IssueSnapshot,
+		&i.WorkflowStep,
 	)
 	return i, err
 }

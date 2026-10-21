@@ -19,6 +19,48 @@ paths:
   /delegations:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      operationId: listPublicDelegations
+      summary: Reconcile the current member's delegations
+      description: >-
+        Disabled unless public_delegations_v1 is enabled (default OFF).
+        Workspace/member-scoped even for admins, including lookups by the original
+        idempotency key after response loss or PAT rotation. Does not create tasks.
+        Unknown or inaccessible matches yield an empty list. UUID-ordered keyset
+        pagination bounds database results and responses; cursors are bound to the
+        actor, workspace and filters and do not grant access.
+      x-multica-contract: shared_resource
+      x-multica-scope: delegations:read
+      x-multica-workspace-roles: [member, admin, owner]
+      x-multica-audit: planned
+      x-multica-rate-limit-profiles: [user_default]
+      security:
+        - memberPAT: []
+      servers:
+        - url: https://api.multica.ai/api/v1
+      parameters:
+        - name: idempotency_key
+          in: query
+          description: Exact original key, scoped to the current member
+          schema: { type: string, minLength: 1, maxLength: 255 }
+        - name: delegation_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          schema: { type: string, maxLength: 1024 }
+      responses:
+        "200":
+          description: Bounded caller-owned matches, with optional continuation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DelegationListResponse"
+        default:
+          $ref: "#/components/responses/Problem"
     post:
       operationId: createPublicDelegation
       summary: Admit one confirmed delegation to the durable task queue
@@ -79,6 +121,105 @@ paths:
                 $ref: "#/components/schemas/Delegation"
         "409":
           description: idempotency_conflict, runtime_binding_changed, target_unavailable, or runtime_unsupported
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+  /delegations/{delegation_id}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - name: delegation_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getPublicDelegation
+      summary: Read a delegation's compact execution status
+      description: >-
+        Disabled unless public_delegations_v1 is enabled (default OFF). Current
+        workspace membership and requester identity or owner/admin role are required.
+        Missing, foreign and unauthorized delegations uniformly return not_found.
+        No profile/runtime configuration, result text, error text or execution
+        internals are returned. Invocation revocation does not remove the requester's
+        right to reconcile already accepted work. Membership revocation does.
+        Status is authoritative at the read snapshot. Revisions are opaque content
+        hashes, not sequence numbers; clients must ignore observations that would
+        regress an observed terminal state. Missing execution history is unavailable,
+        not a confirmed terminal execution outcome, and never recreates a task.
+      x-multica-contract: shared_resource
+      x-multica-scope: delegations:read
+      x-multica-workspace-roles: [member, admin, owner]
+      x-multica-audit: planned
+      x-multica-rate-limit-profiles: [user_default]
+      security:
+        - memberPAT: []
+      servers:
+        - url: https://api.multica.ai/api/v1
+      responses:
+        "200":
+          description: Authoritative safe delegation status
+          headers:
+            ETag:
+              description: Opaque content revision, scoped to this delegation
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Delegation"
+        default:
+          $ref: "#/components/responses/Problem"
+  /delegations/{delegation_id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - name: delegation_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: cancelPublicDelegation
+      summary: Explicitly cancel one delegation
+      description: >-
+        Same default-OFF flag and requester or workspace owner/admin authorization
+        as detail reads. Membership and role are rechecked under transaction locks.
+        Requires delegations:write. Idempotent without a new idempotency key: repeats
+        return the same authoritative task outcome and never create another task.
+        The existing cancellation machinery atomically commits cancelled, broadcasts
+        a stop to queued/running execution and reconciles scheduling. A confirmed
+        cancelled state is authoritative even while runtime process teardown finishes.
+        Completion races preserve the terminal winner; terminal outcomes are immutable.
+        Optional If-Match compares the current content ETag under the task row lock;
+        stale values return revision_conflict without cancellation. On ambiguous
+        responses, reconcile by delegation ID before reporting success. No result,
+        error text, runtime details or private profile configuration is returned.
+      x-multica-contract: shared_resource
+      x-multica-scope: delegations:write
+      x-multica-workspace-roles: [member, admin, owner]
+      x-multica-audit: planned
+      x-multica-rate-limit-profiles: [user_default]
+      security:
+        - memberPAT: []
+      servers:
+        - url: https://api.multica.ai/api/v1
+      parameters:
+        - name: If-Match
+          in: header
+          description: Optional quoted ETag from a prior status read, or star for the existing delegation
+          schema: { type: string }
+      responses:
+        "200":
+          description: Authoritative safe delegation status
+          headers:
+            ETag:
+              description: Opaque content revision, scoped to this delegation
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Delegation"
+        "409":
+          description: revision_conflict; reconcile the current status
           content:
             application/json:
               schema:
@@ -559,7 +700,7 @@ components:
     Delegation:
       type: object
       additionalProperties: false
-      required: [delegation_id, task_id, workspace_id, agent_id, runtime_id, status, created_at]
+      required: [delegation_id, task_id, workspace_id, agent_id, runtime_id, status, created_at, terminal, revision]
       properties:
         delegation_id: { type: string, format: uuid }
         task_id: { type: string, format: uuid }
@@ -570,6 +711,26 @@ components:
           type: string
           enum: [queued, deferred, dispatched, waiting_local_directory, running, completed, failed, cancelled, unavailable]
         created_at: { type: string, format: date-time }
+        terminal:
+          type: boolean
+          description: True only for completed, failed, cancelled; unavailable does not confirm an outcome
+        revision:
+          type: string
+          description: Opaque status/failure content hash, not a sortable counter
+        failure_reason:
+          type: string
+          description: Stable coarse code; unrecognized internal reasons never escape
+          enum: [access_revoked, target_unavailable, timeout, runtime_unavailable, execution_failed, execution_cancelled, execution_unavailable]
+    DelegationListResponse:
+      type: object
+      additionalProperties: false
+      required: [delegations]
+      properties:
+        delegations:
+          type: array
+          maxItems: 200
+          items: { $ref: "#/components/schemas/Delegation" }
+        next_cursor: { type: string }
     Agent:
       type: object
       additionalProperties: false

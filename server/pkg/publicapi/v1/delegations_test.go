@@ -69,17 +69,59 @@ func TestDelegationPayloadIdentity(t *testing.T) {
 func TestDelegationOperationIsMemberOnly(t *testing.T) {
 	found := false
 	for _, operation := range Operations {
-		if operation.Path != PathDelegations {
+		if operation.Path != PathDelegations && operation.Path != PathDelegation && operation.Path != PathDelegationCancel {
 			continue
 		}
 		found = true
-		if operation.Method != "POST" || operation.Policy.Scope != "delegations:write" ||
-			operation.Policy.Risk != RiskHigh || len(operation.Policy.Credentials) != 1 ||
+		scope, risk := "delegations:write", RiskHigh
+		if operation.Method == "GET" {
+			scope, risk = "delegations:read", RiskRead
+		}
+		if operation.Policy.Scope != scope || operation.Policy.Risk != risk || len(operation.Policy.Credentials) != 1 ||
 			operation.Policy.Credentials[0] != CredentialPersonalAccess {
 			t.Fatalf("wrong delegation policy: %+v", operation)
 		}
 	}
 	if !found {
 		t.Fatal("delegation operation is not registered")
+	}
+}
+
+func TestDelegationStateSafeVocabulary(t *testing.T) {
+	for _, status := range []string{"queued", "deferred", "dispatched", "waiting_local_directory", "running", "completed", "failed", "cancelled", "unavailable", "future-private-state"} {
+		got, reason, terminal := DelegationState(status, "secret-token /private/config")
+		wantTerminal := status == "completed" || status == "failed" || status == "cancelled"
+		if terminal != wantTerminal || strings.Contains(reason, "secret") || strings.Contains(got, "private") {
+			t.Fatalf("unsafe state: %s %s %v", got, reason, terminal)
+		}
+		switch status {
+		case "future-private-state", "unavailable":
+			if got != "unavailable" || reason != "execution_unavailable" {
+				t.Fatalf("unknown state: %s %s", got, reason)
+			}
+		default:
+			if got != status {
+				t.Fatalf("status %s became %s", status, got)
+			}
+		}
+	}
+	for raw, want := range map[string]string{
+		"error_delegation_invocation_not_allowed": "access_revoked",
+		"invalid_task_identity":                   "target_unavailable",
+		"runtime_access_revoked":                  "access_revoked", "runtime_offline": "runtime_unavailable",
+		"timeout": "timeout", "queued_expired": "timeout", "agent_error.secret": "execution_failed",
+	} {
+		_, got, _ := DelegationState("failed", raw)
+		if got != want {
+			t.Errorf("%s => %s, want %s", raw, got, want)
+		}
+	}
+	_, reason, terminal := DelegationState("cancelled", "")
+	if reason != "" || !terminal {
+		t.Fatal("explicit cancellation should have no failure reason")
+	}
+	if DelegationRevision("task", "queued", "") == DelegationRevision("task", "running", "") ||
+		DelegationRevision("task", "queued", "") == DelegationRevision("other-task", "queued", "") {
+		t.Fatal("revision must track resource identity and projected state")
 	}
 }

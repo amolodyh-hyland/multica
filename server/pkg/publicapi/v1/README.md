@@ -33,7 +33,7 @@ endpoint-specific concurrency rules.
   `{"name":"AO","workspace_id":"<workspace-uuid>","scopes":["issues:read","issues:write"]}`.
   Accepted scopes come from the capability ledger: `issues:read`,
   `issues:write`, `comments:read`, `comments:write`, `agents:read`, and
-  `runtimes:read`. A PAT created without
+  `runtimes:read`, `delegations:read`, and `delegations:write`. A PAT created without
   scopes, including a legacy PAT, continues to work on the existing `/api`
   surface but is rejected on `/api/v1` with `scoped_token_required`. A scoped
   PAT is bound to one workspace, must present that workspace on each request,
@@ -180,7 +180,7 @@ OpenAPI defines payload limits and the stable conflict reasons. Audit remains
 Migrations 587–589 add the record and independent concurrent unique indexes.
 Apply all three before enabling the flag. The down migration drops admission
 history, so disable intake before any rollback and preserve records needed for
-reconciliation. Status lookup and cancellation remain the TK-MA62 slice.
+reconciliation. Status lookup and cancellation use the same admission records and task lifecycle (TK-MA62).
 
 Permission changes replace the profile mode and invocation targets in one
 transaction. Admission locks the profile and target rows through task commit;
@@ -189,3 +189,61 @@ in the task-token transaction. A revoked delegation is failed before credentials
 or a task payload can be delivered. The runtime binding is compared before any
 caller-supplied runtime is looked up. Mismatched, missing, or disallowed bindings
 uniformly return `runtime_binding_changed` without disclosing runtime existence.
+
+
+## Delegation status, reconciliation, and cancellation (TK-MA62)
+
+All operations remain behind the same default-OFF `public_delegations_v1` flag,
+accept scoped member PATs only, and require `X-Workspace-ID` matching the PAT.
+
+| Operation | Scope | Behavior |
+| --- | --- | --- |
+| `GET /api/v1/delegations` | `delegations:read` | Caller-owned records, optional exact `idempotency_key` / `delegation_id` filters |
+| `GET /api/v1/delegations/{delegation_id}` | `delegations:read` | Requester or current workspace owner/admin |
+| `POST /api/v1/delegations/{delegation_id}/cancel` | `delegations:write` | Requester or current workspace owner/admin; idempotent |
+
+Reconciliation never creates work. Lists remain caller-scoped even for admins;
+a shared idempotency key cannot discover another member's submission. Both the
+SQL query and response are bounded to `limit` (default 50, maximum 200), with
+one lookahead row for UUID-ordered keyset pagination. Follow `next_cursor` until
+omitted. A cursor binds the caller, workspace, collection and filters; each page
+rechecks membership. Missing or inaccessible detail/cancel targets uniformly
+return `not_found`; lists omit other callers' records. Invocation revocation
+preserves the requester's ability to reconcile and stop accepted work; removal
+from the workspace revokes these operations.
+
+The safe DTO retains the accepted delegation/task/workspace/profile/runtime IDs
+and creation timestamp, adding `terminal`, an opaque `revision`, and optional
+coarse `failure_reason`. Status is one of `queued`, `deferred`, `dispatched`,
+`waiting_local_directory`, `running`, `completed`, `failed`, `cancelled`, or
+`unavailable`. Only completed/failed/cancelled confirm a terminal outcome.
+Failure reasons are allow-listed public codes: `access_revoked`,
+`target_unavailable`, `timeout`, `runtime_unavailable`, `execution_failed`,
+`execution_cancelled`, `execution_unavailable`. Unknown internal failure strings
+collapse to execution_failed/execution_cancelled; missing history or unknown
+internal states project to unavailable. Results, free-form errors, context,
+source identity, request key/hash, runtime configuration, paths, session IDs,
+credentials and other execution internals never appear. No history retention
+or task re-creation is introduced.
+
+Detail and cancel responses set `Cache-Control: no-store` and `ETag`. The ETag
+is a quoted content hash of task identity and projected status/failure; revision
+is the unquoted value. It is not a sortable sequence number. Concurrent status
+responses can arrive out of order; consumers must retain observed terminal
+outcomes and reconcile ambiguous results using stable IDs. Cancellation accepts
+optional `If-Match` (the quoted ETag, or `*`). The member/role decision is
+rechecked under workspace/member locks in the cancellation transaction, and the
+ETag is compared under the task row lock; stale values return 409
+`revision_conflict` without mutation. A request without If-Match is convergent:
+repeating it returns the current authoritative outcome without creating work.
+
+Cancellation reuses `TaskService.CancelTaskWithResult`, including actor receipt,
+terminal settlement, scheduler notification and the existing cancellation event
+to the runtime. The task status becomes cancelled atomically before the stop
+broadcast; runtime process teardown can finish afterward. A completion race
+preserves whichever terminal transition committed first. Terminal outcomes
+cannot be replaced by cancellation. Unknown network outcomes require another
+status read; a local request alone never proves that remote cancellation won.
+No additional migrations, indexes, tables, or deletion-manifest entries are
+needed. The DB lifecycle/race tests in `internal/handler/public_delegation_operations_test.go`
+require an isolated migrated test database; never run them against a live workspace.

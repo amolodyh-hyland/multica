@@ -58,3 +58,38 @@ func TestPluginRoutesDoNotExposeProfileReads(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDelegationOperationsRequireTheirOwnScope(t *testing.T) {
+	router := chi.NewRouter()
+	registerMemberPublicAPIRoutes(router, (*handler.Handler)(nil))
+	for _, operation := range publicapiv1.Operations {
+		if !strings.HasPrefix(operation.Path, "/delegations") {
+			continue
+		}
+		wrongScope := "delegations:write"
+		if operation.Method == "POST" {
+			wrongScope = "delegations:read"
+		}
+		path := strings.ReplaceAll(operation.Path, "{delegation_id}", "00000000-0000-0000-0000-000000000001")
+		req := httptest.NewRequest(operation.Method, path, nil)
+		ctx := middleware.WithPublicAPIUserCredential(req.Context(), middleware.PublicAPIUserCredential{Credential: publicapiv1.CredentialPersonalAccess, Scopes: []string{wrongScope}})
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req.WithContext(ctx))
+		if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), `"code":"insufficient_scope"`) {
+			t.Fatalf("%s %s: %d %s", operation.Method, path, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestPluginRoutesDoNotExposeDelegations(t *testing.T) {
+	router := chi.NewRouter()
+	registerPluginActionRoutes(router, (*handler.Handler)(nil))
+	if err := chi.Walk(router, func(_ string, path string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		if strings.HasPrefix(path, "/delegations") {
+			t.Errorf("member delegation exposed to Plugins: %s", path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

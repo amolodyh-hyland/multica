@@ -116,15 +116,18 @@ func registerPluginActionRoutes(r chi.Router, h *handler.Handler) {
 
 func registerMemberPublicAPIRoutes(r chi.Router, h *handler.Handler) {
 	operations := map[string]http.Handler{
-		http.MethodPost + " " + publicapiv1.PathDelegations:   http.HandlerFunc(h.CreatePublicDelegation),
-		http.MethodGet + " " + publicapiv1.PathAgents:         http.HandlerFunc(h.ListPublicAgents),
-		http.MethodGet + " " + publicapiv1.PathAgent:          http.HandlerFunc(h.GetPublicAgent),
-		http.MethodGet + " " + publicapiv1.PathRuntimes:       http.HandlerFunc(h.ListPublicRuntimes),
-		http.MethodGet + " " + publicapiv1.PathRuntime:        http.HandlerFunc(h.GetPublicRuntime),
-		http.MethodGet + " " + publicapiv1.PathIssue:          http.HandlerFunc(h.GetPluginIssue),
-		http.MethodPatch + " " + publicapiv1.PathIssue:        http.HandlerFunc(h.PatchPluginIssue),
-		http.MethodGet + " " + publicapiv1.PathIssueComments:  http.HandlerFunc(h.ListPluginComments),
-		http.MethodPost + " " + publicapiv1.PathIssueComments: http.HandlerFunc(h.CreatePluginComment),
+		http.MethodGet + " " + publicapiv1.PathDelegations:       http.HandlerFunc(h.ListPublicDelegations),
+		http.MethodGet + " " + publicapiv1.PathDelegation:        http.HandlerFunc(h.GetPublicDelegation),
+		http.MethodPost + " " + publicapiv1.PathDelegationCancel: http.HandlerFunc(h.CancelPublicDelegation),
+		http.MethodPost + " " + publicapiv1.PathDelegations:      http.HandlerFunc(h.CreatePublicDelegation),
+		http.MethodGet + " " + publicapiv1.PathAgents:            http.HandlerFunc(h.ListPublicAgents),
+		http.MethodGet + " " + publicapiv1.PathAgent:             http.HandlerFunc(h.GetPublicAgent),
+		http.MethodGet + " " + publicapiv1.PathRuntimes:          http.HandlerFunc(h.ListPublicRuntimes),
+		http.MethodGet + " " + publicapiv1.PathRuntime:           http.HandlerFunc(h.GetPublicRuntime),
+		http.MethodGet + " " + publicapiv1.PathIssue:             http.HandlerFunc(h.GetPluginIssue),
+		http.MethodPatch + " " + publicapiv1.PathIssue:           http.HandlerFunc(h.PatchPluginIssue),
+		http.MethodGet + " " + publicapiv1.PathIssueComments:     http.HandlerFunc(h.ListPluginComments),
+		http.MethodPost + " " + publicapiv1.PathIssueComments:    http.HandlerFunc(h.CreatePluginComment),
 	}
 	for _, operation := range publicapiv1.Operations {
 		if operation.Contract != publicapiv1.ContractSharedResource {

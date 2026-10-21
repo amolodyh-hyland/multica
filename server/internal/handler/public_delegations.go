@@ -92,14 +92,14 @@ func (h *Handler) CreatePublicDelegation(w http.ResponseWriter, r *http.Request)
 		}
 		task, err := q.GetAgentTask(ctx, accepted.TaskID)
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeJSON(w, http.StatusOK, publicDelegationProjection(accepted, "unavailable"))
+			writeJSON(w, http.StatusOK, publicDelegationProjection(accepted, "unavailable", ""))
 			return
 		}
 		if err != nil {
 			publicReadFailure(w, r)
 			return
 		}
-		writeJSON(w, http.StatusOK, publicDelegationProjection(accepted, task.Status))
+		writeJSON(w, http.StatusOK, publicDelegationProjection(accepted, task.Status, task.FailureReason.String))
 		return
 	}
 	if err != nil {
@@ -181,7 +181,7 @@ func (h *Handler) CreatePublicDelegation(w http.ResponseWriter, r *http.Request)
 		publicReadFailure(w, r)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, publicDelegationProjection(accepted, task.Status))
+	writeJSON(w, http.StatusAccepted, publicDelegationProjection(accepted, task.Status, task.FailureReason.String))
 	if h.TaskService != nil {
 		h.TaskService.NotifyTaskEnqueued(ctx, task)
 	}
@@ -195,10 +195,13 @@ func publicDelegationReadError(w http.ResponseWriter, r *http.Request, err error
 	}
 }
 
-func publicDelegationProjection(d db.PublicDelegation, status string) publicapiv1.Delegation {
+func publicDelegationProjection(d db.PublicDelegation, status, reason string) publicapiv1.Delegation {
+	status, reason, terminal := publicapiv1.DelegationState(status, reason)
 	return publicapiv1.Delegation{
 		DelegationID: uuidToString(d.ID), TaskID: uuidToString(d.TaskID), WorkspaceID: uuidToString(d.WorkspaceID),
-		AgentID: uuidToString(d.AgentID), RuntimeID: uuidToString(d.RuntimeID), Status: status,
+		AgentID: uuidToString(d.AgentID), RuntimeID: uuidToString(d.RuntimeID),
+		Status: status, FailureReason: reason, Terminal: terminal,
+		Revision:  publicapiv1.DelegationRevision(uuidToString(d.TaskID), status, reason),
 		CreatedAt: d.CreatedAt.Time.UTC().Format(time.RFC3339Nano),
 	}
 }
