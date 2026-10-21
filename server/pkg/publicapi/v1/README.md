@@ -181,3 +181,11 @@ Migrations 587–589 add the record and independent concurrent unique indexes.
 Apply all three before enabling the flag. The down migration drops admission
 history, so disable intake before any rollback and preserve records needed for
 reconciliation. Status lookup and cancellation remain the TK-MA62 slice.
+
+Permission changes replace the profile mode and invocation targets in one
+transaction. Admission locks the profile and target rows through task commit;
+delivery rechecks current membership and invocation rights under the same locks
+in the task-token transaction. A revoked delegation is failed before credentials
+or a task payload can be delivered. The runtime binding is compared before any
+caller-supplied runtime is looked up. Mismatched, missing, or disallowed bindings
+uniformly return `runtime_binding_changed` without disclosing runtime existence.

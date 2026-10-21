@@ -2065,6 +2065,28 @@ func (h *Handler) finalizeClaimDelivery(
 ) (receipt []pgtype.UUID, deliveryFailure *claimBuildFailure, err error) {
 	var agentOwnerID pgtype.UUID
 	authorize := func(qtx *db.Queries, tokenParams *db.CreateTaskTokenParams) error {
+		delegation, isDelegation := service.ParsePublicDelegationContext(*task)
+		var invokingMember db.Member
+		if isDelegation {
+			workspaceID, parseErr := util.ParseUUID(delegation.WorkspaceID)
+			if parseErr != nil || !task.OriginatorUserID.Valid {
+				return &service.ClaimDeliveryAuthzError{Reason: "error_delegation_invocation_not_allowed", Detail: "delegation requester is unavailable"}
+			}
+			if _, err := qtx.LockWorkspaceForChatSessionCreate(ctx, workspaceID); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return &service.ClaimDeliveryAuthzError{Reason: "error_delegation_invocation_not_allowed", Detail: "delegation workspace is unavailable"}
+				}
+				return fmt.Errorf("lock delegation workspace for delivery: %w", err)
+			}
+			var err error
+			invokingMember, err = qtx.LockPublicDelegationMember(ctx, db.LockPublicDelegationMemberParams{WorkspaceID: workspaceID, UserID: task.OriginatorUserID})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return &service.ClaimDeliveryAuthzError{Reason: "error_delegation_invocation_not_allowed", Detail: "delegation requester is no longer a member"}
+			}
+			if err != nil {
+				return fmt.Errorf("lock delegation member for delivery: %w", err)
+			}
+		}
 		// FOR UPDATE on the runtime row: any concurrent
 		// UpsertAgentRuntime/visibility flip that would change owner_id or
 		// visibility blocks until this transaction commits, so the values read
@@ -2083,6 +2105,15 @@ func (h *Handler) finalizeClaimDelivery(
 		agent, aerr := qtx.GetAgentForUpdate(ctx, task.AgentID)
 		if aerr != nil {
 			return fmt.Errorf("re-read agent for delivery authorization: %w", aerr)
+		}
+		if isDelegation {
+			targets, err := qtx.LockPublicDelegationInvocationTargets(ctx, agent.ID)
+			if err != nil {
+				return fmt.Errorf("lock delegation invocation targets for delivery: %w", err)
+			}
+			if agent.ArchivedAt.Valid || !publicDelegationMemberCanInvoke(agent, targets, invokingMember) {
+				return &service.ClaimDeliveryAuthzError{Reason: "error_delegation_invocation_not_allowed", Detail: "delegation invocation is no longer allowed"}
+			}
 		}
 		if agent.RuntimeID != task.RuntimeID {
 			return &service.ClaimDeliveryAuthzError{
@@ -2132,6 +2163,11 @@ func (h *Handler) finalizeClaimDelivery(
 	// Authorization rejected at the delivery boundary: settle through the
 	// existing failure path so the task never reaches the daemon.
 	switch authzErr.Reason {
+	case "error_delegation_invocation_not_allowed":
+		failure := h.failClaimedTaskBeforeLaunch(ctx, task,
+			"Delegation invocation permission is no longer available.", taskfailure.ReasonInvalidTaskIdentity,
+			"error_delegation_invocation_not_allowed", http.StatusForbidden, "delegation invocation is no longer allowed")
+		return nil, failure, nil
 	case "error_agent_runtime_changed":
 		failure := h.failClaimedTaskBeforeLaunch(
 			ctx, task,

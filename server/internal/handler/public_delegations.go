@@ -106,10 +106,32 @@ func (h *Handler) CreatePublicDelegation(w http.ResponseWriter, r *http.Request)
 		publicReadFailure(w, r)
 		return
 	}
-	// Lock runtime before agent, matching runtime access changes and teardown.
-	runtime, err := q.LockPublicDelegationRuntime(ctx, db.LockPublicDelegationRuntimeParams{ID: accepted.RuntimeID, WorkspaceID: member.WorkspaceID})
+	// Check the confirmed binding before reading caller-supplied runtime IDs.
+	// Revalidate under runtime-before-agent locks to match runtime teardown.
+	preview, err := q.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: accepted.AgentID, WorkspaceID: member.WorkspaceID})
 	if err != nil {
 		publicDelegationReadError(w, r, err)
+		return
+	}
+	previewTargets, err := q.ListAgentInvocationTargets(ctx, preview.ID)
+	if err != nil {
+		publicReadFailure(w, r)
+		return
+	}
+	if !requirePublicDelegationInvocation(w, r, preview, previewTargets, member) {
+		return
+	}
+	if preview.RuntimeID != accepted.RuntimeID {
+		publicDelegationBindingConflict(w, r)
+		return
+	}
+	runtime, err := q.LockPublicDelegationRuntime(ctx, db.LockPublicDelegationRuntimeParams{ID: accepted.RuntimeID, WorkspaceID: member.WorkspaceID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		publicDelegationBindingConflict(w, r)
+		return
+	}
+	if err != nil {
+		publicReadFailure(w, r)
 		return
 	}
 	agent, err := q.LockAgentForAutopilotAssignment(ctx, db.LockAgentForAutopilotAssignmentParams{ID: accepted.AgentID, WorkspaceID: member.WorkspaceID})
@@ -117,22 +139,17 @@ func (h *Handler) CreatePublicDelegation(w http.ResponseWriter, r *http.Request)
 		publicDelegationReadError(w, r, err)
 		return
 	}
-	targets, err := q.ListAgentInvocationTargets(ctx, agent.ID)
+	targets, err := q.LockPublicDelegationInvocationTargets(ctx, agent.ID)
 	if err != nil {
 		publicReadFailure(w, r)
 		return
 	}
-	if !memberAllowedToViewAgent(agent, targets, uuidToString(member.UserID), member.Role) {
-		publicReadNotFound(w, r)
+	if !requirePublicDelegationInvocation(w, r, agent, targets, member) {
 		return
 	}
-	if uuidToString(agent.OwnerID) != uuidToString(member.UserID) &&
-		(agent.PermissionMode != permissionModePublicTo || !memberHitsInvocationTargets(targets, uuidToString(member.UserID))) {
-		publicapiv1.WriteProblem(w, r, http.StatusForbidden, "invocation_not_allowed", "invocation is not allowed")
-		return
-	}
-	if agent.RuntimeID != accepted.RuntimeID {
-		publicapiv1.WriteProblem(w, r, http.StatusConflict, "runtime_binding_changed", "the profile runtime changed; review and confirm a new request")
+	if agent.RuntimeID != accepted.RuntimeID || !runtime.OwnerID.Valid ||
+		(runtime.Visibility == "private" && agent.OwnerID != runtime.OwnerID) {
+		publicDelegationBindingConflict(w, r)
 		return
 	}
 	verdict, err := service.AgentReadiness(ctx, service.RuntimeLookup{Queries: q}, agent)
@@ -140,7 +157,7 @@ func (h *Handler) CreatePublicDelegation(w http.ResponseWriter, r *http.Request)
 		publicReadFailure(w, r)
 		return
 	}
-	if !runtime.OwnerID.Valid || !verdict.Ready() || deriveAgentRuntimeAvailability(runtime, time.Now()) != "online" {
+	if !verdict.Ready() || deriveAgentRuntimeAvailability(runtime, time.Now()) != "online" {
 		publicapiv1.WriteProblem(w, r, http.StatusConflict, "target_unavailable", "the profile runtime is not ready")
 		return
 	}
@@ -184,4 +201,25 @@ func publicDelegationProjection(d db.PublicDelegation, status string) publicapiv
 		AgentID: uuidToString(d.AgentID), RuntimeID: uuidToString(d.RuntimeID), Status: status,
 		CreatedAt: d.CreatedAt.Time.UTC().Format(time.RFC3339Nano),
 	}
+}
+
+func publicDelegationMemberCanInvoke(agent db.Agent, targets []db.AgentInvocationTarget, member db.Member) bool {
+	return member.UserID.Valid && agent.WorkspaceID == member.WorkspaceID && agent.Kind == "user" &&
+		(agent.OwnerID == member.UserID || (agent.PermissionMode == permissionModePublicTo && memberHitsInvocationTargets(targets, uuidToString(member.UserID))))
+}
+
+func requirePublicDelegationInvocation(w http.ResponseWriter, r *http.Request, agent db.Agent, targets []db.AgentInvocationTarget, member db.Member) bool {
+	if !memberAllowedToViewAgent(agent, targets, uuidToString(member.UserID), member.Role) {
+		publicReadNotFound(w, r)
+		return false
+	}
+	if !publicDelegationMemberCanInvoke(agent, targets, member) {
+		publicapiv1.WriteProblem(w, r, http.StatusForbidden, "invocation_not_allowed", "invocation is not allowed")
+		return false
+	}
+	return true
+}
+
+func publicDelegationBindingConflict(w http.ResponseWriter, r *http.Request) {
+	publicapiv1.WriteProblem(w, r, http.StatusConflict, "runtime_binding_changed", "the confirmed runtime binding is unavailable; review and confirm a new request")
 }

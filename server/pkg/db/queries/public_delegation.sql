@@ -27,3 +27,9 @@ SELECT @id, @agent_id, @runtime_id, 'queued', 0, @context,
     @requester_id::uuid, @requester_id::uuid, 'direct_human', 1, @trigger_summary
 WHERE lock_task_owner_rows(@agent_id, NULL, @runtime_id)
 RETURNING *;
+
+-- name: LockPublicDelegationInvocationTargets :many
+SELECT * FROM agent_invocation_target
+WHERE agent_id = $1
+ORDER BY target_type, created_at, id
+FOR SHARE;

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"testing"
@@ -320,5 +321,217 @@ func TestPublicDelegationClaimPreservesExecutionSemantics(t *testing.T) {
 		task.DelegationTitle != input.Task.Title || task.DelegationInstructions != input.Task.Instructions ||
 		task.QuickCreatePrompt != "" || task.IssueID != "" {
 		t.Fatalf("claim did not preserve delegation semantics: task=%s delegation=%s", task.ID, task.DelegationID)
+	}
+}
+
+type delegationCommitGateStarter struct {
+	txStarter
+	ready  chan uint32
+	resume chan struct{}
+}
+
+type delegationCommitGate struct {
+	pgx.Tx
+	ready  chan uint32
+	resume chan struct{}
+}
+
+func (s delegationCommitGateStarter) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := s.txStarter.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return delegationCommitGate{tx, s.ready, s.resume}, nil
+}
+
+func (tx delegationCommitGate) Commit(ctx context.Context) error {
+	tx.ready <- tx.Conn().PgConn().PID()
+	select {
+	case <-tx.resume:
+		return tx.Tx.Commit(ctx)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func waitForDelegationLockWait(t *testing.T, pid uint32) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var blocked bool
+		if err := testPool.QueryRow(context.Background(), "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)))", pid).Scan(&blocked); err != nil {
+			t.Fatal(err)
+		}
+		if blocked {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("revocation did not wait for admission transaction")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestPublicDelegationRevocationWaitsForAdmission(t *testing.T) {
+	for _, mode := range []string{"profile update", "target deletion"} {
+		t.Run(mode, func(t *testing.T) {
+			callerID := dbfx.User(t, "Delegation caller", uuid.NewString()+"@multica.test")
+			dbfx.Member(t, testWorkspaceID, callerID, "member")
+			h, router, input := delegationFixture(t)
+			dbfx.Exec(t, "UPDATE agent SET permission_mode='public_to' WHERE id=$1", input.AgentID)
+			dbfx.Insert(t, "agent_invocation_target", testutil.Cols{"agent_id": input.AgentID, "target_type": "member", "target_id": callerID})
+			ready, resume := make(chan uint32, 1), make(chan struct{})
+			h.TxStarter = delegationCommitGateStarter{h.TxStarter, ready, resume}
+			var once sync.Once
+			release := func() { once.Do(func() { close(resume) }) }
+			defer release()
+			admitted := make(chan *testutil.Response, 1)
+			go func() {
+				admitted <- submitDelegation(t, router, input, uuid.NewString(), callerID, testWorkspaceID, testWorkspaceID, []string{"delegations:write"})
+			}()
+			var pid uint32
+			select {
+			case pid = <-ready:
+			case response := <-admitted:
+				t.Fatalf("admission stopped before commit: %d %s", response.Code, response.Text())
+			case <-time.After(5 * time.Second):
+				t.Fatal("admission did not reach commit")
+			}
+			revoked := make(chan error, 1)
+			go func() {
+				if mode == "profile update" {
+					req := withURLParam(newRequest(http.MethodPut, "/api/agents/"+input.AgentID, map[string]any{"permission_mode": "private"}), "id", input.AgentID)
+					response := testutil.Call(t, testHandler.UpdateAgent, req)
+					if response.Code != http.StatusOK {
+						revoked <- fmt.Errorf("revoke: %d %s", response.Code, response.Text())
+						return
+					}
+					revoked <- nil
+				} else {
+					_, err := testPool.Exec(context.Background(), "DELETE FROM agent_invocation_target WHERE agent_id=$1", input.AgentID)
+					revoked <- err
+				}
+			}()
+			waitForDelegationLockWait(t, pid)
+			select {
+			case err := <-revoked:
+				t.Fatalf("revocation completed before admission commit: %v", err)
+			default:
+			}
+			release()
+			select {
+			case response := <-admitted:
+				response.Want(http.StatusAccepted)
+			case <-time.After(5 * time.Second):
+				t.Fatal("admission did not commit")
+			}
+			select {
+			case err := <-revoked:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("revocation did not commit")
+			}
+			submitDelegation(t, router, input, uuid.NewString(), callerID, testWorkspaceID, testWorkspaceID, []string{"delegations:write"}).Want(http.StatusNotFound)
+			if n := dbfx.Count(t, "SELECT count(*) FROM public_delegation WHERE agent_id=$1", input.AgentID); n != 1 {
+				t.Fatalf("expected exactly one pre-revocation admission, got %d", n)
+			}
+		})
+	}
+}
+
+func TestUpdateAgentPermissionReplacementRollsBackTogether(t *testing.T) {
+	_, _, input := delegationFixture(t)
+	dbfx.Exec(t, "UPDATE agent SET permission_mode='public_to' WHERE id=$1", input.AgentID)
+	dbfx.Insert(t, "agent_invocation_target", testutil.Cols{"agent_id": input.AgentID, "target_type": "workspace", "target_id": testWorkspaceID})
+	h := *testHandler
+	h.TxStarter = failedDelegationCommitStarter{h.TxStarter}
+	req := withURLParam(newRequest(http.MethodPut, "/api/agents/"+input.AgentID, map[string]any{"permission_mode": "private"}), "id", input.AgentID)
+	testutil.Call(t, h.UpdateAgent, req).Want(http.StatusInternalServerError)
+	var mode string
+	dbfx.QueryRow(t, "SELECT permission_mode FROM agent WHERE id=$1", input.AgentID).Scan(&mode)
+	if mode != "public_to" {
+		t.Fatalf("failed update committed permission mode %s", mode)
+	}
+	if n := dbfx.Count(t, "SELECT count(*) FROM agent_invocation_target WHERE agent_id=$1", input.AgentID); n != 1 {
+		t.Fatalf("failed update left %d targets, want original target", n)
+	}
+}
+
+func TestPublicDelegationRuntimeMismatchIsUniform(t *testing.T) {
+	otherOwner := dbfx.User(t, "Private runtime owner", uuid.NewString()+"@multica.test")
+	unrelated := dbfx.Runtime(t, "Unrelated private runtime", testutil.Cols{"owner_id": otherOwner})
+	foreignWorkspace := dbfx.Workspace(t, "Foreign workspace", "delegation-foreign-"+uuid.NewString())
+	foreign := dbfx.Runtime(t, "Foreign private runtime", testutil.Cols{"workspace_id": foreignWorkspace, "owner_id": otherOwner})
+	_, router, input := delegationFixture(t)
+	bound := input.ExpectedRuntimeID
+	var reference publicapiv1.Problem
+	for _, id := range []string{uuid.NewString(), unrelated, foreign} {
+		input.ExpectedRuntimeID = id
+		var problem publicapiv1.Problem
+		submitDelegation(t, router, input, uuid.NewString(), testUserID, testWorkspaceID, testWorkspaceID, []string{"delegations:write"}).Want(http.StatusConflict).JSON(&problem)
+		if reference.Code == "" {
+			reference = problem
+		}
+		if problem.Code != "runtime_binding_changed" || problem.Code != reference.Code || problem.Detail != reference.Detail {
+			t.Fatalf("runtime existence changed problem: %+v vs %+v", problem, reference)
+		}
+	}
+	input.ExpectedRuntimeID = bound
+	for _, owner := range []any{nil, otherOwner} {
+		dbfx.Exec(t, "UPDATE agent_runtime SET owner_id=$2 WHERE id=$1", bound, owner)
+		var problem publicapiv1.Problem
+		submitDelegation(t, router, input, uuid.NewString(), testUserID, testWorkspaceID, testWorkspaceID, []string{"delegations:write"}).Want(http.StatusConflict).JSON(&problem)
+		if problem.Code != reference.Code || problem.Detail != reference.Detail {
+			t.Fatalf("inaccessible bound runtime changed problem: %+v", problem)
+		}
+	}
+	if n := dbfx.Count(t, "SELECT count(*) FROM public_delegation WHERE agent_id=$1", input.AgentID); n != 0 {
+		t.Fatalf("runtime mismatch left %d admissions", n)
+	}
+}
+
+func TestPublicDelegationDeliveryRechecksInvocation(t *testing.T) {
+	for _, revoke := range []string{"permission", "membership"} {
+		t.Run(revoke, func(t *testing.T) {
+			callerID := dbfx.User(t, "Delegation caller", uuid.NewString()+"@multica.test")
+			memberID := dbfx.Member(t, testWorkspaceID, callerID, "member")
+			_, router, input := delegationFixture(t)
+			agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, context.Background())
+			dbfx.Cleanup(t, "DELETE FROM public_delegation WHERE agent_id=$1", agentID)
+			dbfx.Cleanup(t, "DELETE FROM agent_task_queue WHERE agent_id=$1", agentID)
+			dbfx.Exec(t, `UPDATE agent_runtime SET metadata=jsonb_set(metadata,'{capabilities}','["public-delegation-v1"]'::jsonb) WHERE id=$1`, runtimeID)
+			dbfx.Exec(t, "UPDATE agent SET permission_mode='public_to' WHERE id=$1", agentID)
+			dbfx.Insert(t, "agent_invocation_target", testutil.Cols{"agent_id": agentID, "target_type": "member", "target_id": callerID})
+			input.AgentID, input.ExpectedRuntimeID = agentID, runtimeID
+			var accepted publicapiv1.Delegation
+			submitDelegation(t, router, input, uuid.NewString(), callerID, testWorkspaceID, testWorkspaceID, []string{"delegations:write"}).Want(http.StatusAccepted).JSON(&accepted)
+			task, err := testHandler.TaskService.ClaimTaskForRuntime(context.Background(), parseUUID(runtimeID))
+			if err != nil || task == nil {
+				t.Fatalf("claim: %v task=%v", err, task)
+			}
+			if revoke == "permission" {
+				req := withURLParam(newRequest(http.MethodPut, "/api/agents/"+agentID, map[string]any{"permission_mode": "private"}), "id", agentID)
+				testutil.Call(t, testHandler.UpdateAgent, req).Want(http.StatusOK)
+			} else {
+				dbfx.Exec(t, "DELETE FROM member WHERE id=$1", memberID)
+			}
+			req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, daemonID)
+			req.Header.Set("X-Client-Capabilities", "public-delegation-v1")
+			response, _, _, _, failure, err := testHandler.finalizeClaimDeliveryForTest(req, task, runtimeID, testWorkspaceID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if failure == nil || failure.outcome != "error_delegation_invocation_not_allowed" || !failure.settled {
+				t.Fatalf("revoked delegation was not rejected: %+v", failure)
+			}
+			if response.AuthToken != "" {
+				t.Fatal("revoked delegation received task credentials")
+			}
+			if n := dbfx.Count(t, "SELECT count(*) FROM task_token WHERE task_id=$1", accepted.TaskID); n != 0 {
+				t.Fatalf("revoked delegation minted %d tokens", n)
+			}
+		})
 	}
 }

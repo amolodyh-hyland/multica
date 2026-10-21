@@ -36,7 +36,11 @@ paths:
         payload conflicts. If execution history was deleted, the original IDs are
         returned with status unavailable; a retry never recreates the execution.
         A new request compares expected_runtime_id under a
-        lock and rejects rebinding. Validation failures roll back both records.
+        lock and rejects rebinding. Missing, mismatched, or disallowed runtime
+        bindings uniformly return runtime_binding_changed. Permission changes
+        are serialized with admission; delivery rechecks membership and invocation
+        rights in the transaction that mints task credentials. Validation
+        failures roll back both records.
         Acceptance means queued; no execution slot is reserved. The scheduler
         enforces capacity. Retry ambiguous responses with the same key/payload.
         Keys are retained until workspace deletion and must not be reused.

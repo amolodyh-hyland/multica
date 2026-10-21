@@ -192,6 +192,40 @@ func (q *Queries) GetPublicDelegationByKey(ctx context.Context, arg GetPublicDel
 	return i, err
 }
 
+const lockPublicDelegationInvocationTargets = `-- name: LockPublicDelegationInvocationTargets :many
+SELECT id, agent_id, target_type, target_id, created_by, created_at FROM agent_invocation_target
+WHERE agent_id = $1
+ORDER BY target_type, created_at, id
+FOR SHARE
+`
+
+func (q *Queries) LockPublicDelegationInvocationTargets(ctx context.Context, agentID pgtype.UUID) ([]AgentInvocationTarget, error) {
+	rows, err := q.db.Query(ctx, lockPublicDelegationInvocationTargets, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentInvocationTarget{}
+	for rows.Next() {
+		var i AgentInvocationTarget
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.TargetType,
+			&i.TargetID,
+			&i.CreatedBy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockPublicDelegationMember = `-- name: LockPublicDelegationMember :one
 SELECT id, workspace_id, user_id, role, created_at FROM member WHERE workspace_id = $1 AND user_id = $2 FOR SHARE
 `
