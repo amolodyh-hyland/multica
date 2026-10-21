@@ -16,6 +16,153 @@ servers:
 security:
   - pluginBearer: []
 paths:
+  /agents:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      operationId: listPublicAgents
+      summary: List safe agents metadata
+      description: >-
+        Member PAT only. Current workspace membership and resource visibility
+        are required. Hidden, missing and foreign resources return not_found
+        on detail reads and are omitted from lists. Runtime details require
+        owner/public access with no admin bypass. Profile runtime references
+        and coarse availability do not grant runtime access or reserve capacity.
+      x-multica-contract: shared_resource
+      x-multica-scope: agents:read
+      x-multica-workspace-roles: [member, admin, owner]
+      x-multica-audit: planned
+      x-multica-rate-limit-profiles: [user_default]
+      security:
+        - memberPAT: []
+      servers:
+        - url: https://api.multica.ai/api/v1
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          description: Opaque continuation scoped to the actor, workspace, collection and filters; visibility is rechecked on every page
+          schema: { type: string, maxLength: 1024 }
+        - name: include_archived
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Safe metadata projection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentListResponse"
+        default:
+          $ref: "#/components/responses/Problem"
+  /agents/{agent_id}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - name: agent_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getPublicAgent
+      summary: Get safe agent metadata
+      description: >-
+        Member PAT only. Current workspace membership and resource visibility
+        are required. Hidden, missing and foreign resources return not_found
+        on detail reads and are omitted from lists. Runtime details require
+        owner/public access with no admin bypass. Profile runtime references
+        and coarse availability do not grant runtime access or reserve capacity.
+      x-multica-contract: shared_resource
+      x-multica-scope: agents:read
+      x-multica-workspace-roles: [member, admin, owner]
+      x-multica-audit: planned
+      x-multica-rate-limit-profiles: [user_default]
+      security:
+        - memberPAT: []
+      servers:
+        - url: https://api.multica.ai/api/v1
+      responses:
+        "200":
+          description: Safe metadata projection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+        default:
+          $ref: "#/components/responses/Problem"
+  /runtimes:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      operationId: listPublicRuntimes
+      summary: List safe runtimes metadata
+      description: >-
+        Member PAT only. Current workspace membership and resource visibility
+        are required. Hidden, missing and foreign resources return not_found
+        on detail reads and are omitted from lists. Runtime details require
+        owner/public access with no admin bypass. Profile runtime references
+        and coarse availability do not grant runtime access or reserve capacity.
+      x-multica-contract: shared_resource
+      x-multica-scope: runtimes:read
+      x-multica-workspace-roles: [member, admin, owner]
+      x-multica-audit: planned
+      x-multica-rate-limit-profiles: [user_default]
+      security:
+        - memberPAT: []
+      servers:
+        - url: https://api.multica.ai/api/v1
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          description: Opaque continuation scoped to the actor, workspace, collection and filters; visibility is rechecked on every page
+          schema: { type: string, maxLength: 1024 }
+      responses:
+        "200":
+          description: Safe metadata projection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeListResponse"
+        default:
+          $ref: "#/components/responses/Problem"
+  /runtimes/{runtime_id}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - name: runtime_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getPublicRuntime
+      summary: Get safe runtime metadata
+      description: >-
+        Member PAT only. Current workspace membership and resource visibility
+        are required. Hidden, missing and foreign resources return not_found
+        on detail reads and are omitted from lists. Runtime details require
+        owner/public access with no admin bypass. Profile runtime references
+        and coarse availability do not grant runtime access or reserve capacity.
+      x-multica-contract: shared_resource
+      x-multica-scope: runtimes:read
+      x-multica-workspace-roles: [member, admin, owner]
+      x-multica-audit: planned
+      x-multica-rate-limit-profiles: [user_default]
+      security:
+        - memberPAT: []
+      servers:
+        - url: https://api.multica.ai/api/v1
+      responses:
+        "200":
+          description: Safe metadata projection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Runtime"
+        default:
+          $ref: "#/components/responses/Problem"
   /context:
     get:
       operationId: getPluginContext
@@ -318,6 +465,62 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    Agent:
+      type: object
+      additionalProperties: false
+      required: [agent_id, workspace_id, name, runtime_id, runtime_bound, permission_mode, can_invoke, invocation_targets, archived, availability]
+      properties:
+        agent_id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        name: { type: string }
+        runtime_id:
+          type: string
+          description: Stable bound runtime reference, including hidden runtimes in this workspace; empty when unbound or the binding cannot be resolved safely
+        runtime_bound: { type: boolean }
+        permission_mode: { type: string }
+        can_invoke:
+          type: boolean
+          description: Current member permission only, false for archived profiles; does not guarantee readiness or admission
+        invocation_targets:
+          type: array
+          items: { $ref: "#/components/schemas/InvocationTarget" }
+        archived: { type: boolean }
+        availability:
+          type: string
+          enum: [online, unstable, offline, unbound, unavailable, archived]
+    InvocationTarget:
+      type: object
+      additionalProperties: false
+      required: [target_type, target_id]
+      properties:
+        target_type: { type: string }
+        target_id: { type: [string, "null"], format: uuid }
+    AgentListResponse:
+      type: object
+      additionalProperties: false
+      required: [agents]
+      properties:
+        agents:
+          type: array
+          items: { $ref: "#/components/schemas/Agent" }
+        next_cursor: { type: string }
+    Runtime:
+      type: object
+      additionalProperties: false
+      required: [runtime_id, workspace_id, availability]
+      properties:
+        runtime_id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        availability: { type: string, enum: [online, unstable, offline] }
+    RuntimeListResponse:
+      type: object
+      additionalProperties: false
+      required: [runtimes]
+      properties:
+        runtimes:
+          type: array
+          items: { $ref: "#/components/schemas/Runtime" }
+        next_cursor: { type: string }
     Problem:
       type: object
       required: [type, title, status, code, detail, request_id, error]

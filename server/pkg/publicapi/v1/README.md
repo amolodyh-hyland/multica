@@ -32,7 +32,8 @@ endpoint-specific concurrency rules.
   a `scopes` list, for example
   `{"name":"AO","workspace_id":"<workspace-uuid>","scopes":["issues:read","issues:write"]}`.
   Accepted scopes come from the capability ledger: `issues:read`,
-  `issues:write`, `comments:read`, and `comments:write`. A PAT created without
+  `issues:write`, `comments:read`, `comments:write`, `agents:read`, and
+  `runtimes:read`. A PAT created without
   scopes, including a legacy PAT, continues to work on the existing `/api`
   surface but is rejected on `/api/v1` with `scoped_token_required`. A scoped
   PAT is bound to one workspace, must present that workspace on each request,
@@ -42,7 +43,7 @@ endpoint-specific concurrency rules.
   through the first-party management endpoint. Task tokens, Cloud PATs, Plugin
   credentials, and scoped PATs cannot issue PATs. The issuer must be a member
   of the requested workspace; scope grants are checked against the role policy
-  in the capability ledger. The current issue and comment scopes are available
+  in the capability ledger. The current issue, comment, agent and runtime scopes are available
   to `member`, `admin`, and `owner` roles. The `/api/cli-token` exchange accepts
   only an interactive session JWT with signed provenance; task tokens, Cloud
   PATs, Plugin credentials, PATs, and JWTs without that provenance cannot be
@@ -93,9 +94,59 @@ endpoint-specific concurrency rules.
 
 ## Rollout ledger
 
-The migrated slice is Issue read/content update and Comment read/create. Context
+The migrated slice is Issue read/content update, Comment read/create, and safe
+Agent/Runtime reads. Context
 and Storage remain Plugin extensions; Hook and invocation delivery remain on
-the bridge. Projects, Members, Issue search/create/transition, Agents, Squads,
+the bridge. Projects, Members, Issue search/create/transition, Agent writes, Squads,
 Skills, Tasks/Runs, and Autopilots are subsequent vertical slices. Each slice
 adds its Public contract first, then explicitly opts the safe Plugin subset into
 the capability ledger.
+
+## Profile and runtime reads
+
+These operations are member-only; Plugin credentials do not gain access:
+
+| Operation | Required scope | Response |
+| --- | --- | --- |
+| `GET /api/v1/agents` | `agents:read` | `agents` and optional `next_cursor` |
+| `GET /api/v1/agents/{agent_id}` | `agents:read` | Safe profile |
+| `GET /api/v1/runtimes` | `runtimes:read` | `runtimes` and optional `next_cursor` |
+| `GET /api/v1/runtimes/{runtime_id}` | `runtimes:read` | Safe runtime |
+
+Send `X-Workspace-ID` matching the PAT's workspace binding. Resource IDs are
+stable UUIDs. Lists order by UUID, accept `limit` (1–200, default 50) and `cursor`,
+and recheck current membership and visibility on every page. Cursors are scoped
+to the actor, workspace, collection and filters; they never grant access. Agent
+lists exclude archived profiles by default; `include_archived=true` includes
+them. Both lists currently reuse the workspace inventory queries and filter in
+memory before pagination; response sizes are bounded, inventory reads are not.
+
+Profiles expose only `agent_id`, `workspace_id`, `name`, `runtime_id`,
+`runtime_bound`, `permission_mode`, `can_invoke`, `invocation_targets`,
+`archived`, and `availability`. Visibility follows the existing profile rules:
+profile owners and workspace owners/admins can view private profiles, while
+regular members need a workspace or matching member invocation target on a
+`public_to` profile. Team targets remain inert. Workspace governance visibility
+does not grant invocation: private profiles remain invocable only by their
+profile owner. Archived profiles always report `can_invoke=false`.
+
+`can_invoke` describes permission, independently of readiness or capacity; it is
+not an admission guarantee. Availability is `online`, `unstable`, `offline`,
+`unbound`, `unavailable`, or `archived`. Unbound profiles have `runtime_bound=false`
+and an empty runtime ID. Missing or inconsistent runtime bindings report
+`unavailable` and an empty runtime ID. A visible profile can reference a hidden
+runtime in the same workspace: only its stable runtime ID and coarse health are
+exposed, matching the existing profile presence boundary.
+
+Runtime lists and detail reads consistently require an owned or explicitly
+public runtime with a valid owner, with no workspace admin bypass. Runtime DTOs
+contain only `runtime_id`, `workspace_id`, and coarse `availability`. Hidden
+runtimes are omitted from runtime lists and return `not_found` on runtime detail
+reads. Hidden profiles, missing resources and resources in another workspace
+also return `not_found`; collection reads omit them. Scope denial returns
+`insufficient_scope`. Every failure uses the stable problem envelope.
+
+Neither DTO contains configuration, instructions, conversation starters, custom
+arguments, environment data, integration allow-lists, MCP configuration,
+timestamps, device/daemon details, tokens, or credentials, including for owners.
+These reads do not enqueue work or enable delegation.

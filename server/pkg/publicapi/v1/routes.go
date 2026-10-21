@@ -21,6 +21,10 @@ const (
 	PathIssueComments = "/issues/{issue_ref}/comments"
 	PathStorageScope  = "/storage/{scope}"
 	PathStorageValue  = "/storage/{scope}/{key}"
+	PathAgents        = "/agents"
+	PathAgent         = "/agents/{agent_id}"
+	PathRuntimes      = "/runtimes"
+	PathRuntime       = "/runtimes/{runtime_id}"
 )
 
 type ContractKind string
@@ -58,8 +62,14 @@ var pluginCredentials = []CredentialKind{
 var sharedRateLimits = []RateLimitProfile{RateLimitUserDefault, RateLimitPluginStrict}
 var pluginRateLimits = []RateLimitProfile{RateLimitPluginStrict}
 var memberWorkspaceRoles = []string{"member", "admin", "owner"}
+var memberCredentials = []CredentialKind{CredentialPersonalAccess}
+var memberRateLimits = []RateLimitProfile{RateLimitUserDefault}
 
 var Operations = []Operation{
+	{Method: http.MethodGet, Path: PathAgents, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: memberCredentials, Scope: "agents:read", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskRead, Audit: AuditPlanned, RateLimits: memberRateLimits}},
+	{Method: http.MethodGet, Path: PathAgent, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: memberCredentials, Scope: "agents:read", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskRead, Audit: AuditPlanned, RateLimits: memberRateLimits}},
+	{Method: http.MethodGet, Path: PathRuntimes, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: memberCredentials, Scope: "runtimes:read", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskRead, Audit: AuditPlanned, RateLimits: memberRateLimits}},
+	{Method: http.MethodGet, Path: PathRuntime, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: memberCredentials, Scope: "runtimes:read", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskRead, Audit: AuditPlanned, RateLimits: memberRateLimits}},
 	{Method: http.MethodGet, Path: PathContext, Contract: ContractPluginExtension, Policy: OperationPolicy{Credentials: pluginCredentials, Risk: RiskRead, Audit: AuditNotRequired, RateLimits: pluginRateLimits}},
 	{Method: http.MethodGet, Path: PathIssue, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: sharedCredentials, Scope: "issues:read", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskRead, Audit: AuditPlanned, RateLimits: sharedRateLimits}},
 	{Method: http.MethodPatch, Path: PathIssue, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: sharedCredentials, Scope: "issues:write", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskContentWrite, Audit: AuditPlanned, RateLimits: sharedRateLimits}},
