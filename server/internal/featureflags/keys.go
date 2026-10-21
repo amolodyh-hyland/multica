@@ -7,6 +7,7 @@ import (
 )
 
 const (
+	PublicDelegationsV1 = "public_delegations_v1"
 	// BillingWorkspaceSubscriptions gates the workspace-scoped entitlement,
 	// Stripe Checkout, seat reconcile, and Billing Portal proxy surface. It is
 	// deliberately off by default so the main repository can ship before the
@@ -98,4 +99,8 @@ func EvaluateFrontendPublicFlags(ctx context.Context, flags *featureflag.Service
 
 func ProjectWorkflowsV1Enabled(ctx context.Context, flags *featureflag.Service) bool {
 	return flags.IsEnabled(ctx, ProjectWorkflowsV1, false)
+}
+
+func PublicDelegationsV1Enabled(ctx context.Context, flags *featureflag.Service) bool {
+	return flags.IsEnabled(ctx, PublicDelegationsV1, false)
 }

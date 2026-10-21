@@ -259,6 +259,9 @@ func buildPromptBody(task Task, provider string) string {
 	if task.AutopilotRunID != "" {
 		return buildAutopilotPrompt(task)
 	}
+	if task.DelegationID != "" {
+		return fmt.Sprintf("You are executing a confirmed delegation in a Multica workspace.\n\nDelegation ID: %s\nTask: %s\n\n%s\n", task.DelegationID, task.DelegationTitle, task.DelegationInstructions)
+	}
 	if task.QuickCreatePrompt != "" {
 		return buildQuickCreatePrompt(task)
 	}

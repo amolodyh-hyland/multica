@@ -27,6 +27,7 @@ func TestProfileReadDTOsHaveOnlySafeContractFields(t *testing.T) {
 		fields []string
 	}{
 		{"Agent", Agent{InvocationTargets: []InvocationTarget{}}, []string{"agent_id", "workspace_id", "name", "runtime_id", "runtime_bound", "permission_mode", "can_invoke", "invocation_targets", "archived", "availability"}},
+		{"Delegation", Delegation{}, []string{"delegation_id", "task_id", "workspace_id", "agent_id", "runtime_id", "status", "created_at"}},
 		{"Runtime", Runtime{}, []string{"runtime_id", "workspace_id", "availability"}},
 		{"InvocationTarget", InvocationTarget{}, []string{"target_type", "target_id"}},
 	} {

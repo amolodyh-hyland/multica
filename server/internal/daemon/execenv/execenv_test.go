@@ -5320,6 +5320,7 @@ func TestWriteReadGCMeta_KindRoundTrip(t *testing.T) {
 		{"chat", GCMeta{Kind: GCKindChat, ChatSessionID: "cs-1", WorkspaceID: "ws"}, GCKindChat},
 		{"autopilot_run", GCMeta{Kind: GCKindAutopilotRun, AutopilotRunID: "ar-1", WorkspaceID: "ws"}, GCKindAutopilotRun},
 		{"quick_create", GCMeta{Kind: GCKindQuickCreate, TaskID: "t-1", WorkspaceID: "ws"}, GCKindQuickCreate},
+		{"delegation", GCMeta{Kind: GCKindDelegation, TaskID: "t-1", WorkspaceID: "ws"}, GCKindDelegation},
 	}
 	for _, tc := range cases {
 		tc := tc

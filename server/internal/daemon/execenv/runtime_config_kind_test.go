@@ -15,6 +15,7 @@ func TestClassifyTask(t *testing.T) {
 		want taskKind
 	}{
 		{"chat", TaskContextForEnv{ChatSessionID: "c"}, kindChat},
+		{"delegation", TaskContextForEnv{DelegationID: "d"}, kindDelegation},
 		{"quick-create", TaskContextForEnv{QuickCreatePrompt: "p"}, kindQuickCreate},
 		{"autopilot", TaskContextForEnv{AutopilotRunID: "r"}, kindAutopilotRunOnly},
 		{"issue-comment-triggered", TaskContextForEnv{IssueID: "i", TriggerCommentID: "c"}, kindIssue},
@@ -44,6 +45,7 @@ func TestTaskKindHasIssueContext(t *testing.T) {
 		want bool
 	}{
 		{kindIssue, true},
+		{kindDelegation, false},
 		{kindAutopilotRunOnly, false},
 		{kindQuickCreate, false},
 		{kindChat, false},
@@ -127,7 +129,7 @@ func TestBuildMetaSkillContentSlimKindMatrix(t *testing.T) {
 	}
 	allKinds := map[taskKind]bool{
 		kindIssue: true, kindAutopilotRunOnly: true,
-		kindQuickCreate: true, kindChat: true,
+		kindQuickCreate: true, kindChat: true, kindDelegation: true,
 	}
 	issueKinds := map[taskKind]bool{kindIssue: true}
 	checks := []sectionCheck{
@@ -141,7 +143,7 @@ func TestBuildMetaSkillContentSlimKindMatrix(t *testing.T) {
 		{"## Output", allKinds},
 		{"## Comment Formatting", issueKinds},
 		{"## Repositories", map[taskKind]bool{
-			kindIssue: true, kindAutopilotRunOnly: true, kindChat: true,
+			kindIssue: true, kindAutopilotRunOnly: true, kindChat: true, kindDelegation: true,
 		}},
 		{"## Instruction Precedence", issueKinds},
 		{"## Sub-issue Creation", issueKinds},
@@ -153,6 +155,7 @@ func TestBuildMetaSkillContentSlimKindMatrix(t *testing.T) {
 	}
 
 	fixtures := map[taskKind]TaskContextForEnv{
+		kindDelegation: {DelegationID: "d-1", AgentName: "Eve", AgentID: "eve-1", Repos: baseRepo, AgentSkills: baseSkill},
 		kindChat: {ChatSessionID: "c-1", AgentName: "Eve", AgentID: "eve-1",
 			Repos: baseRepo, AgentSkills: baseSkill},
 		kindQuickCreate: {QuickCreatePrompt: "p", AgentName: "Eve", AgentID: "eve-1",
@@ -377,5 +380,19 @@ func TestBackgroundTaskSafetySlimHardPins(t *testing.T) {
 	// precisely no longer run-owned after handoff.
 	if strings.Contains(out, "The rules above") {
 		t.Errorf("slim Background Task Safety must not reintroduce the ambiguous \"The rules above\" scoping sentence\n---\n%s", out)
+	}
+}
+
+func TestDelegationBriefUsesTaskResult(t *testing.T) {
+	out := buildMetaSkillContent("codex", TaskContextForEnv{DelegationID: "delegation"})
+	for _, required := range []string{"Execute the confirmed task brief", "no assigned Multica issue", "captured as the task result"} {
+		if !strings.Contains(out, required) {
+			t.Fatalf("delegation brief missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"Final results MUST be delivered via", "Run exactly one `multica issue create", "\n## Sub-issue Creation\n", "\n## Comment Formatting\n"} {
+		if strings.Contains(out, forbidden) {
+			t.Fatalf("delegation inherited issue workflow: %q", forbidden)
+		}
 	}
 }

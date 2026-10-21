@@ -1230,7 +1230,12 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		},
 		{
 			name: "delete leaf data",
-			run:  func() error { return qtx.DeleteWorkspaceLeafData(ctx, requester.WorkspaceID) },
+			run: func() error {
+				if err := qtx.DeletePublicDelegationsForWorkspace(ctx, requester.WorkspaceID); err != nil {
+					return err
+				}
+				return qtx.DeleteWorkspaceLeafData(ctx, requester.WorkspaceID)
+			},
 		},
 		{
 			name: "delete autopilot runs",

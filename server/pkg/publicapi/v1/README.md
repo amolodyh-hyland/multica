@@ -150,3 +150,34 @@ Neither DTO contains configuration, instructions, conversation starters, custom
 arguments, environment data, integration allow-lists, MCP configuration,
 timestamps, device/daemon details, tokens, or credentials, including for owners.
 These reads do not enqueue work or enable delegation.
+
+## Delegation admission (TK-MA61)
+
+`POST /api/v1/delegations` requires a workspace-bound member PAT with
+`delegations:write`. The server-only `public_delegations_v1` flag defaults OFF;
+`FF_PUBLIC_DELEGATIONS_V1=on` is an explicit operator rollout decision. This does
+not enable unattended dispatch: AO obtains human confirmation before calling.
+No issue, assignment, or profile copy is created.
+
+Admission atomically persists the workspace/member/key identity, normalized
+payload SHA-256, target/source IDs, and one queued task. The task carries the
+approved title and instructions, not Quick Create issue-creation semantics.
+The runtime must advertise `public-delegation-v1`, be online, have an owner,
+and satisfy existing agent readiness/ownership checks. Invocation rights come
+from the profile owner/allow-list; runtime inventory visibility alone grants
+no invocation rights. Binding changes require a new preview and confirmation.
+
+A new request returns 202 with `status: queued`, without reserving concurrency.
+A retry returns 200 with the original IDs and current task status; a changed
+payload with the same key returns 409 `idempotency_conflict`. Identity survives
+PAT rotation and target changes. If execution history has been deleted, replay
+returns the original IDs with `status: unavailable` and never recreates the run.
+Keys are retained until workspace deletion.
+Do not generate a new key after a lost response. New intent requires a new key.
+OpenAPI defines payload limits and the stable conflict reasons. Audit remains
+`planned`; the durable admission row is not a general audit sink.
+
+Migrations 587–589 add the record and independent concurrent unique indexes.
+Apply all three before enabling the flag. The down migration drops admission
+history, so disable intake before any rollback and preserve records needed for
+reconciliation. Status lookup and cancellation remain the TK-MA62 slice.

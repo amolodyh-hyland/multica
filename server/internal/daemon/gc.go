@@ -520,8 +520,8 @@ func (d *Daemon) shouldCleanTaskDirForKind(ctx context.Context, taskDir string, 
 		return d.gcDecisionChat(ctx, taskDir, meta)
 	case execenv.GCKindAutopilotRun:
 		return d.gcDecisionAutopilotRun(ctx, taskDir, meta)
-	case execenv.GCKindQuickCreate:
-		return d.gcDecisionQuickCreate(ctx, taskDir, meta)
+	case execenv.GCKindQuickCreate, execenv.GCKindDelegation:
+		return d.gcDecisionTask(ctx, taskDir, meta)
 	default:
 		// Unknown kind: fall back to mtime-based orphan cleanup so a future
 		// daemon writing a kind we don't recognize doesn't get insta-wiped.
@@ -816,7 +816,7 @@ func isAutopilotRunTerminal(status string) bool {
 	}
 }
 
-func (d *Daemon) gcDecisionQuickCreate(ctx context.Context, taskDir string, meta *execenv.GCMeta) gcAction {
+func (d *Daemon) gcDecisionTask(ctx context.Context, taskDir string, meta *execenv.GCMeta) gcAction {
 	if strings.TrimSpace(meta.TaskID) == "" {
 		return d.orphanByMTime(taskDir, "empty task id")
 	}
@@ -832,16 +832,12 @@ func (d *Daemon) gcDecisionQuickCreate(ctx context.Context, taskDir string, meta
 		return gcActionSkip
 	}
 
-	// Quick-create workdirs are not reused by the issue task that
-	// LinkTaskToIssue eventually attaches — that issue gets its own
-	// envRoot. So as soon as the quick-create task itself reaches a
-	// terminal state we can reclaim the directory immediately, without
-	// waiting for GCTTL. If the user wants to revisit, the linked issue
-	// has the agent's output already.
+	// Standalone task workdirs are not reused by another run.
+
 	if isAgentTaskTerminal(status.Status) {
 		d.logger.Info("gc: eligible for cleanup",
 			"dir", filepath.Base(taskDir),
-			"kind", "quick_create",
+			"kind", string(meta.Kind),
 			"task", meta.TaskID,
 			"status", status.Status,
 		)

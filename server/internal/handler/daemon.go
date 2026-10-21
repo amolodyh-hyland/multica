@@ -3435,6 +3435,21 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		projectCtx.applyTo(&resp)
 	}
 
+	if delegation, ok := service.ParsePublicDelegationContext(*task); ok {
+		if !requestHasClientCapability(r, protocol.DaemonCapabilityPublicDelegationV1) {
+			return resp, deliveredCommentIDs, issueSnapshot, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(
+				r.Context(), task, "The runtime must support delegation tasks.", taskfailure.ReasonInvalidTaskIdentity,
+				"error_delegation_unsupported", http.StatusConflict, "runtime does not support delegation tasks")
+		}
+		if failure := h.rejectClaimOnWorkspaceMismatch(r.Context(), task, delegation.WorkspaceID, runtimeID, runtimeWorkspaceID, false); failure != nil {
+			return resp, deliveredCommentIDs, issueSnapshot, agentSkillCount, builtinSkillCount, failure
+		}
+		resp.WorkspaceID = delegation.WorkspaceID
+		resp.DelegationID = delegation.DelegationID
+		resp.DelegationTitle = delegation.Task.Title
+		resp.DelegationInstructions = delegation.Task.Instructions
+	}
+
 	// Quick-create task: no issue / chat / autopilot link — workspace and
 	// prompt come from the task's context JSONB. Resolve workspace from
 	// there so the isolation check below has something to compare.

@@ -16,6 +16,7 @@ const BasePath = "/v1"
 const MemberBasePath = "/api/v1"
 
 const (
+	PathDelegations   = "/delegations"
 	PathContext       = "/context"
 	PathIssue         = "/issues/{issue_ref}"
 	PathIssueComments = "/issues/{issue_ref}/comments"
@@ -66,6 +67,7 @@ var memberCredentials = []CredentialKind{CredentialPersonalAccess}
 var memberRateLimits = []RateLimitProfile{RateLimitUserDefault}
 
 var Operations = []Operation{
+	{Method: http.MethodPost, Path: PathDelegations, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: memberCredentials, Scope: "delegations:write", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskHigh, Audit: AuditPlanned, RateLimits: memberRateLimits}},
 	{Method: http.MethodGet, Path: PathAgents, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: memberCredentials, Scope: "agents:read", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskRead, Audit: AuditPlanned, RateLimits: memberRateLimits}},
 	{Method: http.MethodGet, Path: PathAgent, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: memberCredentials, Scope: "agents:read", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskRead, Audit: AuditPlanned, RateLimits: memberRateLimits}},
 	{Method: http.MethodGet, Path: PathRuntimes, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: memberCredentials, Scope: "runtimes:read", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskRead, Audit: AuditPlanned, RateLimits: memberRateLimits}},

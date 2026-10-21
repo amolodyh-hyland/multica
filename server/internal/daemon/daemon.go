@@ -6401,6 +6401,8 @@ func gcMetaForTask(task Task) (execenv.GCMeta, bool) {
 	case task.IssueID != "":
 		meta.Kind = execenv.GCKindIssue
 		meta.IssueID = task.IssueID
+	case task.DelegationID != "":
+		meta.Kind = execenv.GCKindDelegation
 	case task.QuickCreatePrompt != "":
 		// Quick-create tasks reach WriteGCMeta before the server runs
 		// LinkTaskToIssue, so IssueID is always empty here. Persist the
@@ -7765,6 +7767,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Repos are passed as metadata only — the agent checks them out on demand
 	// via `multica repo checkout <url>`.
 	taskCtx := execenv.TaskContextForEnv{
+		DelegationID:        task.DelegationID,
 		IssueID:             task.IssueID,
 		TriggerCommentID:    task.TriggerCommentID,
 		TriggerThreadID:     task.TriggerThreadID,
