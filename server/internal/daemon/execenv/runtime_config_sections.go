@@ -793,6 +793,8 @@ func writeInlineBlocksPolicy(b *strings.Builder) {
 func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 	b.WriteString("## Output\n\n")
 	switch kind {
+	case kindDelegation:
+		b.WriteString("This is a confirmed delegation without an assigned issue. Your final assistant output is captured as the task result. State the outcome concisely. This surface is text-only; do not link runtime-local file paths.\n\n")
 	case kindAutopilotRunOnly:
 		b.WriteString("This is a run-only autopilot task, so there may be no issue comment to post. Your final assistant output is captured automatically as the autopilot run result. Keep it concise and state the outcome.\n\n")
 		b.WriteString("**Delivering files here:** this surface is text-only — the run result carries no attachments. Describe what you produced; do not link its path.\n")
@@ -911,6 +913,8 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 		writeWorkflowQuickCreate(&b)
 	case kindAutopilotRunOnly:
 		writeWorkflowAutopilot(&b)
+	case kindDelegation:
+		b.WriteString("Execute the confirmed task brief in the per-turn message. There is no assigned Multica issue. Do not create, assign, or update issues unless the confirmed brief explicitly requests it. Return the result in your final assistant output.\n\n")
 	case kindIssue:
 		writeWorkflowIssue(&b, ctx)
 	}

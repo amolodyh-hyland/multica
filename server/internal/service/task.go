@@ -7405,6 +7405,9 @@ func (s *TaskService) ResolveTaskWorkspaceIDChecked(ctx context.Context, task db
 	// requireDaemonTaskAccess (404 on /start, /progress, /complete, /fail
 	// for the daemon) and silently dropped task:dispatch / task:completed
 	// broadcasts, which is why quick-create tasks appeared stuck queued.
+	if delegation, ok := ParsePublicDelegationContext(task); ok {
+		return delegation.WorkspaceID, nil
+	}
 	if qc, ok := s.parseQuickCreateContext(task); ok {
 		return qc.WorkspaceID, nil
 	}

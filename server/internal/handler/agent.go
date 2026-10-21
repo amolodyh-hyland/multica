@@ -519,6 +519,9 @@ type AgentTaskResponse struct {
 	AutopilotDescription     string               `json:"autopilot_description,omitempty"`       // autopilot description used as task prompt
 	AutopilotSource          string               `json:"autopilot_source,omitempty"`            // manual, schedule, webhook, or api
 	AutopilotTriggerPayload  json.RawMessage      `json:"autopilot_trigger_payload,omitempty"`   // optional trigger payload for webhook/api runs
+	DelegationID             string               `json:"delegation_id,omitempty"`
+	DelegationTitle          string               `json:"delegation_title,omitempty"`
+	DelegationInstructions   string               `json:"delegation_instructions,omitempty"`
 	QuickCreatePrompt        string               `json:"quick_create_prompt,omitempty"`         // user's natural-language input for quick-create tasks
 	QuickCreatePriority      string               `json:"quick_create_priority,omitempty"`       // explicit priority selected in quick-create
 	QuickCreateDueDate       string               `json:"quick_create_due_date,omitempty"`       // explicit calendar due date selected in quick-create
@@ -1053,6 +1056,9 @@ func computeTaskKind(t db.AgentTaskQueue) string {
 	}
 	var contextKind struct {
 		Type string `json:"type"`
+	}
+	if _, ok := service.ParsePublicDelegationContext(t); ok {
+		return "delegation"
 	}
 	if json.Unmarshal(t.Context, &contextKind) == nil && contextKind.Type == service.QuickCreateContextType {
 		return "quick_create"
@@ -2273,29 +2279,30 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Only binding writes need this transaction. Hold the same runtime lock as
-	// revocation until the new binding commits; a preflight-only check is stale
-	// as soon as a public runtime becomes private.
+	// Parent permission and target replacement commit together. Binding changes
+	// retain the runtime-before-agent lock order used by access revocation.
 	updateQueries := h.Queries
-	var bindingTx pgx.Tx
-	if req.RuntimeID != nil {
-		member, ok := h.workspaceMember(w, r, uuidToString(existing.WorkspaceID))
-		if !ok {
-			return
-		}
-		bindingTx, err = h.TxStarter.Begin(r.Context())
+	var updateTx pgx.Tx
+	if req.RuntimeID != nil || replacePermissionTargets {
+		updateTx, err = h.TxStarter.Begin(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to start agent binding transaction")
+			writeError(w, http.StatusInternalServerError, "failed to start agent update transaction")
 			return
 		}
-		defer bindingTx.Rollback(r.Context())
-		updateQueries = h.Queries.WithTx(bindingTx)
+		defer updateTx.Rollback(r.Context())
+		updateQueries = h.Queries.WithTx(updateTx)
 		if _, err := updateQueries.LockWorkspaceForChatSessionCreate(r.Context(), existing.WorkspaceID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				writeError(w, http.StatusNotFound, "workspace not found")
 			} else {
 				writeError(w, http.StatusInternalServerError, "failed to lock workspace")
 			}
+			return
+		}
+	}
+	if req.RuntimeID != nil {
+		member, ok := h.workspaceMember(w, r, uuidToString(existing.WorkspaceID))
+		if !ok {
 			return
 		}
 		runtime, err := updateQueries.LockAgentRuntimeForAccessChange(r.Context(), params.RuntimeID)
@@ -2309,6 +2316,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		params.RuntimeMode = pgtype.Text{String: runtime.RuntimeMode, Valid: true}
 	}
+
 	updated, err := updateQueries.UpdateAgent(r.Context(), params)
 	if err != nil {
 		// Unique constraint on (workspace_id, name) — mirror CreateAgent and
@@ -2331,9 +2339,16 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if bindingTx != nil {
-		if err := bindingTx.Commit(r.Context()); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to commit agent binding")
+	if replacePermissionTargets {
+		if err := replaceInvocationTargetsWithQueries(r.Context(), updateQueries, updated.ID, parseUUID(requestUserID(r)), resolvedPerm.targets); err != nil {
+			slog.Warn("update agent: persist invocation targets failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+			writeError(w, http.StatusInternalServerError, "failed to update invocation targets")
+			return
+		}
+	}
+	if updateTx != nil {
+		if err := updateTx.Commit(r.Context()); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to commit agent update")
 			return
 		}
 	}
@@ -2370,17 +2385,6 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			slog.Warn("clear agent composio_toolkit_allowlist failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to clear composio_toolkit_allowlist")
-			return
-		}
-	}
-
-	// Invocation targets (MUL-3963): replace wholesale when the owner touched
-	// permission. Done after the row update so a permission_mode flip and its
-	// targets land together.
-	if replacePermissionTargets {
-		if err := h.replaceInvocationTargets(r.Context(), updated.ID, parseUUID(requestUserID(r)), resolvedPerm.targets); err != nil {
-			slog.Warn("update agent: persist invocation targets failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
-			writeError(w, http.StatusInternalServerError, "failed to update invocation targets")
 			return
 		}
 	}

@@ -1363,6 +1363,19 @@ type ProjectResource struct {
 	CreatedBy    pgtype.UUID        `json:"created_by"`
 }
 
+type PublicDelegation struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	RequesterID    pgtype.UUID        `json:"requester_id"`
+	IdempotencyKey string             `json:"idempotency_key"`
+	PayloadHash    string             `json:"payload_hash"`
+	AgentID        pgtype.UUID        `json:"agent_id"`
+	RuntimeID      pgtype.UUID        `json:"runtime_id"`
+	TaskID         pgtype.UUID        `json:"task_id"`
+	Source         []byte             `json:"source"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type QuickAction struct {
 	ID            pgtype.UUID        `json:"id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`

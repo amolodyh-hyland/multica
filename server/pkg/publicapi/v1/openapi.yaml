@@ -16,6 +16,75 @@ servers:
 security:
   - pluginBearer: []
 paths:
+  /delegations:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    post:
+      operationId: createPublicDelegation
+      summary: Admit one confirmed delegation to the durable task queue
+      description: >-
+        Member PAT only, with delegations:write. Disabled unless the server flag
+        public_delegations_v1 is enabled (default OFF). The caller must obtain
+        human confirmation before submission. Creates no issue or assignment.
+        The runtime must be ready and advertise public-delegation-v1.
+        Idempotency is scoped to workspace and member, across PAT rotation.
+        The hash covers the decoded request, with UUIDs canonicalized; JSON key
+        order/whitespace is ignored, all string content is preserved. Unknown
+        fields are rejected. String size limits are measured in UTF-8 bytes;
+        the complete JSON body is limited to 512 KiB. Same key/payload returns the original IDs and
+        current task status, even if the target subsequently changes. A changed
+        payload conflicts. If execution history was deleted, the original IDs are
+        returned with status unavailable; a retry never recreates the execution.
+        A new request compares expected_runtime_id under a
+        lock and rejects rebinding. Missing, mismatched, or disallowed runtime
+        bindings uniformly return runtime_binding_changed. Permission changes
+        are serialized with admission; delivery rechecks membership and invocation
+        rights in the transaction that mints task credentials. Validation
+        failures roll back both records.
+        Acceptance means queued; no execution slot is reserved. The scheduler
+        enforces capacity. Retry ambiguous responses with the same key/payload.
+        Keys are retained until workspace deletion and must not be reused.
+      x-multica-contract: shared_resource
+      x-multica-scope: delegations:write
+      x-multica-workspace-roles: [member, admin, owner]
+      x-multica-audit: planned
+      x-multica-rate-limit-profiles: [user_default]
+      security:
+        - memberPAT: []
+      servers:
+        - url: https://api.multica.ai/api/v1
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDelegationRequest"
+      responses:
+        "202":
+          description: Atomically accepted and queued; capacity is scheduler-enforced
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Delegation"
+        "200":
+          description: Idempotent replay with original IDs and current task status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Delegation"
+        "409":
+          description: idempotency_conflict, runtime_binding_changed, target_unavailable, or runtime_unsupported
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
   /agents:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"
@@ -465,6 +534,42 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    CreateDelegationRequest:
+      type: object
+      additionalProperties: false
+      required: [agent_id, expected_runtime_id, source, task]
+      properties:
+        agent_id: { type: string, format: uuid }
+        expected_runtime_id: { type: string, format: uuid }
+        source:
+          type: object
+          additionalProperties: false
+          required: [system, project_id, task_id]
+          properties:
+            system: { type: string, minLength: 1, maxLength: 64 }
+            project_id: { type: string, minLength: 1, maxLength: 255 }
+            task_id: { type: string, minLength: 1, maxLength: 255 }
+        task:
+          type: object
+          additionalProperties: false
+          required: [title, instructions]
+          properties:
+            title: { type: string, minLength: 1, maxLength: 512 }
+            instructions: { type: string, minLength: 1, maxLength: 65536 }
+    Delegation:
+      type: object
+      additionalProperties: false
+      required: [delegation_id, task_id, workspace_id, agent_id, runtime_id, status, created_at]
+      properties:
+        delegation_id: { type: string, format: uuid }
+        task_id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        agent_id: { type: string, format: uuid }
+        runtime_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [queued, deferred, dispatched, waiting_local_directory, running, completed, failed, cancelled, unavailable]
+        created_at: { type: string, format: date-time }
     Agent:
       type: object
       additionalProperties: false

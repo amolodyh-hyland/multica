@@ -149,11 +149,14 @@ type Task struct {
 	AutopilotDescription          string                 `json:"autopilot_description,omitempty"`            // autopilot description used as task prompt
 	AutopilotSource               string                 `json:"autopilot_source,omitempty"`                 // manual, schedule, webhook, or api
 	AutopilotTriggerPayload       json.RawMessage        `json:"autopilot_trigger_payload,omitempty"`        // optional trigger payload for webhook/api runs
-	QuickCreatePrompt             string                 `json:"quick_create_prompt,omitempty"`              // user's natural-language input for quick-create tasks
-	QuickCreatePriority           string                 `json:"quick_create_priority,omitempty"`            // explicit priority selected in quick-create
-	QuickCreateDueDate            string                 `json:"quick_create_due_date,omitempty"`            // explicit calendar due date selected in quick-create
-	QuickCreateAttachmentIDs      []string               `json:"quick_create_attachment_ids,omitempty"`      // attachments uploaded in the quick-create prompt and bound by issue create
-	QuickCreateSourceContext      json.RawMessage        `json:"quick_create_source_context,omitempty"`      // immutable historical context, separate from the new instruction
+	DelegationID                  string                 `json:"delegation_id,omitempty"`
+	DelegationTitle               string                 `json:"delegation_title,omitempty"`
+	DelegationInstructions        string                 `json:"delegation_instructions,omitempty"`
+	QuickCreatePrompt             string                 `json:"quick_create_prompt,omitempty"`         // user's natural-language input for quick-create tasks
+	QuickCreatePriority           string                 `json:"quick_create_priority,omitempty"`       // explicit priority selected in quick-create
+	QuickCreateDueDate            string                 `json:"quick_create_due_date,omitempty"`       // explicit calendar due date selected in quick-create
+	QuickCreateAttachmentIDs      []string               `json:"quick_create_attachment_ids,omitempty"` // attachments uploaded in the quick-create prompt and bound by issue create
+	QuickCreateSourceContext      json.RawMessage        `json:"quick_create_source_context,omitempty"` // immutable historical context, separate from the new instruction
 	WakeupID                      string                 `json:"wakeup_id,omitempty"`
 	WakeupSystemRule              string                 `json:"wakeup_system_rule,omitempty"` // a platform rule (e.g. child_done) started the run
 	WakeupJoined                  string                 `json:"wakeup_joined,omitempty"`      // wakeups that joined this run instead of queuing their own
