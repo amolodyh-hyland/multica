@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef } from "react";
-import { Check, FolderKanban, Image as ImageIcon, Plus, X } from "lucide-react";
+import { useRef, useState } from "react";
+import { Check, Folder, FolderKanban, Image as ImageIcon, Plus, X } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   DropdownMenu,
@@ -16,6 +16,7 @@ import {
 import type { Project } from "@multica/core/types";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { useT } from "../../i18n";
+import { ChatFolderAttachment } from "./chat-folder-attachment";
 
 interface ChatAddMenuProps {
   /** Called with each selected file — the caller routes it through the
@@ -47,6 +48,8 @@ export function ChatAddMenu({
 }: ChatAddMenuProps) {
   const { t } = useT("chat");
   const inputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const [folderFiles, setFolderFiles] = useState<File[] | null>(null);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
@@ -78,6 +81,12 @@ export function ChatAddMenu({
             <DropdownMenuItem onClick={() => inputRef.current?.click()}>
               <ImageIcon />
               {t(($) => $.input.upload_file)}
+            </DropdownMenuItem>
+          )}
+          {onSelectFile && (
+            <DropdownMenuItem onClick={() => folderInputRef.current?.click()}>
+              <Folder />
+              {t(($) => $.input.attach_folder)}
             </DropdownMenuItem>
           )}
           {onSelectProject && (
@@ -130,6 +139,24 @@ export function ChatAddMenu({
           className="hidden"
           onChange={handleChange}
         />
+      )}
+      {onSelectFile && (
+        <input
+          ref={folderInputRef}
+          type="file"
+          multiple
+          {...{ webkitdirectory: "" }}
+          aria-label={t(($) => $.input.attach_folder)}
+          className="hidden"
+          onChange={(event) => {
+            const files = Array.from(event.target.files ?? []);
+            event.target.value = "";
+            if (files.length) setFolderFiles(files);
+          }}
+        />
+      )}
+      {folderFiles && onSelectFile && (
+        <ChatFolderAttachment files={folderFiles} onSelectFile={onSelectFile} onClose={() => setFolderFiles(null)} />
       )}
     </>
   );

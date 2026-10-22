@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/foldersnapshot"
 )
 
 // ClientVersion is the CLI version sent on every request as X-Client-Version.
@@ -807,8 +809,18 @@ func (c *APIClient) DownloadFile(ctx context.Context, downloadURL string) ([]byt
 		return nil, newHTTPError(http.MethodGet, downloadURL, resp)
 	}
 
-	const maxDownloadSize = 100 << 20 // 100 MB
-	return io.ReadAll(io.LimitReader(resp.Body, maxDownloadSize))
+	return readDownloadBody(resp.Body, foldersnapshot.MaxArchiveBytes)
+}
+
+func readDownloadBody(body io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("attachment exceeds download size limit")
+	}
+	return data, nil
 }
 
 // HealthCheck hits the /health endpoint and returns the response body.

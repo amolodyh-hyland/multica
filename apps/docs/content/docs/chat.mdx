@@ -26,6 +26,20 @@ If the runtime is offline, the message waits until it comes back online. Once th
 
 Before the first message, Chat shows up to three suggestions configured for the selected agent. Selecting one copies its full prompt into the composer without sending it, so you can adapt it first. Agents without configured suggestions use localized general-purpose examples.
 
+## Attach folder snapshots
+
+Choose **+ → Attach file** for individual files or **+ → Attach folder** for a folder snapshot. Project context remains a separate menu entry.
+
+Before a folder uploads, review the destination server and workspace, folder name, file count, total size, and complete file list. **Confirm upload** sends that snapshot; **Cancel** sends no file contents. A snapshot contains the files selected for this upload, rather than a live reference to your computer.
+
+Each folder supports at most **500 files and 100 MiB of file contents**. A selection over either limit is refused in full. The preview lists skipped symlinks and files inside `.git` and `node_modules`. Other hidden files are included, so review the list before confirming.
+
+Source symlink checks currently require Multica Desktop. Web browsers without a verifiable symlink check refuse folder uploads and show an explanation.
+
+The folder is stored as one `.multica-folder` attachment, so it is uploaded and bound to a message as a unit. Upload failures remain visible in the composer and cannot bind part of a folder. Sending the message uses the same attachment binding as individual files.
+
+In a task, `multica attachment download <id>` reconstructs the snapshot beneath a new `folder-snapshot-*` directory in the task work directory and returns the folder path. Nested relative paths are retained. Downloads validate paths and file checksums, refuse symlinks and special files, and never merge into an existing folder. No database migration is required for this snapshot format.
+
 ## Chat vs. issues
 
 | Need | Better fit |

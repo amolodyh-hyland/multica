@@ -744,6 +744,7 @@ export function ChatInput({
           <div className="absolute bottom-1.5 left-1.5 flex items-center gap-1">
             {(uploadEnabled || projectSelectionEnabled) && (
               <ChatAddMenu
+                key={loadedDraftKey}
                 onSelectFile={uploadEnabled
                   ? (file) => editorRef.current?.uploadFile(file)
                   : undefined}

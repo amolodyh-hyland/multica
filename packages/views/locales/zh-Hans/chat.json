@@ -26,12 +26,13 @@
     "runtime_access_denied_toast": "消息未发送——该智能体无法在其私有运行时上运行。请将该运行时设为公开，或将智能体重新绑定/复制到其所有者可用的运行时",
     "attachment_bind_failed_toast": "消息已发送，但文件未能附加。请稍后重试。",
     "add_tooltip": "添加",
-    "upload_file": "图片或文件",
+    "upload_file": "附加文件",
     "project_context": "项目上下文",
     "change_project_context": "更改项目上下文",
     "remove_project_context": "移除项目上下文",
     "no_projects": "还没有项目",
-    "project_context_unsupported": "项目描述不会生效——该智能体的守护进程版本过旧，需要升级"
+    "project_context_unsupported": "项目描述不会生效——该智能体的守护进程版本过旧，需要升级",
+    "attach_folder": "附加文件夹"
   },
   "queue": {
     "title_other": "{{count}} 条排队消息",
@@ -248,5 +249,27 @@
     "delete": "删除会话",
     "archive": "归档会话",
     "unarchive": "取消归档"
+  },
+  "folder": {
+    "title": "上传文件夹快照",
+    "description": "确认后才会上传所列文件。",
+    "server": "服务器",
+    "workspace": "工作区",
+    "files": "待发送文件",
+    "summary": "{{count}} 个文件 · {{size}} MiB（{{bytes}} 字节）",
+    "skip_policy": "跳过符号链接、.git 和 node_modules。",
+    "skipped": "已跳过（{{count}} 项）",
+    "cancel": "取消",
+    "confirm": "确认上传",
+    "preparing": "正在准备…",
+    "errors": {
+      "empty": "文件夹中没有可发送的文件。",
+      "too_many_files": "文件夹最多包含 500 个文件，未上传任何内容。",
+      "too_large": "文件夹总大小不能超过 100 MiB，未上传任何内容。",
+      "unsafe_path": "文件夹包含不安全或冲突的路径，未上传任何内容。",
+      "changed": "目标位置或文件夹已更改，请重新选择文件夹。",
+      "failed": "无法准备文件夹，未上传任何内容。",
+      "unverified": "此浏览器无法验证符号链接，请使用 Multica 桌面版安全地附加文件夹。"
+    }
   }
 }

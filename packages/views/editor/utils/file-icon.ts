@@ -11,10 +11,12 @@ import {
   FileSpreadsheet,
   FileText,
   FileVideo,
+  Folder,
   ImageIcon,
   type LucideIcon,
 } from "lucide-react";
 import { getPreviewKind } from "./preview";
+import { FOLDER_SNAPSHOT_EXTENSION, FOLDER_SNAPSHOT_TYPE } from "@multica/core/attachments";
 
 function extensionOf(filename: string): string {
   const base = (filename ?? "").toLowerCase().split(/[\\/]/).pop() ?? "";
@@ -41,6 +43,7 @@ export function isDocumentFile(contentType: string, filename: string): boolean {
 }
 
 export function fileIcon(contentType: string, filename: string): LucideIcon {
+  if (contentType === FOLDER_SNAPSHOT_TYPE || filename.endsWith(FOLDER_SNAPSHOT_EXTENSION)) return Folder;
   const ext = extensionOf(filename);
   if (SPREADSHEET_EXTENSIONS.has(ext)) return FileSpreadsheet;
   if (ARCHIVE_EXTENSIONS.has(ext)) return FileArchive;

@@ -27,12 +27,13 @@
     "runtime_access_denied_toast": "Message non envoyé — cet agent ne peut pas s'exécuter sur son runtime privé. Passez le runtime en public, ou réassociez/copiez l'agent vers un runtime que son propriétaire peut utiliser.",
     "attachment_bind_failed_toast": "Message envoyé, mais les fichiers n'ont pas été joints. Veuillez réessayer dans un instant.",
     "add_tooltip": "Ajouter",
-    "upload_file": "Image ou fichiers",
+    "upload_file": "Joindre un fichier",
     "project_context": "Contexte de projet",
     "change_project_context": "Changer le contexte de projet",
     "remove_project_context": "Retirer le contexte de projet",
     "no_projects": "Aucun projet pour l'instant",
-    "project_context_unsupported": "La description du projet ne s'appliquera pas — le daemon de cet agent doit être mis à jour"
+    "project_context_unsupported": "La description du projet ne s'appliquera pas — le daemon de cet agent doit être mis à jour",
+    "attach_folder": "Joindre un dossier"
   },
   "queue": {
     "title_one": "{{count}} message en file d'attente",
@@ -252,5 +253,27 @@
     "archive": "Archiver la discussion",
     "unarchive": "Désarchiver la discussion",
     "delete": "Supprimer la discussion"
+  },
+  "folder": {
+    "title": "Envoyer un instantané du dossier",
+    "description": "Seuls les fichiers listés seront envoyés après confirmation.",
+    "server": "Serveur",
+    "workspace": "Espace de travail",
+    "files": "Fichiers à envoyer",
+    "summary": "{{count}} fichiers · {{size}} MiB ({{bytes}} octets)",
+    "skip_policy": "Ignorer les liens symboliques, .git et node_modules.",
+    "skipped": "Éléments ignorés ({{count}})",
+    "cancel": "Annuler",
+    "confirm": "Confirmer l’envoi",
+    "preparing": "Préparation…",
+    "errors": {
+      "empty": "Le dossier ne contient aucun fichier à envoyer.",
+      "too_many_files": "La limite est de 500 fichiers par dossier. Aucun envoi effectué.",
+      "too_large": "La taille totale est limitée à 100 MiB. Aucun envoi effectué.",
+      "unsafe_path": "Le dossier contient un chemin dangereux ou en conflit. Aucun envoi effectué.",
+      "changed": "La destination ou le dossier a changé. Sélectionnez à nouveau le dossier.",
+      "failed": "Impossible de préparer le dossier. Aucun envoi effectué.",
+      "unverified": "Ce navigateur ne peut pas vérifier les liens symboliques. Utilisez Multica Desktop pour joindre des dossiers en toute sécurité."
+    }
   }
 }
