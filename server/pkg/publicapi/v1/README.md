@@ -283,8 +283,9 @@ status projection, denied writes, cancellation races and one execution per key.
 The handler package exits with “Skipping tests” when its database is unavailable;
 that output does not verify these scenarios. No migration is required.
 
-AO's rollout setting starts off on every desktop launch and can only be enabled
-through a native-confirmed Settings action. Each admission and cancellation still
-requires its own approval. The server's `public_delegations_v1` flag remains
+AO's rollout setting defaults off and can only be enabled through a
+native-confirmed Settings action. The preference is saved across desktop
+restarts; missing, invalid or unreadable settings default off. Each admission and
+cancellation still requires its own approval. The server's `public_delegations_v1` flag remains
 independent and default off. These checks do not enable a pilot or unattended
 submission.
