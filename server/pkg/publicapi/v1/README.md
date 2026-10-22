@@ -247,3 +247,44 @@ status read; a local request alone never proves that remote cancellation won.
 No additional migrations, indexes, tables, or deletion-manifest entries are
 needed. The DB lifecycle/race tests in `internal/handler/public_delegation_operations_test.go`
 require an isolated migrated test database; never run them against a live workspace.
+
+## Delegation cross-repository verification
+
+`testdata/multica-delegation-v1.json` is identical to AO's
+`test/contracts/multica-delegation-v1.json`. Update both copies together. The shared
+scenarios cover discovery, confirmed submission, exact idempotent retry, status
+reconciliation, policy denial and cancellation. AO owns native confirmation and
+managed-policy denial before any POST; Multica independently enforces scopes,
+workspace membership, invocation rights and runtime compatibility.
+
+From `server/`, the offline contract, scope and default-off flag tests need no
+PostgreSQL, Docker or running server:
+
+```sh
+AO_CONTRACT_FIXTURE=/absolute/path/to/agent-orchestrator/test/contracts/multica-delegation-v1.json \
+  go test ./pkg/publicapi/v1 ./internal/middleware ./internal/featureflags
+```
+
+The peer path is optional; supplying it also checks that the copies are identical.
+The test verifies production DTOs, registered methods/scopes, payload identity,
+lifecycle/revision projection and scope denial. Transactional idempotency is also
+covered by the existing handler tests and this optional real-handler workflow:
+
+```sh
+DATABASE_URL='postgres://USER:PASSWORD@HOST:PORT/THROWAWAY_DB?sslmode=disable' \
+  MULTICA_RUN_DELEGATION_CONTRACT=1 \
+  go test ./internal/handler -run '^TestDelegationSharedContractHandlers$' -count=1 -v
+```
+
+Use an explicitly provisioned, migrated throwaway database, never a running
+application's database. No HTTP server is necessary. The handler workflow checks
+profile discovery, admission/replay/conflict, lookup after a lost response, safe
+status projection, denied writes, cancellation races and one execution per key.
+The handler package exits with “Skipping tests” when its database is unavailable;
+that output does not verify these scenarios. No migration is required.
+
+AO's rollout setting starts off on every desktop launch and can only be enabled
+through a native-confirmed Settings action. Each admission and cancellation still
+requires its own approval. The server's `public_delegations_v1` flag remains
+independent and default off. These checks do not enable a pilot or unattended
+submission.
