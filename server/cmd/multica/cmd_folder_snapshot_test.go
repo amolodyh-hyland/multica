@@ -17,7 +17,7 @@ func TestRunAttachmentDownloadReconstructsFolderSnapshot(t *testing.T) {
 	var data bytes.Buffer
 	z := zip.NewWriter(&data)
 	for _, name := range []string{"project/readme.txt", "project/src/readme.txt"} {
-		f, err := z.Create(name)
+		f, err := z.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Store})
 		if err != nil {
 			t.Fatal(err)
 		}

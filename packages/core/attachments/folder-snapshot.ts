@@ -1,4 +1,5 @@
 import { packStoreZip } from "../skills/pack-archive";
+import { caseFold } from "unicode-case-folding";
 
 export const FOLDER_SNAPSHOT_EXTENSION = ".multica-folder";
 export const FOLDER_SNAPSHOT_TYPE = "application/vnd.multica.folder+zip";
@@ -33,6 +34,7 @@ export function validFolderPath(path: string): boolean {
 export function previewFolderSnapshot(files: File[], skipped: string[] = []): FolderSnapshot {
   const snapshot: FolderSnapshot = { name: "", files: [], skipped: [...skipped], totalBytes: 0 };
   const seen = new Set<string>();
+  const directories = new Map<string, string>();
   for (const file of files) {
     const path = file.webkitRelativePath;
     if (!validFolderPath(path) || !path.includes("/")) throw new FolderSnapshotError("unsafe_path");
@@ -43,24 +45,33 @@ export function previewFolderSnapshot(files: File[], skipped: string[] = []): Fo
       snapshot.skipped.push(path);
       continue;
     }
-    const key = path.toLowerCase();
+    const key = folderPathKey(path);
     if (seen.has(key)) throw new FolderSnapshotError("unsafe_path");
     seen.add(key);
+    let parent = path;
+    let parentKey = key;
+    while (parent.includes("/")) {
+      parent = parent.slice(0, parent.lastIndexOf("/"));
+      parentKey = parentKey.slice(0, parentKey.lastIndexOf("/"));
+      const original = directories.get(parentKey);
+      if (original !== undefined && original !== parent) throw new FolderSnapshotError("unsafe_path");
+      directories.set(parentKey, parent);
+    }
     snapshot.files.push({ path, file });
     snapshot.totalBytes += file.size;
     if (snapshot.files.length > MAX_FOLDER_FILES) throw new FolderSnapshotError("too_many_files");
     if (snapshot.totalBytes > MAX_FOLDER_BYTES) throw new FolderSnapshotError("too_large");
   }
   if (!snapshot.files.length) throw new FolderSnapshotError("empty");
-  for (const { path } of snapshot.files) {
-    const parts = path.toLowerCase().split("/");
-    while (parts.length > 1) {
-      parts.pop();
-      if (seen.has(parts.join("/"))) throw new FolderSnapshotError("unsafe_path");
-    }
+  for (const key of directories.keys()) {
+    if (seen.has(key)) throw new FolderSnapshotError("unsafe_path");
   }
   snapshot.files.sort((a, b) => a.path.localeCompare(b.path));
   return snapshot;
+}
+
+function folderPathKey(path: string): string {
+  return caseFold(path.normalize("NFC")).normalize("NFC");
 }
 
 export async function packFolderSnapshot(snapshot: FolderSnapshot): Promise<File> {

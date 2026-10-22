@@ -3,6 +3,8 @@ package foldersnapshot
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/binary"
+	"hash/crc32"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,7 +17,7 @@ type entry struct {
 	mode       os.FileMode
 }
 
-func archive(t *testing.T, entries ...entry) []byte {
+func archive(t testing.TB, entries ...entry) []byte {
 	t.Helper()
 	var data bytes.Buffer
 	w := zip.NewWriter(&data)
@@ -36,6 +38,15 @@ func archive(t *testing.T, entries ...entry) []byte {
 		t.Fatal(err)
 	}
 	return data.Bytes()
+}
+
+func FuzzParse(f *testing.F) {
+	f.Add(archive(f, entry{name: "root/a", body: "contents"}))
+	f.Add([]byte{})
+	f.Add([]byte("PK\x05\x06"))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = Parse(data)
+	})
 }
 
 func TestExtractRelativeStructureAndNoOverwrite(t *testing.T) {
@@ -84,7 +95,12 @@ func TestParseRejectsUnsafePathsAndLinks(t *testing.T) {
 }
 
 func TestParseRejectsConflictsAndMultipleRoots(t *testing.T) {
-	for _, names := range [][]string{{"root/a", "root/A"}, {"root/a", "root/a/b"}, {"root/a", "other/b"}} {
+	for _, names := range [][]string{
+		{"root/a", "root/A"}, {"root/a", "root/a/b"}, {"root/a", "other/b"},
+		{"root/é.txt", "root/e\u0301.txt"}, {"root/Foo/a", "root/foo/b"},
+		{"root/é/a", "root/e\u0301/b"}, {"root/Foo", "root/foo/a"},
+		{"root/straße.txt", "root/STRASSE.txt"}, {"root/ς/a", "root/σ/b"},
+	} {
 		if _, err := Parse(archive(t, entry{name: names[0]}, entry{name: names[1]})); err == nil {
 			t.Fatalf("accepted conflicting paths %v", names)
 		}
@@ -129,7 +145,7 @@ func (zeroReader) Read(p []byte) (int, error) {
 func TestFolderExactByteLimit(t *testing.T) {
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
-	f, err := w.Create("root/large")
+	f, err := w.CreateHeader(&zip.FileHeader{Name: "root/large", Method: zip.Store})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,6 +157,111 @@ func TestFolderExactByteLimit(t *testing.T) {
 	}
 	if _, err := Parse(buf.Bytes()); err != nil {
 		t.Fatalf("rejected exact 100 MiB content: %v", err)
+	}
+}
+
+func TestParseAllowsOneConsistentDirectorySpelling(t *testing.T) {
+	if _, err := Parse(archive(t, entry{name: "root/é/a"}, entry{name: "root/é/b"})); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestParseBoundsActualCentralDirectoryCountBeforeAllocation(t *testing.T) {
+	const records = 1_000_000
+	base := archive(t, entry{name: "root/"})
+	end := len(base) - 22
+	offset := int(binary.LittleEndian.Uint32(base[end+16:]))
+	header := base[offset:end]
+	data := make([]byte, offset+records*len(header)+22)
+	copy(data, base[:offset])
+	for i := 0; i < records; i++ {
+		copy(data[offset+i*len(header):], header)
+	}
+	footer := data[len(data)-22:]
+	copy(footer, base[end:])
+	binary.LittleEndian.PutUint32(footer[12:], uint32(records*len(header)))
+	allocs := testing.AllocsPerRun(1, func() {
+		if _, err := Parse(data); err == nil || !strings.Contains(err.Error(), "500 files") {
+			t.Fatalf("accepted hidden central-directory records: %v", err)
+		}
+	})
+	if allocs > 20 {
+		t.Fatalf("central directory materialized before its count was bounded: %.0f allocations", allocs)
+	}
+}
+
+func TestParseChecksZeroCRCWithoutDataDescriptor(t *testing.T) {
+	for _, body := range []string{"wrong contents", ""} {
+		var data bytes.Buffer
+		w := zip.NewWriter(&data)
+		f, err := w.CreateRaw(&zip.FileHeader{
+			Name: "root/a", Method: zip.Store, CRC32: 0,
+			CompressedSize64: uint64(len(body)), UncompressedSize64: uint64(len(body)),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.WriteString(f, body); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		_, err = Parse(data.Bytes())
+		if body == "" && err != nil {
+			t.Fatalf("valid zero CRC: %v", err)
+		}
+		if body != "" && err == nil {
+			t.Fatal("accepted nonzero content with zero central CRC and no descriptor")
+		}
+	}
+}
+
+func TestParseRejectsCompressionMethods(t *testing.T) {
+	for _, method := range []uint16{zip.Deflate, 99} {
+		data := archive(t, entry{name: "root/a", body: "content"})
+		end := len(data) - 22
+		central := int(binary.LittleEndian.Uint32(data[end+16:]))
+		binary.LittleEndian.PutUint16(data[central+10:], method)
+		if _, err := Parse(data); err == nil || !strings.Contains(err.Error(), "STORE") {
+			t.Fatalf("method %d: %v", method, err)
+		}
+	}
+	data := archive(t, entry{name: "root/a", body: "content"})
+	binary.LittleEndian.PutUint16(data[8:], zip.Deflate)
+	if _, err := Parse(data); err == nil {
+		t.Fatal("accepted mismatched local compression method")
+	}
+}
+
+func TestParseRejectsInvalidCentralDirectoryBounds(t *testing.T) {
+	base := archive(t, entry{name: "root/a", body: "contents"})
+	for _, mutate := range []func([]byte){
+		func(data []byte) { binary.LittleEndian.PutUint32(data[len(data)-22+12:], 0xffffffff) },
+		func(data []byte) { binary.LittleEndian.PutUint32(data[len(data)-22+16:], 0xffffffff) },
+		func(data []byte) { binary.LittleEndian.PutUint16(data[len(data)-22+4:], 1) },
+		func(data []byte) { binary.LittleEndian.PutUint16(data[len(data)-22+8:], 2) },
+		func(data []byte) { binary.LittleEndian.PutUint16(data[len(data)-22+10:], 0xffff) },
+		func(data []byte) { binary.LittleEndian.PutUint16(data[len(data)-22+20:], 1) },
+		func(data []byte) {
+			central := int(binary.LittleEndian.Uint32(data[len(data)-22+16:]))
+			binary.LittleEndian.PutUint16(data[central+28:], 0xffff)
+		},
+	} {
+		data := bytes.Clone(base)
+		mutate(data)
+		if _, err := Parse(data); err == nil {
+			t.Fatal("accepted invalid central directory")
+		}
+	}
+}
+
+func TestParseValidatesEveryCRC(t *testing.T) {
+	data := archive(t, entry{name: "root/a", body: "contents"})
+	central := int(binary.LittleEndian.Uint32(data[len(data)-22+16:]))
+	binary.LittleEndian.PutUint32(data[central+16:], crc32.ChecksumIEEE([]byte("different contents")))
+	if _, err := Parse(data); err == nil {
+		t.Fatal("accepted mismatched nonzero CRC")
 	}
 }
 

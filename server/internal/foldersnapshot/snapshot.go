@@ -4,8 +4,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"io/fs"
 	"os"
@@ -13,7 +15,68 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 )
+
+func validateCentralDirectory(data []byte) error {
+	if len(data) < 22 {
+		return zip.ErrFormat
+	}
+	end := len(data) - 22
+	footer := data[end:]
+	if binary.LittleEndian.Uint32(footer) != 0x06054b50 || binary.LittleEndian.Uint16(footer[20:]) != 0 {
+		return errors.New("folder snapshot requires a ZIP without an archive comment")
+	}
+	declared := binary.LittleEndian.Uint16(footer[10:])
+	if binary.LittleEndian.Uint16(footer[4:]) != 0 || binary.LittleEndian.Uint16(footer[6:]) != 0 || binary.LittleEndian.Uint16(footer[8:]) != declared {
+		return errors.New("folder snapshot requires a single-disk ZIP")
+	}
+	if declared == 0 || declared > MaxFiles {
+		return errors.New("folder snapshot must contain 1 to 500 files")
+	}
+	offset := uint64(binary.LittleEndian.Uint32(footer[16:]))
+	size := uint64(binary.LittleEndian.Uint32(footer[12:]))
+	if offset+size != uint64(end) {
+		return zip.ErrFormat
+	}
+	count := 0
+	for pos := int(offset); pos < end; {
+		if count == MaxFiles {
+			return errors.New("folder snapshot must contain 1 to 500 files")
+		}
+		if end-pos < 46 || binary.LittleEndian.Uint32(data[pos:]) != 0x02014b50 {
+			return zip.ErrFormat
+		}
+		header := data[pos : pos+46]
+		if binary.LittleEndian.Uint16(header[10:]) != zip.Store {
+			return errors.New("folder snapshot supports only ZIP STORE entries")
+		}
+		nameSize := int(binary.LittleEndian.Uint16(header[28:]))
+		recordSize := 46 + nameSize + int(binary.LittleEndian.Uint16(header[30:])) + int(binary.LittleEndian.Uint16(header[32:]))
+		if nameSize > MaxPathBytes || recordSize > end-pos || binary.LittleEndian.Uint16(header[34:]) != 0 {
+			return zip.ErrFormat
+		}
+		local := uint64(binary.LittleEndian.Uint32(header[42:]))
+		if local+30 > offset || binary.LittleEndian.Uint32(data[int(local):]) != 0x04034b50 {
+			return zip.ErrFormat
+		}
+		if binary.LittleEndian.Uint16(data[int(local)+8:]) != zip.Store {
+			return errors.New("folder snapshot supports only ZIP STORE entries")
+		}
+		count++
+		pos += recordSize
+	}
+	if count != int(declared) {
+		return zip.ErrFormat
+	}
+	return nil
+}
+
+func pathKey(name string) string {
+	return norm.NFC.String(cases.Fold().String(norm.NFC.String(name)))
+}
 
 const (
 	Extension       = ".multica-folder"
@@ -49,6 +112,9 @@ func Parse(data []byte) (*zip.Reader, error) {
 	if len(data) > MaxArchiveBytes {
 		return nil, errors.New("folder snapshot exceeds 100 MiB limit")
 	}
+	if err := validateCentralDirectory(data); err != nil {
+		return nil, fmt.Errorf("invalid folder snapshot: %w", err)
+	}
 	r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return nil, fmt.Errorf("invalid folder snapshot: %w", err)
@@ -57,6 +123,7 @@ func Parse(data []byte) (*zip.Reader, error) {
 		return nil, errors.New("folder snapshot must contain 1 to 500 files")
 	}
 	seen := make(map[string]bool)
+	directories := make(map[string]string)
 	root := ""
 	var total uint64
 	for _, f := range r.File {
@@ -70,9 +137,15 @@ func Parse(data []byte) (*zip.Reader, error) {
 		if root != parts[0] {
 			return nil, errors.New("folder snapshot must have one root directory")
 		}
-		key := strings.ToLower(f.Name)
+		key := pathKey(f.Name)
 		if seen[key] {
 			return nil, fmt.Errorf("duplicate folder entry: %q", f.Name)
+		}
+		for parent, parentKey := path.Dir(f.Name), path.Dir(key); parent != "."; parent, parentKey = path.Dir(parent), path.Dir(parentKey) {
+			if original, exists := directories[parentKey]; exists && original != parent {
+				return nil, fmt.Errorf("ambiguous folder directory: %q and %q", original, parent)
+			}
+			directories[parentKey] = parent
 		}
 		seen[key] = true
 		if f.UncompressedSize64 > MaxBytes || total > MaxBytes-f.UncompressedSize64 {
@@ -80,11 +153,9 @@ func Parse(data []byte) (*zip.Reader, error) {
 		}
 		total += f.UncompressedSize64
 	}
-	for name := range seen {
-		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
-			if seen[parent] {
-				return nil, errors.New("folder entry conflicts with a directory")
-			}
+	for name := range directories {
+		if seen[name] {
+			return nil, errors.New("folder entry conflicts with a directory")
 		}
 	}
 	for _, f := range r.File {
@@ -92,9 +163,10 @@ func Parse(data []byte) (*zip.Reader, error) {
 		if err != nil {
 			return nil, err
 		}
-		n, err := io.Copy(io.Discard, io.LimitReader(src, int64(f.UncompressedSize64)+1))
+		checksum := crc32.NewIEEE()
+		n, err := io.Copy(checksum, io.LimitReader(src, int64(f.UncompressedSize64)+1))
 		closeErr := src.Close()
-		if err != nil || closeErr != nil || n != int64(f.UncompressedSize64) {
+		if err != nil || closeErr != nil || n != int64(f.UncompressedSize64) || checksum.Sum32() != f.CRC32 {
 			return nil, fmt.Errorf("corrupt folder entry: %q", f.Name)
 		}
 	}

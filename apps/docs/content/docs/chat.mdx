@@ -36,9 +36,9 @@ Each folder supports at most **500 files and 100 MiB of file contents**. A selec
 
 Multica Desktop skips symbolic links automatically. In web chat and embedded views without native symlink filtering, the consent dialog warns that symbolic links cannot be detected: a linked file uploads whatever it points to. Check the full file list, count, size, and destination before confirming. Cancel sends no file contents on either path.
 
-The folder is stored as one `.multica-folder` attachment, so it is uploaded and bound to a message as a unit. Upload failures remain visible in the composer and cannot bind part of a folder. Sending the message uses the same attachment binding as individual files.
+The folder is stored as one `.multica-folder` attachment, so it is uploaded and bound to a message as a unit. Its archive uses uncompressed ZIP STORE entries on one disk, without an archive comment. Upload failures remain visible in the composer and cannot bind part of a folder. Sending the message uses the same attachment binding as individual files.
 
-In a task, `multica attachment download <id>` reconstructs the snapshot beneath a new `folder-snapshot-*` directory in the task work directory and returns the folder path. Nested relative paths are retained. Downloads validate paths and file checksums, refuse symlinks and special files, and never merge into an existing folder. No database migration is required for this snapshot format.
+In a task, `multica attachment download <id>` reconstructs the snapshot beneath a new `folder-snapshot-*` directory in the task work directory and returns the folder path. Nested relative paths are retained. File names and every directory prefix must be unambiguous under Unicode NFC normalization and case folding; conflicting spellings are refused in both preview and download. Downloads bound the central-directory record count before parsing entries, validate every file checksum, refuse symlinks and special files, and never merge into an existing folder. No database migration is required for this snapshot format.
 
 ## Chat vs. issues
 

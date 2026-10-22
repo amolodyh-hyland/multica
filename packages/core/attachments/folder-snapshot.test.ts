@@ -41,6 +41,21 @@ describe("folder snapshots", () => {
     }
   });
 
+  it.each([
+    ["root/é.txt", "root/e\u0301.txt"],
+    ["root/Foo/a", "root/foo/b"],
+    ["root/é/a", "root/e\u0301/b"],
+    ["root/Foo", "root/foo/a"],
+    ["root/straße.txt", "root/STRASSE.txt"],
+    ["root/ς/a", "root/σ/b"],
+  ])("refuses normalized or case-folded file and directory collisions: %s, %s", (a, b) => {
+    expect(() => previewFolderSnapshot([selected(a), selected(b)])).toThrow(new FolderSnapshotError("unsafe_path"));
+  });
+
+  it("preserves a consistent directory spelling without changing paths", () => {
+    expect(previewFolderSnapshot([selected("root/é/a"), selected("root/é/b")]).files.map(({ path }) => path)).toEqual(["root/é/a", "root/é/b"]);
+  });
+
   it("creates one snapshot containing the relative names and bytes", async () => {
     const archive = await packFolderSnapshot(previewFolderSnapshot([selected("project/src/a.txt")]));
     expect(archive.name).toBe("project.multica-folder");
