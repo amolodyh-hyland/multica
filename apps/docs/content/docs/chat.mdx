@@ -32,9 +32,9 @@ Choose **+ → Attach file** for individual files or **+ → Attach folder** for
 
 Before a folder uploads, review the destination server and workspace, folder name, file count, total size, and complete file list. **Confirm upload** sends that snapshot; **Cancel** sends no file contents. A snapshot contains the files selected for this upload, rather than a live reference to your computer.
 
-Each folder supports at most **500 files and 100 MiB of file contents**. A selection over either limit is refused in full. The preview lists skipped symlinks and files inside `.git` and `node_modules`. Other hidden files are included, so review the list before confirming.
+Each folder supports at most **500 files and 100 MiB of file contents**. A selection over either limit is refused in full. The preview lists skipped entries, including files inside `.git` and `node_modules`. Other hidden files are included, so review the list before confirming.
 
-Source symlink checks currently require Multica Desktop. Web browsers without a verifiable symlink check refuse folder uploads and show an explanation.
+Multica Desktop skips symbolic links automatically. In web chat and embedded views without native symlink filtering, the consent dialog warns that symbolic links cannot be detected: a linked file uploads whatever it points to. Check the full file list, count, size, and destination before confirming. Cancel sends no file contents on either path.
 
 The folder is stored as one `.multica-folder` attachment, so it is uploaded and bound to a message as a unit. Upload failures remain visible in the composer and cannot bind part of a folder. Sending the message uses the same attachment binding as individual files.
 

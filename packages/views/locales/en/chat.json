@@ -261,7 +261,7 @@
     "workspace": "Workspace",
     "files": "Files to send",
     "summary": "{{count}} files · {{size}} MiB ({{bytes}} bytes)",
-    "skip_policy": "Skip symlinks, .git and node_modules.",
+    "skip_policy": "Skip .git and node_modules.",
     "skipped": "Skipped entries ({{count}})",
     "cancel": "Cancel",
     "confirm": "Confirm upload",
@@ -272,8 +272,9 @@
       "too_large": "Folders are limited to 100 MiB total. Nothing was uploaded.",
       "unsafe_path": "The folder contains an unsafe or conflicting path. Nothing was uploaded.",
       "changed": "The destination or folder changed. Select the folder again.",
-      "failed": "Could not prepare the folder. Nothing was uploaded.",
-      "unverified": "This browser cannot verify symlinks. Use Multica Desktop to attach folders safely."
-    }
+      "failed": "Could not prepare the folder. Nothing was uploaded."
+    },
+    "symlinks_filtered": "Symbolic links are skipped automatically.",
+    "symlink_warning": "Symbolic links cannot be detected in the browser. A linked file uploads whatever it points to. Check the file list before confirming."
   }
 }

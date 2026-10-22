@@ -54,6 +54,8 @@ describe("folder consent", () => {
     expect(screen.getByRole("list", { name: "Files to send" })).toHaveTextContent("project/src/readme.txt");
     expect(files[0]!.arrayBuffer).not.toHaveBeenCalled();
     expect(upload).not.toHaveBeenCalled();
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    expect(screen.getByText("Symbolic links are skipped automatically.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirm upload" }));
     await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
     expect(upload.mock.calls[0]![0].name).toBe("project.multica-folder");
@@ -77,11 +79,45 @@ describe("folder consent", () => {
     expect(upload).not.toHaveBeenCalled();
   });
 
-  it("refuses unverifiable browser selections", async () => {
-    mocks.filter.mockResolvedValue({ files: [file()], skipped: [], verified: false });
+  it("warns on web and embedded selections and uploads only after explicit confirmation", async () => {
+    mocks.filter.mockImplementation(async (files: File[]) => ({ files, skipped: [], verified: false }));
+    const { files, upload } = setup([file(), file("project/nested/linked-file.txt")]);
+    const warning = await screen.findByRole("note");
+    expect(warning).toBeVisible();
+    expect(warning).toHaveTextContent("Symbolic links cannot be detected in the browser");
+    expect(warning).toHaveTextContent("A linked file uploads whatever it points to");
+    expect(warning).toHaveTextContent("Check the file list before confirming");
+    expect(screen.getByText("https://multica.example")).toBeVisible();
+    expect(screen.getByText("Design (ws-1)")).toBeVisible();
+    expect(screen.getByText("project")).toBeVisible();
+    expect(screen.getByText("2 files · 0.00 MiB (16 bytes)")).toBeVisible();
+    const list = screen.getByRole("list", { name: "Files to send" });
+    expect(list).toHaveTextContent("project/src/readme.txt");
+    expect(list).toHaveTextContent("project/nested/linked-file.txt");
+    expect(screen.queryByText("Symbolic links are skipped automatically.")).not.toBeInTheDocument();
+    for (const selected of files) expect(selected.arrayBuffer).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm upload" }));
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+    expect(upload.mock.calls[0]![0].name).toBe("project.multica-folder");
+  });
+
+  it("cancels a browser selection without reading or uploading any file", async () => {
+    mocks.filter.mockImplementation(async (files: File[]) => ({ files, skipped: [], verified: false }));
+    const { files, upload, close } = setup();
+    await screen.findByRole("note");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(files[0]!.arrayBuffer).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it("requires a new preview if native symlink filtering disappears before confirmation", async () => {
     const { upload } = setup();
-    expect(await screen.findByRole("alert")).toHaveTextContent("cannot verify symlinks");
-    expect(screen.getByRole("button", { name: "Confirm upload" })).toBeDisabled();
+    await screen.findByText("project");
+    mocks.filter.mockImplementation(async (files: File[]) => ({ files, skipped: [], verified: false }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm upload" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("changed");
     expect(upload).not.toHaveBeenCalled();
   });
 

@@ -21,6 +21,7 @@ export function ChatFolderAttachment({ files, onSelectFile, onClose }: {
   const server = new URL(api.getBaseUrl() || "/", window.location.href).href.replace(/\/$/, "");
   const [target] = useState({ server, workspaceId: workspace?.id, workspaceName: workspace?.name });
   const [snapshot, setSnapshot] = useState<FolderSnapshot | null>(null);
+  const [symlinksVerified, setSymlinksVerified] = useState<boolean | null>(null);
   const [error, setError] = useState("");
   const [packing, setPacking] = useState(false);
   const alive = useRef(true);
@@ -38,27 +39,25 @@ export function ChatFolderAttachment({ files, onSelectFile, onClose }: {
   useEffect(() => {
     alive.current = true;
     setSnapshot(null);
+    setSymlinksVerified(null);
     setError("");
     let cancelled = false;
     void filterFolderSymlinks(files).then((result) => {
       if (cancelled) return;
-      if (!result.verified) {
-        setError(t(($) => $.folder.errors.unverified));
-        return;
-      }
+      setSymlinksVerified(result.verified);
       setSnapshot(previewFolderSnapshot(result.files, result.skipped));
     }).catch((err: unknown) => { if (!cancelled) setError(errorText(err)); });
     return () => { cancelled = true; alive.current = false; };
   }, [files, errorText, t]);
 
   async function confirm() {
-    if (!snapshot || !current.current || !target.workspaceId || busy.current) return;
+    if (!snapshot || symlinksVerified === null || !current.current || !target.workspaceId || busy.current) return;
     busy.current = true;
     setPacking(true);
     setError("");
     try {
       const verified = await filterFolderSymlinks(snapshot.files.map(({ file }) => file));
-      if (!verified.verified || verified.skipped.length) throw new FolderSnapshotError("changed");
+      if (verified.verified !== symlinksVerified || verified.skipped.length) throw new FolderSnapshotError("changed");
       const archive = await packFolderSnapshot(snapshot);
       const currentServer = new URL(api.getBaseUrl() || "/", window.location.href).href.replace(/\/$/, "");
       if (!alive.current || !current.current) return;
@@ -85,6 +84,9 @@ export function ChatFolderAttachment({ files, onSelectFile, onClose }: {
             <div><dt className="font-medium">{t(($) => $.folder.server)}</dt><dd>{target.server}</dd></div>
             <div><dt className="font-medium">{t(($) => $.folder.workspace)}</dt><dd>{target.workspaceName} ({target.workspaceId})</dd></div>
           </dl>
+          {symlinksVerified === false && (
+            <p role="note" className="rounded-lg border border-border bg-muted p-3">{t(($) => $.folder.symlink_warning)}</p>
+          )}
           {snapshot && (
             <>
               <p className="break-all font-medium">{snapshot.name}</p>
@@ -93,6 +95,7 @@ export function ChatFolderAttachment({ files, onSelectFile, onClose }: {
                 {snapshot.files.map(({ path, file }) => <li key={path}>{path} ({formatBytes(file.size)})</li>)}
               </ul>
               <p>{t(($) => $.folder.skip_policy)}</p>
+              {symlinksVerified === true && <p>{t(($) => $.folder.symlinks_filtered)}</p>}
               {snapshot.skipped.length > 0 && (
                 <details>
                   <summary>{t(($) => $.folder.skipped, { count: snapshot.skipped.length })}</summary>

@@ -257,7 +257,7 @@
     "workspace": "工作区",
     "files": "待发送文件",
     "summary": "{{count}} 个文件 · {{size}} MiB（{{bytes}} 字节）",
-    "skip_policy": "跳过符号链接、.git 和 node_modules。",
+    "skip_policy": "跳过 .git 和 node_modules。",
     "skipped": "已跳过（{{count}} 项）",
     "cancel": "取消",
     "confirm": "确认上传",
@@ -268,8 +268,9 @@
       "too_large": "文件夹总大小不能超过 100 MiB，未上传任何内容。",
       "unsafe_path": "文件夹包含不安全或冲突的路径，未上传任何内容。",
       "changed": "目标位置或文件夹已更改，请重新选择文件夹。",
-      "failed": "无法准备文件夹，未上传任何内容。",
-      "unverified": "此浏览器无法验证符号链接，请使用 Multica 桌面版安全地附加文件夹。"
-    }
+      "failed": "无法准备文件夹，未上传任何内容。"
+    },
+    "symlinks_filtered": "自动跳过符号链接。",
+    "symlink_warning": "浏览器无法检测符号链接。链接文件会上传其指向的文件内容。请在确认前检查文件列表。"
   }
 }

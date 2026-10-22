@@ -261,7 +261,7 @@
     "workspace": "Espace de travail",
     "files": "Fichiers à envoyer",
     "summary": "{{count}} fichiers · {{size}} MiB ({{bytes}} octets)",
-    "skip_policy": "Ignorer les liens symboliques, .git et node_modules.",
+    "skip_policy": "Ignorer .git et node_modules.",
     "skipped": "Éléments ignorés ({{count}})",
     "cancel": "Annuler",
     "confirm": "Confirmer l’envoi",
@@ -272,8 +272,9 @@
       "too_large": "La taille totale est limitée à 100 MiB. Aucun envoi effectué.",
       "unsafe_path": "Le dossier contient un chemin dangereux ou en conflit. Aucun envoi effectué.",
       "changed": "La destination ou le dossier a changé. Sélectionnez à nouveau le dossier.",
-      "failed": "Impossible de préparer le dossier. Aucun envoi effectué.",
-      "unverified": "Ce navigateur ne peut pas vérifier les liens symboliques. Utilisez Multica Desktop pour joindre des dossiers en toute sécurité."
-    }
+      "failed": "Impossible de préparer le dossier. Aucun envoi effectué."
+    },
+    "symlinks_filtered": "Les liens symboliques sont ignorés automatiquement.",
+    "symlink_warning": "Le navigateur ne peut pas détecter les liens symboliques. Un fichier lié envoie le contenu de sa cible. Vérifiez la liste des fichiers avant de confirmer."
   }
 }
