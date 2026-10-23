@@ -162,6 +162,10 @@ func TestDeleteWorkspace_OwnerSucceeds(t *testing.T) {
 		"description": "DeleteWorkspace handler owner test",
 	})
 
+	projectID := dbfx.Project(t, "Workspace instructions cleanup", testutil.Cols{
+		"workspace_id": wsID, "instructions": "Workspace-owned project guidance",
+	})
+
 	dbfx.Exec(t, `
 INSERT INTO member (workspace_id, user_id, role)
 VALUES ($1, $2, 'owner')
@@ -379,6 +383,12 @@ WHERE storage_key = $1
 	if sourceContextIntentState != "pending" {
 		t.Fatalf("source context object intent state = %q, want pending durable retry ledger", sourceContextIntentState)
 	}
+	var projectExists bool
+	dbfx.QueryRow(t, `SELECT EXISTS(SELECT 1 FROM project WHERE id = $1)`, projectID).Scan(&projectExists)
+	if projectExists {
+		t.Fatal("workspace deletion retained an instructions-bearing project")
+	}
+
 }
 
 func TestDeleteWorkspace_DirtyTriggersHaveTeardownGuard(t *testing.T) {

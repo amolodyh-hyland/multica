@@ -26,15 +26,16 @@ FOR UPDATE;
 -- name: CreateProject :one
 INSERT INTO project (
     workspace_id, title, description, icon, status,
-    lead_type, lead_id, priority, start_date, due_date, workflow_id
+    lead_type, lead_id, priority, start_date, due_date, workflow_id, instructions
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
 ) RETURNING *;
 
 -- name: UpdateProject :one
 UPDATE project SET
     title = COALESCE(sqlc.narg('title'), title),
     description = CASE WHEN sqlc.arg('description_set')::boolean THEN sqlc.narg('description') ELSE description END,
+    instructions = CASE WHEN sqlc.arg('instructions_set')::boolean THEN sqlc.narg('instructions') ELSE instructions END,
     icon = CASE WHEN sqlc.arg('icon_set')::boolean THEN sqlc.narg('icon') ELSE icon END,
     status = COALESCE(sqlc.narg('status'), status),
     priority = COALESCE(sqlc.narg('priority'), priority),
@@ -43,7 +44,7 @@ UPDATE project SET
     start_date = CASE WHEN sqlc.arg('start_date_set')::boolean THEN sqlc.narg('start_date') ELSE start_date END,
     due_date = CASE WHEN sqlc.arg('due_date_set')::boolean THEN sqlc.narg('due_date') ELSE due_date END,
     updated_at = now()
-WHERE id = $1
+WHERE id = $1 AND workspace_id = sqlc.arg('workspace_id')::uuid
 RETURNING *;
 
 -- name: DeleteProject :exec

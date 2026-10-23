@@ -157,10 +157,11 @@ type TaskContextForEnv struct {
 	AgentInstructions             string // agent identity/persona instructions, injected into CLAUDE.md
 	AgentSkills                   []SkillContextForEnv
 	DisabledRuntimeSkills         []RuntimeSkillRefForEnv
-	Repos                         []RepoContextForEnv     // workspace repos available for checkout
-	ProjectID                     string                  // active project for this task, when present
-	ProjectTitle                  string                  // human-readable project title
-	ProjectDescription            string                  // durable project-level context, rendered into the brief's Project Context section
+	Repos                         []RepoContextForEnv // workspace repos available for checkout
+	ProjectID                     string              // active project for this task, when present
+	ProjectTitle                  string              // human-readable project title
+	ProjectDescription            string              // durable project-level context, rendered into the brief's Project Context section
+	ProjectInstructions           string
 	ProjectResources              []ProjectResourceForEnv // resources attached to the project
 	ChatSessionID                 string                  // non-empty for chat tasks
 	// ChatChannelType is the IM platform behind a chat session ("slack",

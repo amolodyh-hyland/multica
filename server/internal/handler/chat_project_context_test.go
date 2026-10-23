@@ -293,6 +293,7 @@ func TestClaimTaskByRuntime_ChatProjectContext(t *testing.T) {
 		"Chat claim project",
 		"Use the project design system and release branch.",
 	)
+	dbfx.Exec(t, `UPDATE project SET instructions = $1 WHERE id = $2`, "Follow the chat-specific review checklist.", projectID)
 	const projectRepoURL = "https://github.com/example/chat-project-repo"
 	const projectRepoRef = "release/chat-context"
 	if _, err := testPool.Exec(ctx, `
@@ -342,12 +343,13 @@ func TestClaimTaskByRuntime_ChatProjectContext(t *testing.T) {
 
 	var response struct {
 		Task *struct {
-			ID                 string                `json:"id"`
-			ProjectID          string                `json:"project_id"`
-			ProjectTitle       string                `json:"project_title"`
-			ProjectDescription string                `json:"project_description"`
-			ProjectResources   []ProjectResourceData `json:"project_resources"`
-			Repos              []RepoData            `json:"repos"`
+			ID                  string                `json:"id"`
+			ProjectID           string                `json:"project_id"`
+			ProjectTitle        string                `json:"project_title"`
+			ProjectDescription  string                `json:"project_description"`
+			ProjectInstructions string                `json:"project_instructions"`
+			ProjectResources    []ProjectResourceData `json:"project_resources"`
+			Repos               []RepoData            `json:"repos"`
 		} `json:"task"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
@@ -364,6 +366,9 @@ func TestClaimTaskByRuntime_ChatProjectContext(t *testing.T) {
 	}
 	if response.Task.ProjectDescription != "Use the project design system and release branch." {
 		t.Fatalf("project_description = %q", response.Task.ProjectDescription)
+	}
+	if response.Task.ProjectInstructions != "Follow the chat-specific review checklist." {
+		t.Fatalf("project_instructions = %q", response.Task.ProjectInstructions)
 	}
 	if len(response.Task.ProjectResources) != 1 || response.Task.ProjectResources[0].Label != "Chat repository" {
 		t.Fatalf("project_resources = %+v", response.Task.ProjectResources)

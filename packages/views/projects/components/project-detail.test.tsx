@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   role: "admin",
   copyText: vi.fn(),
   deleteProject: vi.fn(),
+  updateProject: vi.fn(),
+  toastError: vi.fn(),
   getShareableUrl: vi.fn((path: string) => `https://app.example${path}`),
   push: vi.fn(),
   recordVisit: vi.fn(),
@@ -47,7 +49,7 @@ vi.mock("@multica/core/projects/queries", () => ({
 }));
 
 vi.mock("@multica/core/projects/mutations", () => ({
-  useUpdateProject: () => ({ mutate: vi.fn() }),
+  useUpdateProject: () => ({ mutate: mocks.updateProject }),
   useDeleteProject: () => ({ mutate: mocks.deleteProject }),
 }));
 
@@ -209,7 +211,9 @@ vi.mock("../../editor", () => ({
   TitleEditor: ({ defaultValue }: { defaultValue: string }) => (
     <div>{defaultValue}</div>
   ),
-  ContentEditor: () => null,
+  ContentEditor: ({ value, placeholder, onUpdate }: { value: string; placeholder: string; onUpdate: (value: string) => void }) => (
+    <textarea aria-label={placeholder} defaultValue={value} onChange={(event) => onUpdate(event.target.value)} />
+  ),
 }));
 
 vi.mock("../../common/actor-avatar", () => ({
@@ -299,6 +303,8 @@ beforeEach(() => {
   mocks.role = "admin";
   mocks.copyText.mockReset().mockResolvedValue(true);
   mocks.deleteProject.mockReset();
+  mocks.updateProject.mockReset();
+  mocks.toastError.mockReset();
   mocks.getShareableUrl.mockClear();
   mocks.push.mockReset();
   mocks.recordVisit.mockReset();
@@ -356,5 +362,18 @@ describe("ProjectDetail project deletion", () => {
     expect(
       screen.queryByRole("button", { name: "Delete project" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+
+describe("ProjectDetail instructions", () => {
+  it("edits instructions independently from the description and clears with null", async () => {
+    const user = userEvent.setup();
+    renderProjectDetail();
+    const editor = screen.getByRole("textbox", { name: "Add project instructions…" });
+    await user.type(editor, "Review");
+    expect(mocks.updateProject).toHaveBeenLastCalledWith({ id: PROJECT.id, instructions: "Review" });
+    await user.clear(editor);
+    expect(mocks.updateProject).toHaveBeenLastCalledWith({ id: PROJECT.id, instructions: null });
   });
 });

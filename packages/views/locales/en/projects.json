@@ -80,7 +80,11 @@
     "no_issues_yet": "No issues yet",
     "toast_link_copied": "Link copied",
     "toast_project_deleted": "Project deleted",
-    "toast_move_issue_failed": "Failed to move issue"
+    "toast_move_issue_failed": "Failed to move issue",
+    "section_instructions": "Instructions",
+    "instructions_placeholder": "Add project instructions…",
+    "instructions_hint": "Shared with issue runs and project chats. Maximum 32 KiB.",
+    "instructions_too_large": "Instructions must be at most 32 KiB."
   },
   "resources": {
     "section_header": "Resources",

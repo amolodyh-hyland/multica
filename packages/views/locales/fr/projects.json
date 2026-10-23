@@ -80,7 +80,11 @@
     "no_issues_yet": "Aucune tâche pour l'instant",
     "toast_link_copied": "Lien copié",
     "toast_project_deleted": "Projet supprimé",
-    "toast_move_issue_failed": "Échec du déplacement de la tâche"
+    "toast_move_issue_failed": "Échec du déplacement de la tâche",
+    "section_instructions": "Instructions",
+    "instructions_placeholder": "Ajouter des instructions au projet…",
+    "instructions_hint": "Partagées avec les exécutions des tâches et les discussions du projet. Maximum 32 KiB.",
+    "instructions_too_large": "Les instructions ne doivent pas dépasser 32 KiB."
   },
   "resources": {
     "section_header": "Ressources",
