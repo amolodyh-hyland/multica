@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { disabledFeatures, upstream, patchSources } from './fork-codex-bundle.mjs';
+import { disabledFeatures, upstream, patchSources, build } from './fork-codex-bundle.mjs';
 
 const read = (file) => readFileSync(new URL(file, import.meta.url), 'utf8');
 test('native policy covers the same explicit disables as home, argv and attestation', () => {
@@ -58,4 +59,44 @@ test('native source patch installs the guard on every resolved load before plugi
   assert.match(cli, /strict_config = wi_fac_02_read_only \|\| app_server_strict_config \|\| root_strict_config/);
   assert.match(cli, /read_only_bundle: wi_fac_02_read_only/);
   assert.match(patches['codex-rs/app-server/src/read_only_bundle_config_tests.rs'], /loader_with_enterprise_requirement/);
+});
+
+test('native build probes cannot see an inherited signed-in home', { skip: process.platform === 'win32' }, (t) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'codex-bundle-probe-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const bin = path.join(dir, 'tools');
+  const output = path.join(dir, 'bundle');
+  const release = path.join(output, 'source/codex-rs/target/release');
+  const inheritedHome = path.join(dir, 'existing-home');
+  for (const sub of [bin, release, inheritedHome]) mkdirSync(sub, { recursive: true });
+  writeFileSync(path.join(inheritedHome, 'auth.json'), 'private-fixture');
+  writeFileSync(path.join(output, 'patch-manifest.json'), JSON.stringify({ version: upstream.version, files: {} }));
+  writeFileSync(path.join(output, 'upstream.json'), JSON.stringify(upstream));
+  for (const file of ['LICENSE', 'NOTICE']) writeFileSync(path.join(output, 'source', file), 'fixture');
+  const trace = path.join(dir, 'trace');
+  const check = `
+[ "$CODEX_HOME" = "$EXPECTED_PROBE_HOME" ] || exit 81
+[ ! -f "$CODEX_HOME/auth.json" ] || exit 82
+printf '%s\\n' "$*" >> "$PROBE_TRACE"
+`;
+  writeFileSync(path.join(bin, 'cargo'), '#!/bin/sh\n' + check + 'exit 0\n', { mode: 0o700 });
+  writeFileSync(path.join(bin, 'rustc'), '#!/bin/sh\necho "rustc 1.95.0 (fixture)"\n', { mode: 0o700 });
+  writeFileSync(path.join(release, 'codex'), '#!/bin/sh\n' + check + `
+case "$*" in
+  --version) echo 'codex-cli ${upstream.version}' ;;
+  'app-server --help') echo '--wi-fac-02-read-only' ;;
+  *) exit 83 ;;
+esac
+`, { mode: 0o700 });
+  const env = { PATH: bin, CODEX_HOME: inheritedHome, CARGO_HOME: path.join(dir, 'cargo-cache'), EXPECTED_PROBE_HOME: path.join(output, 'probe-home'), PROBE_TRACE: trace };
+  const saved = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
+  t.after(() => { for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
+  Object.assign(process.env, env);
+  build(output);
+  assert.equal(readFileSync(path.join(inheritedHome, 'auth.json'), 'utf8'), 'private-fixture');
+  const calls = readFileSync(trace, 'utf8');
+  assert.match(calls, /build --locked --release/);
+  assert.match(calls, /test --locked --release/);
+  assert.match(calls, /--version/);
+  assert.match(calls, /app-server --help/);
 });

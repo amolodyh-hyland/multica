@@ -116,7 +116,9 @@ export function build(output) {
     if (hash(readFileSync(path.join(output, 'source', file))) !== sha) throw new Error('Native patched source changed');
   }
   if (!process.env.CARGO_HOME || !path.isAbsolute(process.env.CARGO_HOME)) throw new Error('Set CARGO_HOME to a separate absolute build cache');
-  const options = { cwd: source, stdio: 'inherit', env: { ...process.env, CARGO_TARGET_DIR: path.join(source, 'target'), CARGO_INCREMENTAL: '0', GIT_TERMINAL_PROMPT: '0' } };
+  const probeHome = path.join(output, 'probe-home');
+  mkdirSync(probeHome, { mode: 0o700, recursive: true });
+  const options = { cwd: source, stdio: 'inherit', env: { ...process.env, CODEX_HOME: probeHome, CARGO_TARGET_DIR: path.join(source, 'target'), CARGO_INCREMENTAL: '0', GIT_TERMINAL_PROMPT: '0' } };
   const rustc = execFileSync('rustc', ['--version'], { encoding: 'utf8' }).trim();
   if (!rustc.startsWith('rustc 1.95.0 ')) throw new Error('Use the pinned Rust 1.95.0 toolchain');
   if (!['darwin', 'linux'].includes(process.platform)) throw new Error('Unsupported native Codex platform');
@@ -125,8 +127,10 @@ export function build(output) {
   execFileSync('cargo', verification, options);
   const binary = path.join(output, 'codex');
   copyFileSync(path.join(source, 'target', 'release', path.basename(binary)), binary);
-  const reported = execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim();
+  const reported = execFileSync(binary, ['--version'], { cwd: source, env: options.env, encoding: 'utf8' }).trim();
   if (reported !== `codex-cli ${upstream.version}`) throw new Error('Native version mismatch');
+  const help = execFileSync(binary, ['app-server', '--help'], { cwd: source, env: options.env, encoding: 'utf8' });
+  if (!help.includes('--wi-fac-02-read-only')) throw new Error('Native startup guard switch missing');
   writeFileSync(path.join(output, 'native-manifest.json'), JSON.stringify({
     ...manifest, rustc, verification: { result: 'passed', command: ['cargo', ...verification] }, platform: process.platform, arch: process.arch, binary: path.basename(binary), sha256: hash(readFileSync(binary)),
     patchManifestSha256: hash(readFileSync(path.join(output, 'patch-manifest.json'))),

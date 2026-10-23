@@ -42,7 +42,7 @@ Before `thread/start`, the client additionally requires empty effective MCP and 
 
 ### Build the pinned native Codex prerequisite
 
-This step compiles public source in a private output directory; it installs or starts nothing. Use Rust 1.95.0, Cargo and the native platform SDK. Download the public archive separately and verify its SHA-256 before preparation. The recipe performs no downloads itself; Cargo may need approved public dependency downloads into its separate cache. It never reads account credentials or invokes a model.
+This step compiles public source in a private output directory; it installs or starts nothing. Native version/help checks use a separate empty build-only `CODEX_HOME`; they never read the user's native profile or sign-in. Use Rust 1.95.0, Cargo and the native platform SDK. Download the public archive separately and verify its SHA-256 before preparation. The recipe performs no downloads itself; Cargo may need approved public dependency downloads into its separate cache. It never reads account credentials or invokes a model.
 
 ```sh
 # Public source: https://codeload.github.com/openai/codex/tar.gz/refs/tags/rust-v0.144.6
