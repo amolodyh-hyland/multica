@@ -379,6 +379,9 @@ type codexBackend struct {
 }
 
 func buildCodexArgs(opts ExecOptions, logger *slog.Logger) []string {
+	if opts.NativeReadOnly {
+		return readOnlyCodexArgs()
+	}
 	args := []string{"app-server", "--listen", "stdio://"}
 	launchArgs := NormalizeCodexLaunchArgs(opts.ExtraArgs, opts.CustomArgs, opts.McpConfig, logger)
 	if opts.ServiceTier == codexFastServiceTier {
@@ -951,9 +954,25 @@ func isCodexBareTomlKey(s string) bool {
 }
 
 func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
+	if opts.NativeReadOnly && !b.cfg.NativeReadOnly {
+		return nil, fmt.Errorf("read-only execution requires an immutable restricted backend")
+	}
+	if b.cfg.NativeReadOnly {
+		opts.NativeReadOnly = true
+		if err := validateReadOnlyExecution(b.cfg, opts); err != nil {
+			return nil, err
+		}
+		opts.EnableTaskSupplement = false
+		opts.McpConfig = json.RawMessage(`{"mcpServers":{}}`)
+	}
 	firstSession, err := b.executeOnce(ctx, prompt, opts, 1)
 	if err != nil {
 		return nil, err
+	}
+	if opts.NativeReadOnly {
+		firstSession.Supplement = nil
+		firstSession.SupplementReady = nil
+		return firstSession, nil
 	}
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
@@ -1623,6 +1642,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		// shared `codexReasoningInjection` fixture in codex_test.go (see
 		// MUL-2339 — Trump's constraint that the three injection points
 		// must not drift independently).
+		applyReadOnlyCodexTurn(turnParams, opts)
 		applyCodexReasoningEffort(turnParams, opts.ThinkingLevel)
 		applyCodexServiceTier(turnParams, opts.ServiceTier)
 		waitingForTurn := true
@@ -2017,6 +2037,12 @@ func codexTurnInput(prompt string, resumeExpected, resumed bool, notice string) 
 // turn/start calls must reference, and resumed indicates whether the prior
 // thread was picked up (only useful for logging).
 func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions, logger *slog.Logger) (string, bool, error) {
+	if c.cfg.NativeReadOnly {
+		opts.NativeReadOnly = true
+	}
+	if opts.NativeReadOnly && opts.ResumeSessionID != "" {
+		return "", false, fmt.Errorf("read-only bundle requires a fresh conversation")
+	}
 	if priorThreadID := opts.ResumeSessionID; priorThreadID != "" {
 		// thread/resume reuses the thread's persisted model and reasoning
 		// effort; only override fields the daemon actually cares about.
@@ -2095,6 +2121,11 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		"includeApplyPatchTool":  nil,
 		"experimentalRawEvents":  false,
 		"persistExtendedHistory": true,
+	}
+	if opts.NativeReadOnly {
+		startParams["approvalPolicy"] = "never"
+		startParams["sandbox"] = "read-only"
+		startParams["config"] = readOnlyCodexConfig()
 	}
 	applyCodexReasoningEffort(startParams, opts.ThinkingLevel)
 	applyCodexServiceTier(startParams, opts.ServiceTier)
@@ -2937,7 +2968,19 @@ func (c *codexClient) handleServerRequest(raw map[string]json.RawMessage) {
 	var method string
 	_ = json.Unmarshal(raw["method"], &method)
 
-	// Auto-approve all exec/patch requests in daemon mode
+	if c.cfg.NativeReadOnly {
+		switch method {
+		case "item/commandExecution/requestApproval", "execCommandApproval", "item/fileChange/requestApproval", "applyPatchApproval":
+			c.respond(id, map[string]any{"decision": "decline"})
+		case "item/permissions/requestApproval":
+			c.respond(id, map[string]any{"permissions": map[string]any{}, "scope": "turn"})
+		case "mcpServer/elicitation/request":
+			c.respond(id, map[string]any{"action": "decline", "content": nil, "_meta": nil})
+		default:
+			c.respondError(id, -32601, "read-only bundle denies unsupported server requests")
+		}
+		return
+	}
 	switch method {
 	case "item/commandExecution/requestApproval", "execCommandApproval":
 		c.respond(id, map[string]any{"decision": "accept"})

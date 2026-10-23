@@ -42,6 +42,7 @@ var configSetSupportedKeys = []string{
 	"agent_timeout",
 	"codex_semantic_inactivity_timeout",
 	"codex_handshake_timeout",
+	"bundle_read_only",
 	"disable_auto_update",
 	"auto_update_check_interval",
 	"disable_auto_reload",
@@ -55,7 +56,7 @@ var configSetCmd = &cobra.Command{
 		"device_name, runtime_name, workspaces_root, max_concurrent_tasks, poll_interval, ws_claim_poll_interval, " +
 		"heartbeat_interval, agent_timeout, " +
 		"codex_semantic_inactivity_timeout, codex_handshake_timeout, " +
-		"disable_auto_update, auto_update_check_interval, disable_auto_reload.\n\n" +
+		"bundle_read_only, disable_auto_update, auto_update_check_interval, disable_auto_reload.\n\n" +
 		"The daemon keys (device_name, runtime_name, workspaces_root, max_concurrent_tasks, " +
 		"poll_interval, ws_claim_poll_interval, heartbeat_interval, agent_timeout, " +
 		"codex_semantic_inactivity_timeout, codex_handshake_timeout, " +
@@ -63,6 +64,7 @@ var configSetCmd = &cobra.Command{
 		"--flag / env counterparts and are read by `daemon start` when " +
 		"neither the flag nor the env var is set. " +
 		"Precedence: --flag > MULTICA_… env > config.json > built-in default. " +
+		"bundle_read_only persists the restricted standalone profile ceiling; it forces the source pin, one task and no cleanup, and requires an explicit workspace. " +
 		"Duration keys take a positive Go duration (e.g. '10s', '500ms', '1m30s'); " +
 		"'0s' and negative values are rejected — except agent_timeout, where " +
 		"'0s' is meaningful and explicitly disables the wall-clock cap. " +
@@ -108,6 +110,7 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "agent_timeout:", agentTimeoutDisplay(cfg.AgentTimeout))
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "codex_semantic_inactivity_timeout:", valueOrDefault(cfg.CodexSemanticInactivityTimeout, "(not set)"))
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "codex_handshake_timeout:", valueOrDefault(cfg.CodexHandshakeTimeout, "(not set)"))
+	fmt.Fprintf(os.Stdout, "%-34s %t\n", "bundle_read_only:", cfg.BundleReadOnly)
 	fmt.Fprintf(os.Stdout, "%-34s %t\n", "disable_auto_update:", cfg.DisableAutoUpdate)
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "auto_update_check_interval:", valueOrDefault(cfg.AutoUpdateCheckInterval, "(not set)"))
 	fmt.Fprintf(os.Stdout, "%-34s %t\n", "disable_auto_reload:", cfg.DisableAutoReload)
@@ -240,6 +243,10 @@ func applyConfigSet(cfg *cli.CLIConfig, key, value string) error {
 		}
 	case "codex_handshake_timeout":
 		if err := assignPositiveDuration(&cfg.CodexHandshakeTimeout, key, value); err != nil {
+			return err
+		}
+	case "bundle_read_only":
+		if err := assignBool(&cfg.BundleReadOnly, key, value); err != nil {
 			return err
 		}
 	case "disable_auto_update":

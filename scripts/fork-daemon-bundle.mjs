@@ -29,12 +29,29 @@ export function profileSettings(source, identity = randomUUID()) {
     preferredHealthPort: 19515 + ([...Buffer.from(profile)].reduce((total, b) => total + b, 0) % 1000),
     maxConcurrentTasks: 1,
     runtimePinned: true,
+    readOnly: true,
     disableAutoUpdate: true,
     disableAutoReload: true,
     gcEnabled: false,
     standalone: true,
   };
 }
+
+export const pilotProfile = () => ({
+  runtime_config: { local_directory_mode: 'none', permission_mode: 'read_only' },
+  custom_args: [], custom_env: {}, mcp_config: { mcpServers: {} },
+});
+
+export const standaloneProfile = () => ({
+  bundle_read_only: true, disable_auto_update: true, disable_auto_reload: true, max_concurrent_tasks: 1,
+});
+
+export const nativeRestrictions = () => ({
+  mode: 'read_only', automaticApproval: false, localDirectoryMode: 'none',
+  supported: { claude: { minimumVersion: '2.1.259', mode: 'restricted', tools: [] }, codex: { minimumVersion: '0.100.0', sandbox: 'read-only', approvals: 'denied', platforms: ['darwin', 'linux'] } },
+  otherHarnesses: 'unsupported', customCommands: 'unsupported',
+  verification: 'disposable-native-protocol-and-config-fixtures', liveVerification: 'not-run', activation: 'requires-human-approval',
+});
 
 export function validateServerInputs(inputs, source, tree, recipe) {
   const expected = imageInputs(source);
@@ -64,8 +81,12 @@ export function build(serverInputs, output, selectedTargets) {
   mkdirSync(sourceDir, { mode: 0o700 });
   execFileSync('tar', ['-xf', '-', '-C', sourceDir], { input: archive });
   const date = run('git', ['show', '-s', '--format=%cI', source]);
-  const env = { ...process.env, CGO_ENABLED: '0', GOWORK: 'off', GOTOOLCHAIN: 'local', GOPROXY: 'off', GOSUMDB: 'off', GOENV: 'off', GOFLAGS: '', GOEXPERIMENT: '', GOCACHEPROG: '', GOAMD64: 'v1', GOARM64: 'v8.0' };
+  const nativeOS = os.platform();
+  const nativeArch = os.arch() === 'x64' ? 'amd64' : os.arch();
+  const env = { ...process.env, GOOS: nativeOS, GOARCH: nativeArch, CGO_ENABLED: '0', GOWORK: 'off', GOTOOLCHAIN: 'local', GOPROXY: 'off', GOSUMDB: 'off', GOENV: 'off', GOFLAGS: '', GOEXPERIMENT: '', GOCACHEPROG: '', GOAMD64: 'v1', GOARM64: 'v8.0' };
   const toolchain = run('go', ['env', 'GOVERSION'], { env });
+  const verificationCommand = ['test', './pkg/agent', './internal/daemon', './internal/daemon/execenv', './cmd/multica', '-run', '^TestReadOnly|^TestBundle', '-count=1'];
+  run('go', verificationCommand, { cwd: path.join(sourceDir, 'server'), env, stdio: ['ignore', 'pipe', 'inherit'] });
   const ldflags = `-s -w -X main.version=fork-${source} -X main.commit=${source} -X main.buildCommit=${source} -X main.date=${date}`;
   const binaries = selectedTargets.map((target) => {
     const [GOOS, GOARCH] = target.split('/');
@@ -77,23 +98,28 @@ export function build(serverInputs, output, selectedTargets) {
     const bytes = readFileSync(path.join(output, file));
     return { target, file, bytes: bytes.length, sha256: hash(bytes) };
   });
+  const native = binaries.find(({ target }) => target === `${nativeOS}/${nativeArch}`);
+  if (native) {
+    const identity = JSON.parse(run(path.join(output, native.file), ['version', '--output', 'json']));
+    if (identity.commit !== source || identity.os !== nativeOS || identity.arch !== nativeArch) throw new Error('Built native identity mismatch');
+  }
+  write(output, 'pilot-profile.json', json(pilotProfile()));
+  write(output, 'standalone-profile.json', json(standaloneProfile()));
   write(output, 'server-source-manifest.json', inputBytes);
   write(output, 'install-and-start.md', readFileSync(path.join(sourceDir, 'docs/fork-daemon-bundle.md')));
   write(output, 'fork-server-images.md', readFileSync(path.join(sourceDir, 'docs/fork-server-images.md')));
   const manifest = {
-    version: 1, source, tree, archiveSha256: hash(archive), serverSourceManifestSha256: hash(inputBytes),
+    version: 2, source, tree, archiveSha256: hash(archive), serverSourceManifestSha256: hash(inputBytes),
     serverRecipeSha256: inputs.recipeSha256, toolchain, date,
     build: { cgo: false, trimpath: true, buildvcs: false, moduleMode: 'readonly', proxy: 'off', goenv: 'off', goflags: '', goexperiment: '', goamd64: 'v1', goarm64: 'v8.0', ldflags },
     modules: Object.fromEntries(['go.mod', 'go.sum'].map((file) => [file, hash(readFileSync(path.join(sourceDir, 'server', file)))])),
     profile: profileSettings(source), binaries,
-    nativeRestrictions: {
-      activation: 'held', verified: false,
-      reason: 'Native permission auto-approval is present; profile and task-root isolation are not a filesystem/network sandbox. Prove effective native restrictions before activation.',
-    },
+    nativeRestrictions: nativeRestrictions(),
+    verification: { result: 'passed', command: ['go', ...verificationCommand] },
     signing: 'unsigned', notarization: 'not performed',
   };
   write(output, 'bundle-manifest.json', json(manifest));
-  const files = [...binaries.map(({ file }) => file), 'bundle-manifest.json', 'server-source-manifest.json', 'install-and-start.md', 'fork-server-images.md'];
+  const files = [...binaries.map(({ file }) => file), 'bundle-manifest.json', 'server-source-manifest.json', 'install-and-start.md', 'fork-server-images.md', 'pilot-profile.json', 'standalone-profile.json'];
   write(output, 'SHA256SUMS', files.map((file) => `${hash(readFileSync(path.join(output, file)))}  ${file}\n`).join(''));
   verify(output);
   return manifest;
@@ -101,7 +127,7 @@ export function build(serverInputs, output, selectedTargets) {
 
 export function verify(dir) {
   const manifest = JSON.parse(readFileSync(path.join(dir, 'bundle-manifest.json')));
-  if (manifest.version !== 1 || !/^[a-f0-9]{40}$/.test(manifest.source)) throw new Error('Invalid bundle manifest');
+  if (manifest.version !== 2 || !/^[a-f0-9]{40}$/.test(manifest.source)) throw new Error('Invalid bundle manifest');
   const list = readFileSync(path.join(dir, 'SHA256SUMS'), 'utf8').trim().split('\n');
   const checksums = new Map();
   for (const line of list) {
@@ -112,7 +138,7 @@ export function verify(dir) {
     checksums.set(file, checksum);
   }
   targets(manifest.binaries.map(({ target }) => target).join(','));
-  const expectedFiles = ['bundle-manifest.json', 'server-source-manifest.json', 'install-and-start.md', 'fork-server-images.md'];
+  const expectedFiles = ['bundle-manifest.json', 'server-source-manifest.json', 'install-and-start.md', 'fork-server-images.md', 'pilot-profile.json', 'standalone-profile.json'];
   for (const binary of manifest.binaries) {
     const [goos, arch] = binary.target.split('/');
     const file = `multica-${goos}-${arch}${goos === 'windows' ? '.exe' : ''}`;
@@ -125,7 +151,10 @@ export function verify(dir) {
       server.recipeSha256 !== manifest.serverRecipeSha256 || checksums.get('server-source-manifest.json') !== manifest.serverSourceManifestSha256) throw new Error('Server manifest mismatch');
   const profile = manifest.profile;
   const identity = profile.profile.slice(`wi-fac-02-${manifest.source.slice(0, 12)}-`.length);
-  if (JSON.stringify(profile) !== JSON.stringify(profileSettings(manifest.source, identity)) || manifest.nativeRestrictions.activation !== 'held' || manifest.nativeRestrictions.verified !== false) throw new Error('Invalid activation/profile contract');
+  if (JSON.stringify(profile) !== JSON.stringify(profileSettings(manifest.source, identity)) || JSON.stringify(manifest.nativeRestrictions) !== JSON.stringify(nativeRestrictions())) throw new Error('Invalid activation/profile contract');
+  for (const [file, expected] of [['pilot-profile.json', pilotProfile()], ['standalone-profile.json', standaloneProfile()]]) {
+    if (JSON.stringify(JSON.parse(readFileSync(path.join(dir, file)))) !== JSON.stringify(expected)) throw new Error('Invalid read-only profile');
+  }
   return manifest;
 }
 
@@ -137,7 +166,7 @@ function main(args) {
   } else if (action === 'build' && rest.length >= 2 && rest.length <= 3) {
     const target = `${os.platform()}/${os.arch() === 'x64' ? 'amd64' : os.arch()}`;
     const manifest = build(rest[0], rest[1], targets(rest[2] ?? target));
-    console.log(`Built ${manifest.binaries.length} targets from ${manifest.source}; native activation held`);
+    console.log(`Built ${manifest.binaries.length} targets from ${manifest.source}; native activation requires human approval`);
   } else throw new Error('Usage: fork-daemon-bundle.mjs build SERVER_INPUTS NEW_ABSOLUTE_OUTPUT [os/arch,...] | verify BUNDLE');
 }
 

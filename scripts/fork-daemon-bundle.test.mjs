@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { profileSettings, targets, validateServerInputs, verify } from './fork-daemon-bundle.mjs';
+import { profileSettings, pilotProfile, standaloneProfile, nativeRestrictions, targets, validateServerInputs, verify } from './fork-daemon-bundle.mjs';
 import { imageInputs, renderRecipe } from './fork-images.mjs';
 
 const source = 'a'.repeat(40);
@@ -44,12 +44,12 @@ function fixture(t) {
   const server = { source, tree: 'tree', archiveSha256: 'archive', recipeSha256: 'recipe' };
   const serverBytes = JSON.stringify(server);
   const manifest = {
-    version: 1, ...server, serverSourceManifestSha256: hash(serverBytes), serverRecipeSha256: server.recipeSha256,
+    version: 2, ...server, serverSourceManifestSha256: hash(serverBytes), serverRecipeSha256: server.recipeSha256,
     profile: profileSettings(source, identity),
-    nativeRestrictions: { activation: 'held', verified: false },
+    nativeRestrictions: nativeRestrictions(),
     binaries: [{ target: 'darwin/arm64', file, bytes: bytes.length, sha256: hash(bytes) }],
   };
-  const files = { [file]: bytes, 'server-source-manifest.json': serverBytes, 'install-and-start.md': 'fixture guide', 'fork-server-images.md': 'server guide', 'bundle-manifest.json': JSON.stringify(manifest) };
+  const files = { [file]: bytes, 'server-source-manifest.json': serverBytes, 'install-and-start.md': 'fixture guide', 'fork-server-images.md': 'server guide', 'pilot-profile.json': JSON.stringify(pilotProfile()), 'standalone-profile.json': JSON.stringify(standaloneProfile()), 'bundle-manifest.json': JSON.stringify(manifest) };
   const save = () => {
     files['bundle-manifest.json'] = JSON.stringify(manifest);
     for (const [name, content] of Object.entries(files)) writeFileSync(path.join(dir, name), content);
@@ -78,7 +78,7 @@ test('verification rejects false activation, server drift and symbolic links', (
   manifest.nativeRestrictions.activation = 'ready';
   save();
   assert.throws(() => verify(dir), /activation/);
-  manifest.nativeRestrictions.activation = 'held';
+  manifest.nativeRestrictions.activation = 'requires-human-approval';
   manifest.serverRecipeSha256 = 'wrong';
   save();
   assert.throws(() => verify(dir), /Server manifest/);
@@ -87,4 +87,16 @@ test('verification rejects false activation, server drift and symbolic links', (
   rmSync(path.join(dir, file));
   symlinkSync('install-and-start.md', path.join(dir, file));
   assert.throws(() => verify(dir), /Checksum mismatch/);
+});
+
+test('both generated profiles require read-only native execution without overrides', () => {
+  const pilot = pilotProfile();
+  assert.deepEqual(pilot.runtime_config, { local_directory_mode: 'none', permission_mode: 'read_only' });
+  assert.deepEqual(pilot.custom_args, []);
+  assert.deepEqual(pilot.custom_env, {});
+  assert.deepEqual(pilot.mcp_config, { mcpServers: {} });
+  assert.equal(standaloneProfile().bundle_read_only, true);
+  assert.doesNotMatch(JSON.stringify([pilot, standaloneProfile(), nativeRestrictions()]), /bypassPermissions|danger-full-access|dangerously-skip|auto_approve/);
+  assert.equal(nativeRestrictions().automaticApproval, false);
+  assert.equal(nativeRestrictions().otherHarnesses, 'unsupported');
 });

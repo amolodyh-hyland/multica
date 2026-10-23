@@ -40,6 +40,17 @@ type claudeBackend struct {
 }
 
 func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
+	if opts.NativeReadOnly && !b.cfg.NativeReadOnly {
+		return nil, fmt.Errorf("read-only execution requires an immutable restricted backend")
+	}
+	if b.cfg.NativeReadOnly {
+		opts.NativeReadOnly = true
+		if err := validateReadOnlyExecution(b.cfg, opts); err != nil {
+			return nil, err
+		}
+		opts.McpConfig = json.RawMessage(`{"mcpServers":{}}`)
+		opts.EnableTaskSupplement = false
+	}
 	execPath := b.cfg.ExecutablePath
 	if execPath == "" {
 		execPath = "claude"
@@ -554,7 +565,17 @@ func (b *claudeBackend) handleUser(msg claudeSDKMessage, ch chan<- Message) bool
 }
 
 func (b *claudeBackend) handleControlRequest(msg claudeSDKMessage, stdin interface{ Write([]byte) (int, error) }) {
-	// Auto-approve all tool uses in autonomous/daemon mode.
+	if b.cfg.NativeReadOnly {
+		response := map[string]any{"type": "control_response", "response": map[string]any{
+			"subtype": "success", "request_id": msg.RequestID,
+			"response": map[string]any{"behavior": "deny", "message": "Read-only bundle does not grant tool permissions"},
+		}}
+		data, err := json.Marshal(response)
+		if err == nil {
+			_, _ = stdin.Write(append(data, '\n'))
+		}
+		return
+	}
 	var req claudeControlRequestPayload
 	if err := json.Unmarshal(msg.Request, &req); err != nil {
 		return
@@ -1076,6 +1097,20 @@ var claudeBlockedArgs = map[string]blockedArgMode{
 }
 
 func buildClaudeArgs(opts ExecOptions, logger *slog.Logger) []string {
+	if opts.NativeReadOnly {
+		args := []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose",
+			"--restricted", "--permission-mode", "plan", "--permission-prompts", "none", "--tools", "",
+			"--disallowedTools", "mcp__*", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
+			"--settings", `{"disableAllHooks":true,"permissions":{"defaultMode":"plan","allow":[],"deny":["mcp__*"]}}`,
+		}
+		if opts.Model != "" {
+			args = append(args, "--model", opts.Model)
+		}
+		if opts.ThinkingLevel != "" {
+			args = append(args, "--effort", opts.ThinkingLevel)
+		}
+		return args
+	}
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",

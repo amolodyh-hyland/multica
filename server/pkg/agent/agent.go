@@ -24,6 +24,7 @@ type Backend interface {
 
 // ExecOptions configures a single execution.
 type ExecOptions struct {
+	NativeReadOnly bool
 	// EnableTaskSupplement installs provider hooks only for runs whose daemon/server
 	// capability handshake enabled additional messages.
 	EnableTaskSupplement bool
@@ -317,6 +318,7 @@ type Result struct {
 
 // Config configures a Backend instance.
 type Config struct {
+	NativeReadOnly bool
 	ExecutablePath string            // path to CLI binary (claude, codebuddy, codex, copilot, opencode, codearts, openclaw, hermes, pi, cursor, kimi, reasonix, dsh, kiro-cli, agy, qodercli, qoderclicn, traecli, grok, qwen, qwenpaw, mcode, muse, dim, zeroclaw)
 	CLIVersion     string            // detected version paired with ExecutablePath; vendor-specific usage semantics also require BuiltinRuntime
 	Env            map[string]string // extra environment variables

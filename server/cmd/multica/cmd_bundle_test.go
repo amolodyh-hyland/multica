@@ -66,3 +66,16 @@ func TestBundleProfileIsolation(t *testing.T) {
 		t.Fatal("standalone configuration changed hosted profile")
 	}
 }
+
+func TestBundleProfileCeilingConfigSet(t *testing.T) {
+	var cfg cli.CLIConfig
+	if err := applyConfigSet(&cfg, "bundle_read_only", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.BundleReadOnly {
+		t.Fatal("read-only profile ceiling was not persisted")
+	}
+	if err := applyConfigSet(&cfg, "bundle_read_only", "invalid"); err == nil {
+		t.Fatal("invalid ceiling accepted")
+	}
+}
