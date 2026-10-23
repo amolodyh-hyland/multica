@@ -36,13 +36,19 @@ node scripts/fork-images.mjs manifest --inputs "$INPUTS" --engine "$ENGINE"
 
 Keep both manifests. Compare the image IDs in the manifest with `docker --host "$ENGINE" image inspect` immediately before activation. A retag, rebuild, changed engine, source or recipe requires renewed inspection. The image variables contain repository names, without tags or digests: the recipe appends `:${MULTICA_IMAGE_TAG}`. A digest pasted into an image-name variable is invalid. Overrides must still name the inspected fork images; do not select `latest` or upstream images.
 
-## Activate — separate human approval required
+## Activate — blocked pending exclusive engine control
+
+The revised desktop controls refuse all project mutations until an enforcing provider for exclusive engine control is available. This revision does not supply that provider. A cooperative host lock does not exclude arbitrary Docker clients, and post-command verification cannot undo migrations. Do not run the command below manually to bypass this refusal. Builds and source/image manifests remain preparatory work only.
+
+Docker must already be running before using the controls. Starting Docker can resume existing services and requires a separate explicit human action. Restored or foreign-labeled resources with the resolved `multica_*` names are conflicts even when no Compose project label matches. Reading existing-project logs requires separate native approval because they may contain sign-in codes.
+
+The activation procedure below remains a future operator procedure, subject to exclusive-control support and separate human approval.
 
 Approve the exact stack directory, ports, data location, supported email sign-in configuration and server activation. Before activation, verify migration/startup, health and sign-in against disposable data under a separately approved test procedure. A fixed development sign-in code belongs only in disposable fixtures. Use an existing approved SMTP/email service for usable data; do not weaken authentication.
 
 In the desktop Settings, select the local server at `http://localhost:3000` with explicit API origin `http://localhost:8080`, choose `$INPUTS/stack`, and use **Set up** to create a private `.env` with fresh secrets. Edit that file for the approved ports/origins and SMTP settings. Leave `FF_PUBLIC_DELEGATIONS_V1=false`; setting it true forwards it to the backend, but enabling admission needs separate approval. Server activation does not enable the desktop delegation setting, install a runtime or authorize a task.
 
-Click **Start server**. The local controls run:
+Once exclusive-control support is supplied and reviewed, **Start server** would run:
 
 ```sh
 docker compose -f "$INPUTS/stack/docker-compose.selfhost.yml" \
