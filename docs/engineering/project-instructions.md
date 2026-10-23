@@ -18,7 +18,7 @@ The daemon passes the claimed value into the prepared runtime brief and `.multic
 
 ## Migration and cleanup
 
-`590_project_instructions` follows migration 589. It adds a nullable column without backfilling existing descriptions, and its rollback removes only that column. It creates no index, so it needs no concurrent-index cleanup hook; this classification is recorded beside the cleanup registry in `server/cmd/migrate/main.go`.
+`590_project_instructions` follows migration 589. It adds a nullable column and its size CHECK as `NOT VALID`, without scanning existing rows or backfilling descriptions. `591_project_instructions_validate` validates the CHECK separately under `SHARE UPDATE EXCLUSIVE`, allowing Project reads and writes during the scan. Rolling back 591 recreates the unvalidated CHECK while retaining enforcement on new writes; rolling back 590 removes the column. Neither migration creates an index or needs a concurrent-index cleanup hook; this classification is recorded beside the cleanup registry in `server/cmd/migrate/main.go`.
 
 Instructions belong to the Project row, classified as deleted in the workspace deletion manifest. Project deletion removes instructions with that row and clears chat Project references using the existing transaction. Stale soft references cannot restore deleted instructions through the claim resolver. Prepared context files use the existing sidecar ownership manifest and cleanup lifecycle; no additional files or references are introduced.
 

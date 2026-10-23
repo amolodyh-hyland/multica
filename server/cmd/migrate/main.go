@@ -139,7 +139,8 @@ var pgBigmOperatorClass = extensionOperatorClass{
 // migrations costs one to_regclass lookup each, and only on a database where
 // they are still pending: a fresh self-hosted install, which is exactly where an
 // interrupted build would otherwise leave a permanently unusable index.
-// 590_project_instructions adds only a column and CHECK constraint; no index cleanup is needed.
+// 590_project_instructions and 591_project_instructions_validate only add/validate
+// a column CHECK constraint; neither migration needs index cleanup.
 var concurrentIndexCleanups = map[string]string{
 	"589_public_delegation_identity_index":                      "public_delegation_identity_idx",
 	"588_public_delegation_id_index":                            "public_delegation_id_idx",
