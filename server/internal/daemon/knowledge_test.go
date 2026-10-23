@@ -2,13 +2,142 @@ package daemon
 
 import (
 	"context"
+	"errors"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/multica-ai/multica/server/pkg/knowledge"
 )
+
+type stalledKnowledgeFS struct {
+	started chan struct{}
+	release chan struct{}
+	opens   atomic.Int32
+}
+
+func (f *stalledKnowledgeFS) Open(string) (fs.File, error) {
+	f.opens.Add(1)
+	return &stalledKnowledgeFile{filesystem: f}, nil
+}
+
+type stalledKnowledgeFile struct{ filesystem *stalledKnowledgeFS }
+
+func (f *stalledKnowledgeFile) Read([]byte) (int, error) {
+	f.filesystem.started <- struct{}{}
+	<-f.filesystem.release // Simulate a filesystem read that ignores context cancellation.
+	return 0, io.EOF
+}
+func (*stalledKnowledgeFile) Close() error               { return nil }
+func (*stalledKnowledgeFile) Stat() (fs.FileInfo, error) { return nil, fs.ErrInvalid }
+
+type filesystemKnowledgeStore struct{ filesystem fs.FS }
+
+func (s filesystemKnowledgeStore) Resolve(context.Context, knowledge.Scope, knowledge.Selection) (knowledge.Snapshot, error) {
+	f, err := s.filesystem.Open("snapshot.json")
+	if err != nil {
+		return knowledge.Snapshot{}, err
+	}
+	defer f.Close()
+	_, err = io.ReadAll(f)
+	return knowledge.Snapshot{}, err
+}
+
+func TestKnowledgeResolutionStalledFilesystem(t *testing.T) {
+	filesystem := &stalledKnowledgeFS{started: make(chan struct{}, maxKnowledgeResolutions+1), release: make(chan struct{})}
+	defer close(filesystem.release)
+	store := filesystemKnowledgeStore{filesystem: filesystem}
+	var limiter knowledgeResolutionLimiter
+	task := Task{WorkspaceID: "workspace1", KnowledgeManifest: &knowledge.Selection{WorkspaceID: "workspace1", OwnerID: "owner1", DaemonID: "machine1"}}
+	type result struct {
+		snapshot *knowledge.Snapshot
+		err      error
+	}
+	resolve := func(ctx context.Context) <-chan result {
+		done := make(chan result, 1)
+		go func() {
+			snapshot, err := limiter.resolve(ctx, store, "https://server.test", "machine1", task)
+			done <- result{snapshot: snapshot, err: err}
+		}()
+		return done
+	}
+	await := func(done <-chan result, want error) {
+		t.Helper()
+		select {
+		case got := <-done:
+			if got.snapshot != nil || !errors.Is(got.err, want) {
+				t.Fatalf("resolution = %v, %v; want no snapshot and %v", got.snapshot, got.err, want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("stalled filesystem held the preparation caller after cancellation")
+		}
+	}
+	for i := 0; i < maxKnowledgeResolutions; i++ {
+		ctx, cancel := context.WithCancelCause(context.Background())
+		cause := errors.New("task preparation cancelled")
+		if i%2 == 1 {
+			var stop context.CancelFunc
+			ctx, stop = context.WithTimeout(ctx, time.Second)
+			defer stop()
+			cause = context.DeadlineExceeded
+		}
+		done := resolve(ctx)
+		select {
+		case <-filesystem.started:
+		case <-time.After(2 * time.Second):
+			cancel(context.Canceled)
+			t.Fatal("filesystem read did not start")
+		}
+		if i%2 == 0 {
+			cancel(cause)
+		}
+		await(done, cause)
+		cancel(context.Canceled)
+	}
+	// All permits remain occupied by the abandoned reads. Further tasks must
+	// still observe their deadlines without starting additional filesystem work.
+	for i := 0; i < 4; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		await(resolve(ctx), context.DeadlineExceeded)
+		cancel()
+	}
+	if got := filesystem.opens.Load(); got != maxKnowledgeResolutions {
+		t.Fatalf("abandoned reads accumulated: %d opens, limit %d", got, maxKnowledgeResolutions)
+	}
+	// Let the blocked reads return and prove their permits can be used again.
+	// Sending instead of closing keeps the deferred close safe on every path.
+	for i := 0; i < maxKnowledgeResolutions; i++ {
+		filesystem.release <- struct{}{}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	done := resolve(ctx)
+	select {
+	case <-filesystem.started:
+		filesystem.release <- struct{}{}
+	case <-ctx.Done():
+		t.Fatal("finished reads did not release their permits")
+	}
+	select {
+	case got := <-done:
+		if got.err != nil || got.snapshot == nil {
+			t.Fatalf("resolution did not recover: %v", got.err)
+		}
+	case <-ctx.Done():
+		t.Fatal("healthy resolution did not finish")
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	stop()
+	await(resolve(ctx), context.Canceled)
+	if got := filesystem.opens.Load(); got != maxKnowledgeResolutions+1 {
+		t.Fatalf("cancelled task started filesystem work: %d opens", got)
+	}
+}
 
 func TestKnowledgeDaemonResolution(t *testing.T) {
 	dir, err := filepath.EvalSymlinks(t.TempDir())

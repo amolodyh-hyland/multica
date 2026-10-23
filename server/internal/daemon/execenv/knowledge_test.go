@@ -1,14 +1,98 @@
 package execenv
 
 import (
+	"context"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/multica-ai/multica/server/pkg/knowledge"
 )
+
+func TestKnowledgeReuseRequiresProjection(t *testing.T) {
+	for _, isolated := range []bool{false, true} {
+		name := "Reuse"
+		if isolated {
+			name = "ReuseIsolated"
+		}
+		t.Run(name, func(t *testing.T) {
+			for _, obstruction := range []string{"collision", "symlink", "blocked-directory", "none", "legacy-resource"} {
+				t.Run(obstruction, func(t *testing.T) {
+					work := filepath.Join(t.TempDir(), "work")
+					project := filepath.Join(work, ".multica", "project")
+					if err := os.MkdirAll(project, 0700); err != nil {
+						t.Fatal(err)
+					}
+					outside := filepath.Join(t.TempDir(), "resources.json")
+					if err := os.WriteFile(outside, []byte("keep"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					target := filepath.Join(project, "resources.json")
+					switch obstruction {
+					case "collision", "legacy-resource":
+						if err := os.WriteFile(target, []byte("keep"), 0600); err != nil {
+							t.Fatal(err)
+						}
+					case "symlink":
+						if err := os.Symlink(outside, target); err != nil {
+							t.Skip(err)
+						}
+					case "blocked-directory":
+						if err := os.Remove(project); err != nil {
+							t.Fatal(err)
+						}
+						if err := os.WriteFile(project, []byte("keep"), 0600); err != nil {
+							t.Fatal(err)
+						}
+					}
+					task := TaskContextForEnv{ProjectID: "project1", KnowledgeSnapshot: &knowledge.Snapshot{Selection: knowledge.Selection{SnapshotID: "snapshot1"}, Digest: "digest1"}}
+					if obstruction == "legacy-resource" {
+						task.KnowledgeSnapshot = nil
+					}
+					params := ReuseParams{WorkDir: work, Provider: "claude", Task: task}
+					logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+					var env *Environment
+					if isolated {
+						ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+						defer cancel()
+						var err error
+						env, err = ReuseIsolated(ctx, preparationHelperTestCommand(), params, logger)
+						if err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						env = Reuse(params, logger)
+					}
+					wantUsable := obstruction == "none" || obstruction == "legacy-resource"
+					if (env != nil) != wantUsable {
+						t.Fatalf("usable environment = %v, want %v", env != nil, wantUsable)
+					}
+					if obstruction == "none" {
+						raw, err := os.ReadFile(target)
+						if err != nil || !strings.Contains(string(raw), "snapshot1") || !strings.Contains(string(raw), "digest1") {
+							t.Fatalf("missing verified knowledge: %s, %v", raw, err)
+						}
+					}
+					if obstruction == "collision" || obstruction == "legacy-resource" {
+						raw, err := os.ReadFile(target)
+						if err != nil || string(raw) != "keep" {
+							t.Fatalf("occupied context changed: %s, %v", raw, err)
+						}
+					}
+					raw, err := os.ReadFile(outside)
+					if err != nil || string(raw) != "keep" {
+						t.Fatalf("outside file changed: %s, %v", raw, err)
+					}
+				})
+			}
+		})
+	}
+}
 
 func TestKnowledgeContextIsDataOnly(t *testing.T) {
 	dir := t.TempDir()

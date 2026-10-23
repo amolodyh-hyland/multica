@@ -903,6 +903,10 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	// case to avoid creating a stray manifest at the filesystem root.
 	manifest := &sidecarManifest{}
 	if err := writeContextFiles(params.WorkDir, params.Provider, params.Task, manifest); err != nil {
+		if params.Task.KnowledgeSnapshot != nil {
+			logger.Warn("execenv: refresh knowledge context failed; forcing fresh prepare", "error", err)
+			return nil
+		}
 		logger.Warn("execenv: refresh context files failed", "error", err)
 	}
 	if err := prepareOmpMcpConfig(params.WorkDir, params.Provider, params.McpConfig, manifest); err != nil {
