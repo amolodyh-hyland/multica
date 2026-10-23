@@ -386,6 +386,9 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		normalizedRefs[i] = ref
+		if !h.requireKnowledgeReferenceOwner(w, r, wsUUID, res.ResourceType, ref) {
+			return
+		}
 		if res.ResourceType == "local_directory" {
 			var ld localDirectoryRef
 			if err := json.Unmarshal(ref, &ld); err != nil {

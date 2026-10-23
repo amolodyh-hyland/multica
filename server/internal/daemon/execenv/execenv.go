@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
+	"github.com/multica-ai/multica/server/pkg/knowledge"
 )
 
 // RepoContextForEnv describes a workspace repo available for checkout.
@@ -161,6 +162,7 @@ type TaskContextForEnv struct {
 	ProjectID                     string              // active project for this task, when present
 	ProjectTitle                  string              // human-readable project title
 	ProjectDescription            string              // durable project-level context, rendered into the brief's Project Context section
+	KnowledgeSnapshot             *knowledge.Snapshot
 	ProjectInstructions           string
 	ProjectResources              []ProjectResourceForEnv // resources attached to the project
 	ChatSessionID                 string                  // non-empty for chat tasks
@@ -901,6 +903,10 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	// case to avoid creating a stray manifest at the filesystem root.
 	manifest := &sidecarManifest{}
 	if err := writeContextFiles(params.WorkDir, params.Provider, params.Task, manifest); err != nil {
+		if params.Task.KnowledgeSnapshot != nil {
+			logger.Warn("execenv: refresh knowledge context failed; forcing fresh prepare", "error", err)
+			return nil
+		}
 		logger.Warn("execenv: refresh context files failed", "error", err)
 	}
 	if err := prepareOmpMcpConfig(params.WorkDir, params.Provider, params.McpConfig, manifest); err != nil {

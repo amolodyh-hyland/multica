@@ -141,7 +141,9 @@ var pgBigmOperatorClass = extensionOperatorClass{
 // interrupted build would otherwise leave a permanently unusable index.
 // 590_project_instructions and 591_project_instructions_validate only add/validate
 // a column CHECK constraint; neither migration needs index cleanup.
+// 592_task_knowledge_manifest adds a JSONB column with no index to clean up.
 var concurrentIndexCleanups = map[string]string{
+	"593_task_knowledge_session_index":                          "idx_task_knowledge_session",
 	"589_public_delegation_identity_index":                      "public_delegation_identity_idx",
 	"588_public_delegation_id_index":                            "public_delegation_id_idx",
 	"563_search_index_change_changed_at_index":                  "idx_search_index_change_changed_at",

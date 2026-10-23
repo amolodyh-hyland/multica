@@ -33,7 +33,8 @@ const sidecarManifestFile = ".multica_sidecar_manifest.json"
 //   - For the Multica-only namespace (.multica/project/resources.json)
 //     the caller swallows the error and proceeds — the agent's runtime
 //     brief already carries every fact that would have appeared in that
-//     file, so missing-from-disk is degraded behavior, not failure.
+//     file, so missing-from-disk is degraded behavior for resources. Tasks
+//     with pinned knowledge fail preparation because they need those bytes.
 var errPathPreExists = errors.New("execenv: refuse to overwrite pre-existing path")
 
 // sidecarManifest records the filesystem mutations writeContextFiles and

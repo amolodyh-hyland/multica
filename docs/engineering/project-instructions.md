@@ -27,3 +27,5 @@ Instructions belong to the Project row, classified as deleted in the workspace d
 Coverage includes reversible migration DDL and an opt-in isolated Postgres migration test; create/read/list/search, byte limits, omission/null and concurrent partial updates; cross-workspace read/write denial; issue/chat claim propagation; runtime briefs and context JSON for repository-free Projects; Project deletion, stale references and sidecar cleanup. Frontend tests cover response defaults, malformed payloads and editing/clearing instructions separately from descriptions.
 
 DB-backed handler tests need a migrated Postgres database. The migration round-trip test uses `MULTICA_MIGRATION_TEST_DATABASE_URL`. Without Postgres these checks are compile-only or skipped; unit tests do not establish database behavior.
+
+Knowledge attachments use a separate typed selection and immutable text snapshot. See [Project knowledge references](project-knowledge.md) for ownership, bounded resolution, capability gating, and migration 592. Execution-directory resources retain their existing behavior.

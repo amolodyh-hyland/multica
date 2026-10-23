@@ -11,6 +11,7 @@ import (
 
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/knowledge"
 	"gopkg.in/yaml.v3"
 )
 
@@ -243,6 +244,7 @@ type projectResourceFile struct {
 	ProjectTitle        string                  `json:"project_title,omitempty"`
 	ProjectDescription  string                  `json:"project_description,omitempty"`
 	ProjectInstructions string                  `json:"project_instructions,omitempty"`
+	Knowledge           *knowledge.Snapshot     `json:"knowledge,omitempty"`
 	Resources           []ProjectResourceForEnv `json:"resources"`
 }
 
@@ -276,12 +278,8 @@ func (p ProjectResourceForEnv) MarshalJSON() ([]byte, error) {
 // of created directories and the resources.json file so CleanupSidecars
 // can undo them on local_directory teardown.
 func writeProjectResources(workDir string, ctx TaskContextForEnv, manifest *sidecarManifest) error {
-	if ctx.ProjectID == "" && len(ctx.ProjectResources) == 0 {
+	if ctx.ProjectID == "" && len(ctx.ProjectResources) == 0 && ctx.KnowledgeSnapshot == nil {
 		return nil
-	}
-	dir := filepath.Join(workDir, ".multica", "project")
-	if err := recordMkdirAll(dir, 0o755, manifest); err != nil {
-		return err
 	}
 	resources := ctx.ProjectResources
 	if resources == nil {
@@ -292,12 +290,21 @@ func writeProjectResources(workDir string, ctx TaskContextForEnv, manifest *side
 		ProjectTitle:        ctx.ProjectTitle,
 		ProjectDescription:  ctx.ProjectDescription,
 		ProjectInstructions: ctx.ProjectInstructions,
+		Knowledge:           ctx.KnowledgeSnapshot,
 		Resources:           resources,
 	}
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return err
 	}
+	if ctx.KnowledgeSnapshot != nil {
+		return writeKnowledgeProjectContext(workDir, data, manifest)
+	}
+	dir := filepath.Join(workDir, ".multica", "project")
+	if err := recordMkdirAll(dir, 0755, manifest); err != nil {
+		return err
+	}
+
 	if err := recordWriteFile(filepath.Join(dir, "resources.json"), data, 0o644, manifest); err != nil {
 		// .multica/project/resources.json is Multica-owned and a
 		// pre-existing path is almost certainly user content the
