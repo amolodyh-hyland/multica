@@ -2916,7 +2916,7 @@ func (d *Daemon) registerRuntimesForWorkspaceBatchLocked(ctx context.Context, wo
 	if d.cfg.BundleReadOnly {
 		allowed := runtimes[:0]
 		for _, rt := range runtimes {
-			if bundleProviderSupported(rt["type"]) {
+			if bundleProviderSupported(rt["type"]) && agent.SupportsNativeReadOnly(rt["type"], rt["version"], runtime.GOOS) {
 				allowed = append(allowed, rt)
 			}
 		}

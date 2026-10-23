@@ -9,6 +9,7 @@ import (
 
 const MinReadOnlyClaudeVersion = "2.1.259"
 const AuditedReadOnlyCodexVersion = "0.144.6"
+const SupportedReadOnlyCodexVersion = "0.144.6-wi-fac-02.1"
 
 // Audited against Codex rust-v0.144.6. Keep startup, thread config and
 // attestation aligned: config/read does not materialize native defaults.
@@ -18,7 +19,7 @@ var readOnlyCodexDisabledFeatures = [...]string{
 	"in_app_browser", "browser_use", "browser_use_full_cdp_access", "browser_use_external",
 	"computer_use", "image_generation", "hooks", "multi_agent", "code_mode_host",
 	"shell_snapshot", "mentions_v2", "guardian_approval", "goals",
-	"tool_call_mcp_elicitation", "auth_elicitation", "workspace_dependencies", "remote_compaction_v2",
+	"tool_call_mcp_elicitation", "auth_elicitation", "workspace_dependencies", "remote_compaction_v2", "remote_control", "realtime_conversation",
 }
 
 // ReadOnlyCodexDisabledFeatures returns the startup policy for isolated homes.
@@ -61,10 +62,9 @@ func readOnlyCodexConfig() map[string]any {
 	return config
 }
 
-// ReadOnlyCodexArgs emits the audited candidate policy; emission does not
-// establish native support for managed startup requirements.
+// ReadOnlyCodexArgs requires the source-pinned native startup guard.
 func ReadOnlyCodexArgs() []string {
-	args := []string{"app-server", "--strict-config", "--listen", "stdio://", "-c", `sandbox_mode="read-only"`, "-c", `approval_policy="never"`,
+	args := []string{"app-server", "--wi-fac-02-read-only", "--strict-config", "--listen", "stdio://", "-c", `sandbox_mode="read-only"`, "-c", `approval_policy="never"`,
 		"-c", `web_search="disabled"`, "-c", "mcp_servers={}"}
 	for _, feature := range readOnlyCodexDisabledFeatures {
 		args = append(args, "-c", "features."+feature+"=false")
@@ -87,9 +87,9 @@ func SupportsNativeReadOnly(provider, version, goos string) bool {
 	case "claude":
 		return codexVersionAtLeast(version, MinReadOnlyClaudeVersion)
 	case "codex":
-		// Managed feature pins can re-enable plugin warmups before config/read.
-		// The stock CLI has no pre-warmup validation/skip option.
-		return false
+		// Stock releases lack the pre-warmup managed-feature refusal.
+		return (goos == "darwin" || goos == "linux") &&
+			(version == SupportedReadOnlyCodexVersion || version == "codex-cli "+SupportedReadOnlyCodexVersion)
 	default:
 		return false
 	}

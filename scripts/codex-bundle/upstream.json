@@ -1,0 +1,18 @@
+{
+  "tag": "rust-v0.144.6",
+  "version": "0.144.6-wi-fac-02.1",
+  "sourceUrl": "https://codeload.github.com/openai/codex/tar.gz/refs/tags/rust-v0.144.6",
+  "archiveSha256": "f2e8395538dc15fa6092a135d577be50a295faf3116a2248033631001c75c705",
+  "files": {
+    "codex-rs/cli/src/main.rs": "9f0b17cfea4ffce46fdef5c155d55f85d6a9a0b39fd972e1416b49b26492d999",
+    "codex-rs/app-server/src/lib.rs": "b0aa1014e8092b9b5998f500fdb9ea806f05c37ba242b9cb9a12204f0478e0b8",
+    "codex-rs/app-server/src/config_manager.rs": "1746c0db96f6c2bd97ea81dc2b9617f98d02bd2dab121f70dfccf1f1080bd13f",
+    "codex-rs/app-server/tests/suite/v2/remote_control.rs": "20a805be51d5ab2844da8e953d7618ac2a1e91c2c04aaccf1046918711366b63",
+    "codex-rs/app-server/src/message_processor.rs": "2607559ee2d298d2fc7a46dced4cd205c4ef9475ca6b829aaaeac18368ec1df1",
+    "codex-rs/core-plugins/src/manager.rs": "c99cc51c57e8299c606fa7f3e743ffe8c8bbcf538c64e878a2750d4cb2fcb25c",
+    "codex-rs/core/src/config/managed_features.rs": "4612681204fac544a521d34c9cd001e377ea049f2b201741eb54dad33d31f1a3",
+    "codex-rs/features/src/lib.rs": "67438e073ef25f02ed2b526e79e4034092345d323dc13bd1dec0100ae47a628b",
+    "codex-rs/app-server/src/config_manager_service.rs": "2a1fdabca165394f5243c2b8cf05a721745ec9d01b6fe276025bc34b3fc3f384",
+    "codex-rs/Cargo.lock": "175793a40a3147db1fee08fd9db0acc59312c344b3513dd7ee316f5446d8119e"
+  }
+}

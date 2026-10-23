@@ -32,17 +32,43 @@ The dedicated daemon profile persists `bundle_read_only=true`. That ceiling forc
 Supported native harnesses:
 
 - **Claude Code 2.1.259 or later:** native `--restricted`, plan permissions, `--permission-prompts none`, no built-in tools, explicit denial of MCP tools, empty strict MCP configuration, disabled hooks and no persisted/resumed session. Every SDK permission request receives `deny`. Custom arguments cannot reintroduce bypass. These switches are defined in the [native CLI reference](https://code.claude.com/docs/en/cli-reference).
-- **Codex is unsupported for execution and registration on every platform in this bundle.** The candidate policy is audited against native 0.144.6, but the stock CLI cannot safely attest incompatible managed requirements before plugin warmups. Keep the pilot on Claude Code. Do not enable Codex merely because the configuration tests pass.
+- **Codex 0.144.6-wi-fac-02.1 on macOS and Linux:** build the native prerequisite below from the pinned upstream 0.144.6 archive. Stock 0.144.6, earlier/later releases, dirty variants and Windows are refused. This dedicated build preserves managed policy and adds an effective-feature refusal before plugin startup. The daemon requires its exact version and passes its mandatory `--wi-fac-02-read-only` switch; a stock binary cannot silently ignore it. macOS uses the same guard and refusal rule as Linux.
 
-The candidate Codex home, launch argv and thread configuration explicitly disable Apps, plugins, remote plugins and sharing, skill MCP installation, tool suggestions, browser/computer controls, image generation, hooks, multi-agent/code-mode host execution, shell snapshots, mentions, guardian approval, goals, MCP/auth elicitation, workspace dependencies and remote compaction. Each disabled feature must appear as boolean `false` in `config/read`; missing flags are refused. Empty `mcp_servers` alone is insufficient because the [0.144.6 feature registry](https://github.com/openai/codex/blob/rust-v0.144.6/codex-rs/features/src/lib.rs) defaults several tool-producing features on. The same policy list drives generated home settings, startup arguments, thread settings and attestation.
+The task gets a fresh private `CODEX_HOME` with its restrictive `config.toml` written **before spawning**. The home, launch arguments and thread configuration explicitly disable Apps, plugins, remote plugins and sharing, skill MCP installation, tool suggestions, browser/computer controls, image generation, hooks, multi-agent/code-mode host execution, shell snapshots, mentions, guardian approval, goals, MCP/auth elicitation, workspace dependencies, remote compaction, remote control and realtime conversation. Every flag must be boolean `false` in `config/read`; missing flags are refused. Empty `mcp_servers` alone is insufficient because the [0.144.6 feature registry](https://github.com/openai/codex/blob/rust-v0.144.6/codex-rs/features/src/lib.rs) defaults several tool-producing features on. The same policy list drives the native guard, home, startup arguments, thread settings and attestation; tests check their agreement.
 
-This closes the native-default gap but does not establish safe managed startup. Native [feature normalization](https://github.com/openai/codex/blob/rust-v0.144.6/codex-rs/core/src/config/managed_features.rs) applies managed feature pins over configured values. The [app-server](https://github.com/openai/codex/blob/rust-v0.144.6/codex-rs/app-server/src/message_processor.rs) schedules plugin warmups before client requests, so a later `config/read` refusal can be too late when managed policy requires plugins. The stock CLI exposes no pre-warmup validation or skip option. Re-enabling Codex requires a separately approved native build that validates the restrictive effective policy before warmups, while preserving managed requirements and refusing conflicts. This is a native startup limitation on macOS and Linux, not a lack of macOS sandbox support.
+In upstream [plugin startup](https://github.com/openai/codex/blob/rust-v0.144.6/codex-rs/core-plugins/src/manager.rs), **all** curated-repository sync, marketplace upgrades, remote cache/bundle refresh and featured-plugin warmups are inside `if config.plugins_enabled`. The pinned native patch validates resolved features on every `ConfigManager` load after [managed normalization](https://github.com/openai/codex/blob/rust-v0.144.6/codex-rs/core/src/config/managed_features.rs), including startup's complete cloud/MDM configuration, before the app-server constructs its plugin manager. It requires every restrictive feature false and refuses incompatible pins; it never changes requirements. Its switch also forces strict configuration loading, so no default fallback follows a refusal. With `plugins=false`, the upstream warmup method schedules no work. Checked-in upstream excerpts, complete source hashes and native guard tests preserve this evidence. A compatible managed/cloud configuration is supported; an incompatible or unavailable configuration fails closed.
 
-The retained candidate protocol tests inspect cloud/MDM effective configuration before thread creation, refuse missing/unknown layers and conflicting settings, and verify that no thread or turn follows a refusal. Startup fixtures evaluate generated flags before reading their first RPC. These are synthetic checks of policy emission; they do not prove that stock Codex can prevent a managed warmup. The public execution and daemon-registration guards therefore refuse Codex before launch. Other harnesses, custom runtime commands and the Windows Codex sandbox remain unsupported. Do not remove managed controls to make a refused harness run.
+Before `thread/start`, the client additionally requires empty effective MCP and plugin settings from `config/read` with all layers, and inspects `configRequirements/read`. The latter is necessary because `config/read` reports merged TOML, without materializing feature defaults or managed normalization. Missing/unknown layers, enabled features, conflicts and RPC errors/timeouts prevent thread creation. Windows, other harnesses and custom runtime commands remain unsupported. Do not remove managed controls to make a refused configuration run.
+
+### Build the pinned native Codex prerequisite
+
+This step compiles public source in a private output directory; it installs or starts nothing. Use Rust 1.95.0, Cargo and the native platform SDK. Download the public archive separately and verify its SHA-256 before preparation. The recipe performs no downloads itself; Cargo may need approved public dependency downloads into its separate cache. It never reads account credentials or invokes a model.
+
+```sh
+# Public source: https://codeload.github.com/openai/codex/tar.gz/refs/tags/rust-v0.144.6
+# Archive SHA-256: f2e8395538dc15fa6092a135d577be50a295faf3116a2248033631001c75c705
+node scripts/fork-codex-bundle.mjs prepare /absolute/codex-0.144.6.tar.gz /absolute/new/codex-bundle
+CARGO_HOME=/absolute/private/cargo-cache node scripts/fork-codex-bundle.mjs build /absolute/new/codex-bundle
+```
+
+Preparation verifies the archive and every audited source file, then applies the version marker, mandatory startup switch and feature-refusal guard. The release archive stamps workspace package versions as 0.144.6 while its lockfile retains 0.0.0; preparation corrects only those 132 local package stamps, preserving every third-party version, checksum and Git revision. The build runs the native guard and cloud-feature-pin regression tests in the real app-server configuration path, records their result plus source/patch/binary hashes, and emits `native-manifest.json` and `SHA256SUMS`. Keep this native manifest with the Multica bundle manifest. Run the same recipe natively on Linux for Linux use; Multica cross-builds do not cross-build Codex. Verify all checksums before a later human copies its `codex` binary to a new private versioned directory. Select that exact executable with `MULTICA_CODEX_PATH` only on this standalone daemon's foreground launch. Do not replace the user's installed Codex or place another harness wrapper there. Registration checks the exact native version and execution requires the new switch. No native auto-update is enabled by this recipe.
+
+Offline verification:
+
+```sh
+CODEX_BUNDLE_SOURCE=/absolute/unmodified/pinned/source node --test scripts/fork-codex-bundle.test.mjs
+rustc --test scripts/codex-bundle/read_only_bundle.rs -o /absolute/scratch/native-policy-test
+/absolute/scratch/native-policy-test
+# With the native build prerequisites/cache; only disposable configuration fixtures:
+# cd /absolute/new/codex-bundle/source/codex-rs
+# cargo test --locked --release -p codex-app-server --lib read_only_bundle -- --nocapture
+```
+
+The Rust tests execute the shipped native guard, allowing compatible settings and refusing every enabled/unknown feature. Source fixtures prove that no upstream warmup lies outside the `plugins_enabled` guard. The preparation step checks the entire upstream files against their recorded hashes before patching, so the fixture evidence cannot be applied to a different source version.
 
 The dedicated daemon accepts only fresh, direct, brief-only delegations. Repository/local-directory bindings, issue/chat/autopilot tasks, skills, external tools, custom launch/environment overrides and previous conversation/workdir reuse are refused. It neither advertises task supplementation nor retries a model turn automatically. Changing `none` to `in_place`/`worktree` cannot grant access. Native read-only settings do not constitute host-administrator containment. Present managed controls remain authoritative and must approve the runtime and effective configuration separately.
 
-The build recipe runs disposable configuration, protocol, full task-launch and lifecycle tests at the archived source before issuing a manifest. They prove generated configuration and transmitted requests/refusals, without invoking installed native executables or making provider calls. No live native-harness smoke or OS escape test was performed. Record that limitation; a managed deployment needing additional boundary proof remains blocked until its policy owner supplies it. Activation and any real task remain separate human decisions.
+The Multica build recipe runs disposable configuration, protocol, full task-launch and lifecycle tests at the archived source before issuing a manifest. They prove generated configuration and transmitted requests/refusals, without invoking installed native executables or making provider calls. No live native-harness smoke or OS escape test was performed. Record that limitation; a managed deployment needing additional boundary proof remains blocked until its policy owner supplies it. Activation and any real task remain separate human decisions.
 
 ## Human installation and start, after approval
 
@@ -56,6 +82,7 @@ These steps describe a later human operation. Building the bundle authorizes non
 
 ```sh
 BINARY=/absolute/versioned/multica-darwin-arm64
+CODEX_BINARY=/absolute/separate/versioned/codex-bundle/codex
 PROFILE=the-exact-profile-from-bundle-manifest
 TASK_ROOT=/absolute/new/private/scratch-root
 API_ORIGIN=http://127.0.0.1:the-approved-backend-port
@@ -71,11 +98,12 @@ WORKSPACE_ID=the-approved-scratch-workspace-uuid
 "$BINARY" --profile "$PROFILE" config set bundle_read_only true
 ```
 
-Login saves credentials and discovers workspace membership; it does not authorize starting a daemon. A dedicated CLI profile is different from the server's owned direct execution profile; record both IDs. Never select a shared/default/hosted profile. Apply `pilot-profile.json` to the owned direct execution profile through the existing profile editor or its supported update command (`--runtime-config` replaces that whole object). Keep its custom arguments/environment empty and MCP disabled. Confirm both supported native executable versions and the generated restriction evidence before registering any runtime.
+Login saves credentials and discovers workspace membership; it does not authorize starting a daemon. A dedicated CLI profile is different from the server's owned direct execution profile; record both IDs. Never select a shared/default/hosted profile. Apply `pilot-profile.json` to the owned direct execution profile through the existing profile editor or its supported update command (`--runtime-config` replaces that whole object). Keep its custom arguments/environment empty and MCP disabled. Confirm both supported native executable versions and the generated restriction evidence before registering any runtime. `"$CODEX_BINARY" --version` must report exactly `codex-cli 0.144.6-wi-fac-02.1`; verify its separate native manifest/checksums. Its `app-server --help` must include `--wi-fac-02-read-only`. These version/help reads do not start a daemon or execution.
 
 6. After separate human approval for daemon activation, run it attended in the foreground. Do not use `restart`, a background start, the old hosted supervisor or autostart. The persisted restricted profile also enforces the source pin, even on a later start without the environment flags. The source pin disables periodic self-update, binary-change reload and server-requested replacement.
 
 ```sh
+MULTICA_CODEX_PATH="$CODEX_BINARY" \
 MULTICA_DAEMON_PINNED=true \
 MULTICA_DAEMON_READ_ONLY=true \
 MULTICA_DAEMON_WORKSPACE_ID="$WORKSPACE_ID" \
@@ -113,4 +141,4 @@ go test ./cmd/multica -run 'TestBundleProfileIsolation|TestBuildDaemonStartArgs|
 go test ./pkg/agent ./internal/daemon/execenv -run 'TestReadOnly|TestCodexHandleServerRequest|TestCodexPermissionsApprovalResponse|TestBuildCodexArgsExtraArgs' -count=1
 ```
 
-From the repository root: `node --test scripts/fork-daemon-bundle.test.mjs scripts/fork-images.test.mjs`, `bash scripts/selfhost-config.test.sh`, and `bash scripts/makefile-build.test.sh`. Native fixture tests verify the generated restrictive launch/configuration and denial responses. Actual native executable versions and managed compatibility remain activation preflight facts. No frontend code is changed by this recipe. Database-backed real-handler tests and actual installed-harness verification require separate disposable prerequisites/approval and must be reported as unrun when unavailable.
+From the repository root: `node --test scripts/fork-daemon-bundle.test.mjs scripts/fork-images.test.mjs scripts/fork-codex-bundle.test.mjs`, `bash scripts/selfhost-config.test.sh`, and `bash scripts/makefile-build.test.sh`. Native fixture tests verify the generated restrictive launch/configuration and denial responses. Actual native executable versions and managed compatibility remain activation preflight facts. No frontend code is changed by this recipe. Database-backed real-handler tests and actual installed-harness verification require separate disposable prerequisites/approval and must be reported as unrun when unavailable.

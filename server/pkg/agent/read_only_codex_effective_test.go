@@ -150,16 +150,16 @@ printf '%s\n' "$line" >> "$TRANSCRIPT"
 case "$line" in
   *'"method":"initialize"'*) echo '{"id":1,"result":{}}' ;;
   *'"method":"config/read"'*) printf '%s\n' '`+`{"id":2,"result":`+string(response)+`}`+`' ;;
-  *'"method":"thread/start"'*) echo '{"id":3,"result":{"thread":{}}}' ;;
+  *'"method":"configRequirements/read"'*) echo '{"id":3,"result":{"requirements":null}}' ;;
+  *'"method":"thread/start"'*) echo '{"id":4,"result":{"thread":{}}}' ;;
 esac
 done
 `)
-				backend, err := New("codex", Config{NativeReadOnly: true, CLIVersion: AuditedReadOnlyCodexVersion, ExecutablePath: fake, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Env: map[string]string{"CODEX_HOME": home, "TRANSCRIPT": transcript}})
+				backend, err := New("codex", Config{NativeReadOnly: true, CLIVersion: SupportedReadOnlyCodexVersion, ExecutablePath: fake, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Env: map[string]string{"CODEX_HOME": home, "TRANSCRIPT": transcript}})
 				if err != nil {
 					t.Fatal(err)
 				}
-				// Check candidate protocol emission separately from the public unsupported gate.
-				session, err := backend.(*codexBackend).executeOnce(context.Background(), "fixture", ExecOptions{NativeReadOnly: true, Cwd: cwd, Timeout: 5 * time.Second, HandshakeTimeout: time.Second}, 1)
+				session, err := backend.Execute(context.Background(), "fixture", ExecOptions{NativeReadOnly: true, Cwd: cwd, Timeout: 5 * time.Second, HandshakeTimeout: time.Second})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -187,7 +187,7 @@ done
 				}
 				want := "initialize,initialized,config/read"
 				if !unsafe {
-					want += ",thread/start"
+					want += ",configRequirements/read,thread/start"
 				}
 				if strings.Join(methods, ",") != want {
 					t.Fatalf("requests=%v want=%s", methods, want)
@@ -228,7 +228,7 @@ func TestReadOnlyCodexEffectiveConfigRequiresExplicitStartupFlags(t *testing.T) 
 	}
 }
 
-func TestReadOnlyCodexUnsupportedBeforeNativeStartup(t *testing.T) {
+func TestReadOnlyCodexStockUnsupportedBeforeNativeStartup(t *testing.T) {
 	home, cwd := t.TempDir(), t.TempDir()
 	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte("[mcp_servers]\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -241,5 +241,54 @@ func TestReadOnlyCodexUnsupportedBeforeNativeStartup(t *testing.T) {
 	b := &codexBackend{cfg: Config{provider: "codex", NativeReadOnly: true, CLIVersion: AuditedReadOnlyCodexVersion, ExecutablePath: "/missing/native-codex-must-not-be-looked-up", Env: map[string]string{"CODEX_HOME": home}}}
 	if _, err := b.Execute(context.Background(), "fixture", ExecOptions{Cwd: cwd}); err == nil || !strings.Contains(err.Error(), "unsupported read-only") {
 		t.Fatalf("unsupported harness reached launch: %v", err)
+	}
+}
+
+func TestReadOnlyCodexSupportedNativeVersions(t *testing.T) {
+	for _, platform := range []string{"darwin", "linux"} {
+		for _, version := range []string{SupportedReadOnlyCodexVersion, "codex-cli " + SupportedReadOnlyCodexVersion} {
+			if !SupportsNativeReadOnly("codex", version, platform) {
+				t.Fatalf("refused compatible native build %s %s", version, platform)
+			}
+		}
+	}
+	for _, version := range []string{"0.144.6", "0.144.7", "0.145.0", SupportedReadOnlyCodexVersion + "-dirty", "unknown"} {
+		if SupportsNativeReadOnly("codex", version, "darwin") {
+			t.Fatalf("accepted unverified native build %s", version)
+		}
+	}
+	if SupportsNativeReadOnly("codex", SupportedReadOnlyCodexVersion, "windows") {
+		t.Fatal("Windows is unsupported")
+	}
+}
+
+func TestReadOnlyCodexManagedRequirementsRefusals(t *testing.T) {
+	for _, safe := range []string{`{"requirements":null}`, `{"requirements":{}}`, `{"requirements":{"featureRequirements":{"apps":false,"plugins":false,"remote_plugin":false}}}`} {
+		if err := validateReadOnlyCodexRequirements(json.RawMessage(safe)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, unsafe := range []string{`{}`, `null`, `{"requirements":false}`, `{"requirements":{"featureRequirements":{"plugins":true}}}`, `{"requirements":{"featureRequirements":{"apps":true}}}`, `{"requirements":{"allowedApprovalPolicies":["on-request"]}}`, `{"requirements":{"allowedSandboxModes":[]}}`, `{"requirements":{"allowedWebSearchModes":["live"]}}`} {
+		if err := validateReadOnlyCodexRequirements(json.RawMessage(unsafe)); err == nil {
+			t.Fatalf("accepted managed conflict: %s", unsafe)
+		}
+	}
+	for _, response := range []string{`{"result":{"requirements":{"featureRequirements":{"plugins":true}}}}`, `{"error":{"code":-32601,"message":"SECRET"}}`} {
+		client, _, _ := newTestCodexClient(t)
+		client.cfg.NativeReadOnly = true
+		stdin := &fakeStdinWithHook{}
+		client.stdin = stdin
+		stdin.afterWrite = func() {
+			lines := stdin.Lines()
+			if len(lines) == 1 {
+				client.handleLine(`{"id":1,"result":` + string(readOnlyEffectiveConfigFixture(t, "enterpriseManaged", nil)) + `}`)
+			} else {
+				client.handleLine(`{"id":2,` + response[1:])
+			}
+		}
+		_, _, err := client.startOrResumeThread(context.Background(), ExecOptions{Cwd: "/scratch"}, slog.Default())
+		if err == nil || strings.Contains(err.Error(), "SECRET") || len(stdin.Lines()) != 2 {
+			t.Fatalf("managed conflict reached thread startup: %v %v", err, stdin.Lines())
+		}
 	}
 }

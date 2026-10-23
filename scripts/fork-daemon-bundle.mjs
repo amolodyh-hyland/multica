@@ -51,7 +51,15 @@ export const standaloneProfile = () => ({
 
 export const nativeRestrictions = () => ({
   mode: 'read_only', automaticApproval: false, localDirectoryMode: 'none',
-  supported: { claude: { minimumVersion: '2.1.259', mode: 'restricted', tools: [] } }, unsupported: { codex: { auditedVersion: '0.144.6', reason: 'managed feature pins can enable warmups before config/read; native pre-start validation is required', startupFeatures: 'explicitly-disabled-in-config-and-argv-before-spawn', sandbox: 'read-only', approvals: 'denied', platforms: ['darwin', 'linux', 'windows'], inheritedMcp: 'effective-config-refusal-before-thread-start', configAttestation: { method: 'config/read', includeLayers: true, sources: ['local', 'managed', 'mdm', 'cloud'], missingOrUnknownLayers: 'refuse' }, managedConfiguration: 'never-overridden' } },
+  supported: {
+    claude: { minimumVersion: '2.1.259', mode: 'restricted', tools: [] },
+    codex: { exactVersion: '0.144.6-wi-fac-02.1', upstreamVersion: '0.144.6', nativeRecipe: 'scripts/fork-codex-bundle.mjs',
+      startupGuard: 'normalized-features-refused-before-plugin-manager', startupFeatures: 'explicitly-disabled-in-config-and-argv-before-spawn',
+      sandbox: 'read-only', approvals: 'denied', platforms: ['darwin', 'linux'], inheritedMcp: 'effective-config-refusal-before-thread-start',
+      configAttestation: { methods: ['config/read', 'configRequirements/read'], includeLayers: true, sources: ['local', 'managed', 'mdm', 'cloud'], missingOrUnknownLayers: 'refuse' },
+      managedConfiguration: 'never-overridden', stockVersions: 'unsupported' },
+  },
+  unsupported: { codex: { platforms: ['windows'], reason: 'Windows native sandbox is not verified' } },
   otherHarnesses: 'unsupported', customCommands: 'unsupported',
   verification: 'disposable-native-protocol-and-config-fixtures', liveVerification: 'not-run', activation: 'requires-human-approval',
 });

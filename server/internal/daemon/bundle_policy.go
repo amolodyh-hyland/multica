@@ -6,7 +6,7 @@ import (
 )
 
 func bundleProviderSupported(provider string) bool {
-	return provider == "claude"
+	return provider == "claude" || provider == "codex"
 }
 
 func (d *Daemon) validateBundleTask(task Task, provider string) error {

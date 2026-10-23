@@ -77,7 +77,7 @@ func TestReadOnlyCodexDisablesWarmupsBeforeFirstRequest(t *testing.T) {
 	fake := filepath.Join(t.TempDir(), "codex")
 	// This native fixture evaluates startup defaults before reading any RPC.
 	script := `#!/bin/sh
-for feature in shell_tool unified_exec apps plugins remote_plugin plugin_sharing skill_mcp_dependency_install tool_suggest in_app_browser browser_use browser_use_full_cdp_access browser_use_external computer_use image_generation hooks multi_agent code_mode_host shell_snapshot mentions_v2 guardian_approval goals tool_call_mcp_elicitation auth_elicitation workspace_dependencies remote_compaction_v2; do
+for feature in shell_tool unified_exec apps plugins remote_plugin plugin_sharing skill_mcp_dependency_install tool_suggest in_app_browser browser_use browser_use_full_cdp_access browser_use_external computer_use image_generation hooks multi_agent code_mode_host shell_snapshot mentions_v2 guardian_approval goals tool_call_mcp_elicitation auth_elicitation workspace_dependencies remote_compaction_v2 remote_control realtime_conversation; do
   found=false
   for arg in "$@"; do
     if [ "$arg" = "features.$feature=false" ]; then found=true; fi
@@ -102,8 +102,7 @@ done
 		t.Fatal(err)
 	}
 	// Execute only the synthetic native fixture with the actual emitted argv.
-	// Production refuses stock Codex before spawn because managed pins can
-	// defeat these flags before the native warmup boundary.
+	// The pinned native startup guard is verified separately against upstream fixtures.
 	cmd := exec.Command(fake, agent.ReadOnlyCodexArgs()...)
 	cmd.Dir = t.TempDir()
 	cmd.Env = append(os.Environ(), "CODEX_HOME="+home, "STARTUP_MARKER="+marker)

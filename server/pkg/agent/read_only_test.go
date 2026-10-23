@@ -34,7 +34,7 @@ func TestReadOnlyNativeLaunchConfiguration(t *testing.T) {
 	if strings.Contains(codexArgs, "danger-full-access") || !strings.Contains(codexArgs, `sandbox_mode="read-only"`) || !strings.Contains(codexArgs, `approval_policy="never"`) {
 		t.Fatal(codexArgs)
 	}
-	if !strings.Contains(codexArgs, "--strict-config") || !strings.Contains(codexArgs, "mcp_servers={}") || !strings.Contains(codexArgs, "features.shell_tool=false") {
+	if !strings.Contains(codexArgs, "--wi-fac-02-read-only") || !strings.Contains(codexArgs, "--strict-config") || !strings.Contains(codexArgs, "mcp_servers={}") || !strings.Contains(codexArgs, "features.shell_tool=false") {
 		t.Fatal(codexArgs)
 	}
 	for _, feature := range []string{"apps", "plugins", "remote_plugin", "plugin_sharing", "skill_mcp_dependency_install", "tool_suggest", "in_app_browser", "browser_use", "browser_use_full_cdp_access", "browser_use_external", "computer_use", "image_generation", "hooks", "multi_agent", "code_mode_host", "shell_snapshot", "mentions_v2", "guardian_approval", "goals", "tool_call_mcp_elicitation", "auth_elicitation", "workspace_dependencies", "remote_compaction_v2"} {
@@ -135,6 +135,9 @@ func TestReadOnlyCodexThreadAndTurn(t *testing.T) {
 		}
 		id := int(captured["id"].(float64))
 		result := json.RawMessage(`{"thread":{"id":"fresh"}}`)
+		if captured["method"] == "configRequirements/read" {
+			result = json.RawMessage(`{"requirements":null}`)
+		}
 		if captured["method"] == "config/read" {
 			result = readOnlyEffectiveConfigFixture(t, "mdm", nil)
 		}
@@ -164,7 +167,7 @@ func TestReadOnlyCodexThreadAndTurn(t *testing.T) {
 	if _, _, err := client.startOrResumeThread(context.Background(), opts, slog.Default()); err == nil {
 		t.Fatal("resumed under old permissions")
 	}
-	if len(stdin.Lines()) != 2 {
+	if len(stdin.Lines()) != 3 {
 		t.Fatal("resume reached transport")
 	}
 }

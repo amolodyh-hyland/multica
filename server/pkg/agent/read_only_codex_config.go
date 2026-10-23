@@ -88,7 +88,15 @@ func (c *codexClient) attestReadOnlyCodexConfig(ctx context.Context, cwd string)
 		// RPC errors can contain configuration values. Persist only the refusal.
 		return fmt.Errorf("read-only Codex effective configuration unavailable; refusing thread startup")
 	}
-	return validateReadOnlyCodexEffectiveConfig(result)
+	if err := validateReadOnlyCodexEffectiveConfig(result); err != nil {
+		return err
+	}
+	// config/read omits normalized feature requirements; attest them separately.
+	result, err = c.request(ctx, "configRequirements/read", map[string]any{})
+	if err != nil {
+		return fmt.Errorf("read-only Codex managed requirements unavailable; refusing thread startup")
+	}
+	return validateReadOnlyCodexRequirements(result)
 }
 
 func validateReadOnlyCodexEffectiveConfig(result json.RawMessage) error {
@@ -132,6 +140,48 @@ func validateReadOnlyCodexEffectiveConfig(result json.RawMessage) error {
 		default:
 			return refuse()
 		}
+	}
+	return nil
+}
+
+func validateReadOnlyCodexRequirements(result json.RawMessage) error {
+	refuse := func() error {
+		return fmt.Errorf("read-only Codex managed requirements are unsafe or incomplete; refusing thread startup")
+	}
+	var response map[string]json.RawMessage
+	if json.Unmarshal(result, &response) != nil || response["requirements"] == nil {
+		return refuse()
+	}
+	if string(response["requirements"]) == "null" {
+		return nil
+	}
+	var requirements struct {
+		Features         map[string]bool `json:"featureRequirements"`
+		ApprovalPolicies []string        `json:"allowedApprovalPolicies"`
+		SandboxModes     []string        `json:"allowedSandboxModes"`
+		WebSearchModes   []string        `json:"allowedWebSearchModes"`
+	}
+	if json.Unmarshal(response["requirements"], &requirements) != nil {
+		return refuse()
+	}
+	for _, feature := range readOnlyCodexDisabledFeatures {
+		if requirements.Features[feature] {
+			return refuse()
+		}
+	}
+	allows := func(values []string, required string) bool {
+		if values == nil {
+			return true
+		}
+		for _, value := range values {
+			if value == required {
+				return true
+			}
+		}
+		return false
+	}
+	if !allows(requirements.ApprovalPolicies, "never") || !allows(requirements.SandboxModes, "read-only") || !allows(requirements.WebSearchModes, "disabled") {
+		return refuse()
 	}
 	return nil
 }

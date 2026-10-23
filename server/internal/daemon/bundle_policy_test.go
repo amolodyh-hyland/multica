@@ -8,10 +8,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
 func bundleTestTask() Task {
@@ -136,21 +138,42 @@ func TestBundleReadOnlyRunTaskNative(t *testing.T) {
 	}
 }
 
-func TestBundleCodexUnsupportedNoRegistration(t *testing.T) {
+func TestBundleCodexStockUnsupportedNoRegistration(t *testing.T) {
 	d := New(Config{BundleReadOnly: true, BundleWorkspaceID: "workspace", WorkspacesRoot: t.TempDir()}, slog.Default())
 	d.client = NewClient("https://fixture.invalid")
 	d.client.client.Transport = startTaskTransport(func(r *http.Request) (*http.Response, error) {
 		t.Fatalf("unsupported Codex reached registration: %s", r.URL.Path)
 		return nil, nil
 	})
-	if bundleProviderSupported("codex") {
-		t.Fatal("Codex advertised as bundle-supported")
+	if !bundleProviderSupported("codex") {
+		t.Fatal("compatible Codex excluded from bundle")
 	}
-	if err := d.validateBundleTask(bundleTestTask(), "codex"); err == nil {
-		t.Fatal("Codex task accepted")
+	if err := d.validateBundleTask(bundleTestTask(), "codex"); err != nil {
+		t.Fatal(err)
 	}
 	response, _, err := d.registerRuntimesForWorkspaceBatchLocked(context.Background(), "workspace", []map[string]string{{"type": "codex", "version": "0.144.6", "name": "native-fixture"}})
 	if !errors.Is(err, ErrNoRuntimesToRegister) || response != nil {
 		t.Fatalf("unsupported registration=%+v err=%v", response, err)
+	}
+}
+
+func TestBundleRegistersBothRestrictedHarnesses(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("native Codex sandbox is unsupported")
+	}
+	fx := newBatchFixture(t)
+	d := fx.daemon
+	d.cfg.BundleReadOnly = true
+	d.cfg.BundleWorkspaceID = "workspace"
+	response, _, err := d.registerRuntimesForWorkspaceBatchLocked(context.Background(), "workspace", []map[string]string{
+		{"type": "claude", "version": agent.MinReadOnlyClaudeVersion, "name": "restricted Claude"},
+		{"type": "codex", "version": "codex-cli " + agent.SupportedReadOnlyCodexVersion, "name": "restricted Codex"},
+	})
+	if err != nil || response == nil || len(response.Runtimes) != 2 {
+		t.Fatalf("compatible native registration failed: %+v %v", response, err)
+	}
+	types, calls := fx.registrationFor("workspace")
+	if calls != 1 || strings.Join(types, ",") != "claude,codex" {
+		t.Fatalf("registered %v in %d calls", types, calls)
 	}
 }

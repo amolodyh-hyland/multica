@@ -2642,7 +2642,7 @@ func (e *codexHandshakeTimeoutError) Unwrap() error {
 
 func isCodexHandshakeRPC(method string) bool {
 	switch method {
-	case "initialize", "config/read", "thread/start", "thread/resume", "thread/name/set", "turn/start":
+	case "initialize", "config/read", "configRequirements/read", "thread/start", "thread/resume", "thread/name/set", "turn/start":
 		return true
 	default:
 		return false
