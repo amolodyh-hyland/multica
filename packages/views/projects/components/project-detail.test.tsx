@@ -1,6 +1,6 @@
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Project } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
@@ -90,7 +90,7 @@ vi.mock("@multica/core/workspace/hooks", () => ({
 }));
 
 vi.mock("sonner", () => ({
-  toast: { success: mocks.toastSuccess },
+  toast: { success: mocks.toastSuccess, error: mocks.toastError },
 }));
 
 vi.mock("react-resizable-panels", () => ({
@@ -372,8 +372,30 @@ describe("ProjectDetail instructions", () => {
     renderProjectDetail();
     const editor = screen.getByRole("textbox", { name: "Add project instructions…" });
     await user.type(editor, "Review");
-    expect(mocks.updateProject).toHaveBeenLastCalledWith({ id: PROJECT.id, instructions: "Review" });
+    expect(mocks.updateProject).toHaveBeenLastCalledWith({ id: PROJECT.id, instructions: "Review" }, expect.objectContaining({ onError: expect.any(Function) }));
     await user.clear(editor);
-    expect(mocks.updateProject).toHaveBeenLastCalledWith({ id: PROJECT.id, instructions: null });
+    expect(mocks.updateProject).toHaveBeenLastCalledWith({ id: PROJECT.id, instructions: null }, expect.objectContaining({ onError: expect.any(Function) }));
   });
+});
+
+
+it("enforces the instructions limit in UTF-8 bytes", () => {
+  renderProjectDetail();
+  const editor = screen.getByRole("textbox", { name: "Add project instructions…" });
+  const boundary = "界".repeat(10922) + "ab";
+  fireEvent.change(editor, { target: { value: boundary } });
+  expect(mocks.updateProject).toHaveBeenLastCalledWith({ id: PROJECT.id, instructions: boundary }, expect.objectContaining({ onError: expect.any(Function) }));
+  mocks.updateProject.mockClear();
+  fireEvent.change(editor, { target: { value: boundary + "界" } });
+  expect(mocks.updateProject).not.toHaveBeenCalled();
+  expect(mocks.toastError).toHaveBeenCalledWith("Instructions must be at most 32 KiB.");
+});
+
+
+it("shows an instructions save rejection", () => {
+  renderProjectDetail();
+  fireEvent.change(screen.getByRole("textbox", { name: "Add project instructions…" }), { target: { value: "Guidance" } });
+  const options = mocks.updateProject.mock.calls.at(-1)?.[1];
+  options.onError(new Error("Instructions could not be saved"));
+  expect(mocks.toastError).toHaveBeenCalledWith("Instructions could not be saved");
 });

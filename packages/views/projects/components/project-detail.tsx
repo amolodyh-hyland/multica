@@ -494,7 +494,9 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                 toast.error(t(($) => $.detail.instructions_too_large));
                 return;
               }
-              handleUpdateField({ instructions: md || null });
+              updateProject.mutate({ id: project.id, instructions: md || null }, {
+                onError: (error) => toast.error(error instanceof Error ? error.message : t(($) => $.detail.instructions_save_failed)),
+              });
             }}
             debounceMs={1500}
           />

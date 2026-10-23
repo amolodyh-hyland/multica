@@ -84,10 +84,11 @@
     "section_instructions": "Instructions",
     "instructions_placeholder": "Add project instructions…",
     "instructions_hint": "Shared with issue runs and project chats. Maximum 32 KiB.",
-    "instructions_too_large": "Instructions must be at most 32 KiB."
+    "instructions_too_large": "Instructions must be at most 32 KiB.",
+    "instructions_save_failed": "Could not save project instructions."
   },
   "resources": {
-    "section_header": "Resources",
+    "section_header": "Execution resources",
     "empty": "No resources attached.",
     "add_button": "Add resource",
     "popover_title": "Attach a GitHub repo",
@@ -154,7 +155,11 @@
     "toast_ref_update_failed": "Could not update the branch",
     "ref_error_commit": "That's a commit, not a branch. Tasks deliver back to the branch they start from — for a one-off revision, pass --ref to multica repo checkout.",
     "ref_default_label": "Default branch",
-    "ref_default_tooltip": "No branch set — tasks use whatever the repository's default branch is at the time."
+    "ref_default_tooltip": "No branch set — tasks use whatever the repository's default branch is at the time.",
+    "execution_hint": "Choose where runs work. Knowledge references above provide context separately.",
+    "loading": "Loading project resources…",
+    "load_failed": "Could not load project resources.",
+    "retry": "Retry"
   },
   "delete_dialog": {
     "title": "Delete project",
@@ -186,5 +191,38 @@
     "direction_desc": "Descending",
     "section_columns": "Columns",
     "view": "View"
+  },
+  "knowledge": {
+    "title": "Knowledge references",
+    "context_hint": "Read-only context for issue runs and project chats. These links do not choose an execution directory or install skills.",
+    "empty": "Optional: this project works without knowledge or a repository.",
+    "add": "Add knowledge reference",
+    "registration_hint": "On the owner machine, select the intended configuration profile and register a file, folder or skill with the CLI. Review the local content before approving it, then paste the returned JSON. Only reference metadata is saved; files stay on that machine.",
+    "registration": "Registration JSON",
+    "invalid": "Paste a valid file, folder or skill registration, containing only resource_type and resource_ref.",
+    "owner": "Owner: {{owner}}",
+    "machine": "Owner machine: {{machine}}",
+    "owner_only": "Only the registered owner can attach this reference.",
+    "details": "View reference metadata",
+    "remove": "Remove reference",
+    "remove_failed": "Could not remove the reference.",
+    "save_failed": "Could not save the reference.",
+    "cancel": "Cancel",
+    "attach": "Attach reference",
+    "file": "File",
+    "folder": "Folder",
+    "skill": "Skill (text context only)",
+    "available": "Owner machine available",
+    "unavailable": "Unavailable",
+    "incompatible": "Incompatible daemon",
+    "unverified": "Machine support unverified",
+    "upgrade": "Upgrade Multica on the owner machine and reconnect its daemon. The daemon must advertise knowledge-context-v1.",
+    "reconnect": "Start the daemon on the owner machine and run there. A reference cannot be resolved on another machine.",
+    "verify_at_run": "Source contents are checked when a new run prepares context; machine availability does not verify freshness.",
+    "changed_source": "Changed or stale source?",
+    "replace_hint": "On the owner machine, register and approve the current content again. Remove this reference and attach the new registration. Existing sessions retain their pinned snapshot. Removing a reference does not delete source files.",
+    "stale": "Stale reference",
+    "stale_hint": "A newer approved revision is already attached to this project. Remove this older reference before starting a new run.",
+    "refresh": "Refresh machine status"
   }
 }
