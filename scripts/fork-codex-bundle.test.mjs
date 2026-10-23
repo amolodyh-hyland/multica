@@ -50,6 +50,7 @@ test('native source patch installs the guard on every resolved load before plugi
   assert.equal((manager.match(/self.validate_read_only_bundle\(&config\)\?;/g) || []).length, 3);
   assert.match(manager, /apply_runtime_feature_enablement\(&mut config\);[\s\S]*?validate_read_only_bundle\(&config\)\?;/);
   assert.match(manager, /feature_for_key\(key\).map\(\|feature\| config.features.enabled\(feature\)\)/);
+  assert.match(manager, /if !config.mcp_servers.get\(\).is_empty\(\) \{/);
   const lib = patches['codex-rs/app-server/src/lib.rs'];
   assert.ok(lib.indexOf('.with_read_only_bundle(runtime_options.read_only_bundle)') < lib.indexOf('let (mut config, should_run_personality_migration)'));
   assert.ok(lib.indexOf('let (mut config, should_run_personality_migration)') < lib.indexOf('MessageProcessor::new'));

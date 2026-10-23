@@ -58,6 +58,12 @@ export function patchSources(files) {
             read_only_bundle::validate(|key| {
                 codex_features::feature_for_key(key).map(|feature| config.features.enabled(feature))
             })?;
+            if !config.mcp_servers.get().is_empty() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "read-only bundle requires empty effective MCP configuration; managed settings will not be overridden",
+                ));
+            }
         }
         Ok(())
     }
