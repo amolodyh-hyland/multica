@@ -29,6 +29,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/knowledge"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
@@ -432,6 +433,8 @@ type AgentTaskResponse struct {
 	ProjectTitle        string                   `json:"project_title,omitempty"`       // for surfacing in agent context
 	ProjectDescription  string                   `json:"project_description,omitempty"` // durable project-level context injected into the brief
 	ProjectInstructions string                   `json:"project_instructions,omitempty"`
+	ProjectKnowledge    []knowledge.Binding      `json:"-"`
+	KnowledgeManifest   *knowledge.Selection     `json:"knowledge_manifest,omitempty"`
 	ProjectResources    []ProjectResourceData    `json:"project_resources,omitempty"` // resources attached to the project
 	CreatedAt           string                   `json:"created_at"`
 	PriorSessionID      string                   `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue

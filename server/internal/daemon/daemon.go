@@ -7755,6 +7755,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{}, err
 	}
 	phaseRecorder.Mark(taskPhaseSkillsReady)
+	knowledgeSnapshot, knowledgeErr := d.resolveTaskKnowledge(prepareCtx, task)
+	if knowledgeErr != nil {
+		return TaskResult{}, knowledgeErr
+	}
 
 	agentName := "agent"
 	var skills []SkillData
@@ -7790,6 +7794,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ProjectTitle:                     task.ProjectTitle,
 		ProjectDescription:               task.ProjectDescription,
 		ProjectInstructions:              task.ProjectInstructions,
+		KnowledgeSnapshot:                knowledgeSnapshot,
 		ProjectResources:                 convertProjectResourcesForEnv(task.ProjectResources),
 		ChatSessionID:                    task.ChatSessionID,
 		ChatChannelType:                  task.ChatChannelType,

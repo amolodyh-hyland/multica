@@ -3,6 +3,8 @@ package daemon
 import (
 	"encoding/json"
 
+	"github.com/multica-ai/multica/server/pkg/knowledge"
+
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
@@ -113,6 +115,7 @@ type Task struct {
 	ProjectID                     string                 `json:"project_id,omitempty"`          // active project for this task, when present
 	ProjectTitle                  string                 `json:"project_title,omitempty"`       // human-readable project title for context injection
 	ProjectDescription            string                 `json:"project_description,omitempty"` // durable project-level context injected into the brief
+	KnowledgeManifest             *knowledge.Selection   `json:"knowledge_manifest,omitempty"`
 	ProjectInstructions           string                 `json:"project_instructions,omitempty"`
 	ProjectResources              []ProjectResourceData  `json:"project_resources,omitempty"`                // project-scoped resources to expose to the agent
 	IsLeaderTask                  bool                   `json:"is_leader_task,omitempty"`                   // true when executing in the squad-leader coordinator role

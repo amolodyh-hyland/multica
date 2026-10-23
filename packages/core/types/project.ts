@@ -75,7 +75,25 @@ export interface ListProjectsResponse {
 //   - github_repo: cloud-side git checkout, ref = { url, ref?, default_branch_hint? }
 //   - local_directory: agent execution on a specific daemon,
 //     ref = { local_path, daemon_id, agent_id?, label?, execution_mode? }
-export type ProjectResourceType = "github_repo" | "local_directory";
+export type ProjectKnowledgeType = "knowledge_file" | "knowledge_folder" | "knowledge_skill";
+
+export interface ProjectKnowledgeRef {
+  schema_version: 1;
+  owner_id: string;
+  daemon_id: string;
+  resolver_id: string;
+  root_ref: string;
+  root_generation: number;
+  authority_id: string;
+  source_id: string;
+  source_revision: number;
+  entry_id: string;
+  content_hash: string;
+  format: "knowledge-text-v1" | "native-skill-text-v1";
+  entry_point: string;
+}
+
+export type ProjectResourceType = "github_repo" | "local_directory" | ProjectKnowledgeType;
 
 export interface GithubRepoResourceRef {
   url: string;
@@ -115,6 +133,7 @@ export interface LocalDirectoryResourceRef {
 export type ProjectResourceRef =
   | GithubRepoResourceRef
   | LocalDirectoryResourceRef
+  | ProjectKnowledgeRef
   | Record<string, unknown>;
 
 export interface ProjectResource {

@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	agentpkg "github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/knowledge"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -76,6 +77,12 @@ func validateAndNormalizeResourceRef(resourceType string, ref json.RawMessage) (
 		return nil, errors.New("resource_ref is required")
 	}
 	switch resourceType {
+	case knowledge.File, knowledge.Folder, knowledge.Skill:
+		payload, err := knowledge.DecodeReference(resourceType, ref)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(payload)
 	case "github_repo":
 		return validateGithubRepoRef(ref)
 	case "local_directory":
@@ -579,6 +586,9 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if !h.requireKnowledgeReferenceOwner(w, r, project.WorkspaceID, req.ResourceType, normalizedRef) {
+		return
+	}
 	if !h.requireWorktreeCapableDaemon(w, r, project.WorkspaceID, req.ResourceType, normalizedRef) {
 		return
 	}
@@ -698,6 +708,9 @@ func (h *Handler) UpdateProjectResource(w http.ResponseWriter, r *http.Request) 
 	// along — must not start failing because the daemon's registration drifted
 	// after the mode was legitimately saved. The row already says worktree; the
 	// claim gate is what stops it from running somewhere that cannot.
+	if refProvided && !h.requireKnowledgeReferenceOwner(w, r, project.WorkspaceID, existing.ResourceType, nextRef) {
+		return
+	}
 	if refProvided && !refRenameOnly {
 		if !h.requireWorktreeCapableDaemon(w, r, project.WorkspaceID, existing.ResourceType, nextRef) {
 			return
@@ -929,6 +942,7 @@ type claimProjectContext struct {
 	Title        string
 	Description  string
 	Instructions string
+	Knowledge    []knowledge.Binding
 	Resources    []ProjectResourceData
 	Repos        []RepoData
 }
@@ -941,6 +955,7 @@ func (c claimProjectContext) applyTo(resp *AgentTaskResponse) {
 	resp.ProjectTitle = c.Title
 	resp.ProjectDescription = c.Description
 	resp.ProjectInstructions = c.Instructions
+	resp.ProjectKnowledge = c.Knowledge
 	if len(c.Resources) > 0 {
 		resp.ProjectResources = c.Resources
 	}
@@ -993,6 +1008,15 @@ func (h *Handler) resolveClaimProjectContext(ctx context.Context, projectID, wor
 				return claimProjectContext{}, fmt.Errorf("list project resources: %w", resErr)
 			}
 			out.Resources, out.Repos = projectResourcesForClaim(rows)
+			for _, row := range rows {
+				if knowledge.IsType(row.ResourceType) {
+					ref, err := knowledge.DecodeReference(row.ResourceType, row.ResourceRef)
+					if err != nil {
+						return claimProjectContext{}, err
+					}
+					out.Knowledge = append(out.Knowledge, knowledge.Binding{ID: uuidToString(row.ID), Kind: row.ResourceType, Reference: ref})
+				}
+			}
 		case errors.Is(err, pgx.ErrNoRows):
 			// Stale/deleted/foreign reference: degrade to workspace context.
 		default:
@@ -1033,6 +1057,9 @@ func projectResourcesForClaim(rows []db.ProjectResource) ([]ProjectResourceData,
 	resources := make([]ProjectResourceData, 0, len(rows))
 	var repos []RepoData
 	for _, row := range rows {
+		if knowledge.IsType(row.ResourceType) {
+			continue
+		}
 		label := ""
 		if row.Label.Valid {
 			label = row.Label.String

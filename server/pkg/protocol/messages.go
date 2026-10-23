@@ -3,6 +3,7 @@ package protocol
 import "encoding/json"
 
 const (
+	DaemonCapabilityKnowledgeV1         = "knowledge-context-v1"
 	DaemonCapabilityPublicDelegationV1  = "public-delegation-v1"
 	DaemonCapabilitySkillBundlesV1      = "skill-bundles-v1"
 	DaemonCapabilityCoalescedCommentsV1 = "coalesced-comments-v1"

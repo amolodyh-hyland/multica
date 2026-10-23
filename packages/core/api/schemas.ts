@@ -84,6 +84,8 @@ import type {
   SearchIssuesResponse,
   SearchProjectsResponse,
   Project,
+  ProjectResource,
+  ListProjectResourcesResponse,
   ListProjectsResponse,
   ShareLink,
   ShareLinkInfo,
@@ -1524,6 +1526,52 @@ export const SearchIssuesResponseSchema = z.object({
 export const EMPTY_SEARCH_ISSUES_RESPONSE: SearchIssuesResponse = {
   issues: [],
 };
+
+const KnowledgeIDSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
+
+export const ProjectKnowledgeRefSchema = z.object({
+  schema_version: z.literal(1),
+  owner_id: KnowledgeIDSchema,
+  daemon_id: KnowledgeIDSchema,
+  resolver_id: KnowledgeIDSchema,
+  root_ref: KnowledgeIDSchema,
+  root_generation: z.number().int().positive(),
+  authority_id: KnowledgeIDSchema,
+  source_id: KnowledgeIDSchema,
+  source_revision: z.number().int().positive(),
+  entry_id: KnowledgeIDSchema,
+  content_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  format: z.enum(["knowledge-text-v1", "native-skill-text-v1"]),
+  entry_point: z.string().min(1).refine((value) => {
+    const parts = value.split("/");
+    return new TextEncoder().encode(value).length <= 1024 && value === value.normalize("NFC") &&
+      ![...value].some((character) => {
+        const code = character.codePointAt(0) ?? 0;
+        return code < 32 || (code >= 127 && code <= 159) || character === "\\" || character === ":";
+      }) && parts.length <= 16 && parts.every((part) => part !== "" && part !== "." && part !== "..");
+  }),
+}).strict().refine((ref) => ref.daemon_id === ref.resolver_id && ref.entry_id !== ref.source_id && ref.entry_id !== ref.root_ref);
+
+export const ProjectResourceSchema = z.object({
+  id: z.string(), project_id: z.string(), workspace_id: z.string(),
+  resource_type: z.string(), resource_ref: z.record(z.string(), z.unknown()),
+  label: z.string().nullable().default(null), position: z.number().int().default(0),
+  created_at: z.string(), created_by: z.string().nullable().default(null),
+}).loose().superRefine((resource, ctx) => {
+  if (["knowledge_file", "knowledge_folder", "knowledge_skill"].includes(resource.resource_type)) {
+    const parsed = ProjectKnowledgeRefSchema.safeParse(resource.resource_ref);
+    if (!parsed.success || (resource.resource_type === "knowledge_skill" && (parsed.data.format !== "native-skill-text-v1" || parsed.data.entry_point !== "SKILL.md")) || (parsed.success && resource.resource_type !== "knowledge_skill" && parsed.data.format !== "knowledge-text-v1")) {
+      ctx.addIssue({ code: "custom", message: "Invalid knowledge reference", path: ["resource_ref"] });
+    }
+  }
+});
+
+export const EMPTY_PROJECT_RESOURCE: ProjectResource = {
+  id: "", project_id: "", workspace_id: "", resource_type: "github_repo", resource_ref: {},
+  label: null, position: 0, created_at: "", created_by: null,
+};
+export const ListProjectResourcesResponseSchema = z.object({ resources: z.array(ProjectResourceSchema).default([]), total: z.number().default(0) }).loose();
+export const EMPTY_LIST_PROJECT_RESOURCES_RESPONSE: ListProjectResourcesResponse = { resources: [], total: 0 };
 
 export const ProjectSchema = z.object({
   instructions: z.string().nullable().default(null),
