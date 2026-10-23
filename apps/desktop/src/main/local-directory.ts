@@ -2,6 +2,7 @@ import { ipcMain, dialog, BrowserWindow } from "electron";
 import { access, stat } from "fs/promises";
 import { constants as fsConstants } from "fs";
 import { basename, dirname, isAbsolute, join } from "path";
+import { folderSelectionSymlinks, type FolderSelectionEntry } from "./folder-selection";
 
 export interface PickDirectoryResult {
   ok: boolean;
@@ -94,6 +95,9 @@ function errorMessage(err: unknown): string {
 export function setupLocalDirectory(
   windowGetter: () => BrowserWindow | null,
 ): void {
+  ipcMain.handle("folder-selection:symlinks", (_event, entries: FolderSelectionEntry[]) =>
+    folderSelectionSymlinks(entries),
+  );
   ipcMain.handle(
     "local-directory:pick",
     async (event, defaultPath?: string): Promise<PickDirectoryResult> => {

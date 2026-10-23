@@ -90,6 +90,7 @@ interface DesktopAPI {
     reason?: "cancelled" | "no_window" | "error";
     error?: string;
   }>;
+  folderSelectionSymlinks: (files: File[]) => Promise<number[]>;
   /** Validate that a path is an existing readable+writable directory.
    *  Mirrors the daemon's runtime check so the user sees errors before submit. */
   validateLocalDirectory: (

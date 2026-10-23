@@ -27,12 +27,13 @@
     "runtime_access_denied_toast": "Message not sent — this agent can't run on its private runtime. Make the runtime public, or rebind/copy the agent to a runtime its owner can use",
     "attachment_bind_failed_toast": "Message sent, but files were not attached. Please try again in a moment.",
     "add_tooltip": "Add",
-    "upload_file": "Image or files",
+    "upload_file": "Attach file",
     "project_context": "Project context",
     "change_project_context": "Change project context",
     "remove_project_context": "Remove project context",
     "no_projects": "No projects yet",
-    "project_context_unsupported": "Project description won't apply — this agent's daemon needs an upgrade"
+    "project_context_unsupported": "Project description won't apply — this agent's daemon needs an upgrade",
+    "attach_folder": "Attach folder"
   },
   "queue": {
     "title_one": "{{count}} queued message",
@@ -252,5 +253,29 @@
     "archive": "Archive chat",
     "unarchive": "Unarchive chat",
     "delete": "Delete chat"
+  },
+  "folder": {
+    "title": "Upload folder snapshot",
+    "description": "Only the listed files will be uploaded after confirmation.",
+    "server": "Server",
+    "workspace": "Workspace",
+    "files": "Files to send",
+    "summary": "{{count}} files · {{size}} MiB ({{bytes}} bytes)",
+    "skip_policy": "Skip .git and node_modules.",
+    "skipped": "Skipped entries ({{count}})",
+    "cancel": "Cancel",
+    "confirm": "Confirm upload",
+    "preparing": "Preparing…",
+    "errors": {
+      "empty": "The folder has no files to send.",
+      "too_many_files": "Folders are limited to 500 files. Nothing was uploaded.",
+      "too_large": "Folders are limited to 100 MiB total. Nothing was uploaded.",
+      "unsafe_path": "The folder contains an unsafe or conflicting path. Nothing was uploaded.",
+      "unsupported_name": "Folder names must use Unicode 15 characters and at most 8 consecutive combining marks after decomposition. Rename the files or folders and try again. Nothing was uploaded.",
+      "changed": "The destination or folder changed. Select the folder again.",
+      "failed": "Could not prepare the folder. Nothing was uploaded."
+    },
+    "symlinks_filtered": "Symbolic links are skipped automatically.",
+    "symlink_warning": "Symbolic links cannot be detected in the browser. A linked file uploads whatever it points to. Check the file list before confirming."
   }
 }

@@ -753,6 +753,7 @@ func buildChatPrompt(task Task) string {
 			}
 		}
 		b.WriteString("Use `multica attachment download <id>` to fetch each file locally before referring to it.\n")
+		b.WriteString("Folder snapshots (.multica-folder) are reconstructed by that command into a new directory in the task work directory, preserving relative paths; use the returned path.\n")
 		b.WriteString("When creating an issue that should preserve one of these attachments, pass `--attachment-id <id>` to `multica issue create` in addition to keeping the attachment markdown inline.\n")
 	}
 	// Outbound attachments: how the agent puts an image/file INTO its reply.

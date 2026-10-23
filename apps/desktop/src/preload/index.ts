@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { electronAPI } from "@electron-toolkit/preload";
 import type { RuntimeConfigResult } from "../shared/runtime-config";
 import type { FreezeBreadcrumb } from "../shared/freeze-breadcrumb";
@@ -213,6 +213,11 @@ const desktopAPI = {
   /** Open the OS folder picker and return the chosen absolute path. */
   pickDirectory: (defaultPath?: string) =>
     ipcRenderer.invoke("local-directory:pick", defaultPath),
+  folderSelectionSymlinks: (files: File[]): Promise<number[]> =>
+    ipcRenderer.invoke("folder-selection:symlinks", files.map((file) => ({
+      path: webUtils.getPathForFile(file),
+      relativePath: file.webkitRelativePath,
+    }))),
   /** Validate that a path is an existing readable+writable directory. */
   validateLocalDirectory: (path: string) =>
     ipcRenderer.invoke("local-directory:validate", path),

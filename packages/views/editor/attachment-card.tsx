@@ -12,7 +12,8 @@
  */
 
 import type { ReactNode } from "react";
-import { Download, Eye, FileText, Loader2, Trash2 } from "lucide-react";
+import { Download, Eye, FileText, Folder, Loader2, Trash2 } from "lucide-react";
+import { FOLDER_SNAPSHOT_EXTENSION } from "@multica/core/attachments";
 import { useT } from "../i18n";
 import { formatBytes } from "../common/format-bytes";
 import { fileIcon } from "./utils/file-icon";
@@ -47,6 +48,8 @@ function AttachmentCardChrome({
     >
       {uploading ? (
         <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
+      ) : filename.endsWith(FOLDER_SNAPSHOT_EXTENSION) ? (
+        <Folder className="size-4 shrink-0 text-muted-foreground" />
       ) : (
         <FileText className="size-4 shrink-0 text-muted-foreground" />
       )}

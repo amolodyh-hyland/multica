@@ -19,3 +19,4 @@ export {
   type SequenceCandidate,
   type StandaloneAttachmentGroup,
 } from "./image-sequence";
+export * from "./folder-snapshot";

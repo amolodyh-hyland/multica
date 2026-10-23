@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/foldersnapshot"
 )
 
 var attachmentCmd = &cobra.Command{
@@ -21,7 +22,7 @@ var attachmentCmd = &cobra.Command{
 var attachmentDownloadCmd = &cobra.Command{
 	Use:   "download <attachment-id>",
 	Short: "Download an attachment to a local file",
-	Long:  "Download an attachment by its ID to a local file.",
+	Long:  "Download an attachment by its ID. Folder snapshots are reconstructed in a new directory under the output directory, preserving relative paths.",
 	Example: `  # Download an image attachment to the current directory
   $ multica attachment download abc123
 
@@ -167,6 +168,20 @@ func runAttachmentDownload(cmd *cobra.Command, args []string) error {
 	// against a directory that does not exist yet (the help example's
 	// `-o ./attachments` in a clean workdir).
 	outputDir, _ := cmd.Flags().GetString("output-dir")
+	if strVal(att, "content_type") == foldersnapshot.ContentType || strings.HasSuffix(filename, foldersnapshot.Extension) {
+		if outputDir == "" {
+			outputDir = "."
+		}
+		folderPath, err := foldersnapshot.Extract(data, outputDir)
+		if err != nil {
+			return fmt.Errorf("download folder snapshot: %w", err)
+		}
+		fmt.Fprintln(os.Stderr, "Downloaded folder:", folderPath)
+		return cli.PrintJSON(os.Stdout, map[string]any{
+			"id": strVal(att, "id"), "filename": filename, "path": folderPath,
+			"size": strVal(att, "size_bytes"),
+		})
+	}
 	if outputDir != "" {
 		if err := os.MkdirAll(outputDir, 0o755); err != nil {
 			return fmt.Errorf("create output directory: %w", err)

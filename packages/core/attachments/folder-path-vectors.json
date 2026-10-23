@@ -1,0 +1,192 @@
+[
+  {
+    "name": "nested paths",
+    "paths": [
+      "root/src/a",
+      "root/docs/a"
+    ],
+    "keys": [
+      "root/src/a",
+      "root/docs/a"
+    ]
+  },
+  {
+    "name": "NFC NFD file aliases",
+    "paths": [
+      "root/é.txt",
+      "root/é.txt"
+    ],
+    "error": "unsafe_path"
+  },
+  {
+    "name": "NFC NFD directory aliases",
+    "paths": [
+      "root/é/a",
+      "root/é/b"
+    ],
+    "error": "unsafe_path"
+  },
+  {
+    "name": "case aliases",
+    "paths": [
+      "root/A.txt",
+      "root/a.txt"
+    ],
+    "error": "unsafe_path"
+  },
+  {
+    "name": "Foo foo directories",
+    "paths": [
+      "root/Foo/a",
+      "root/foo/b"
+    ],
+    "error": "unsafe_path"
+  },
+  {
+    "name": "file directory alias",
+    "paths": [
+      "root/Foo",
+      "root/foo/a"
+    ],
+    "error": "unsafe_path"
+  },
+  {
+    "name": "consistent spelling",
+    "paths": [
+      "root/é/a",
+      "root/é/b"
+    ],
+    "keys": [
+      "root/é/a",
+      "root/é/b"
+    ]
+  },
+  {
+    "name": "full folding expansion",
+    "paths": [
+      "root/straße",
+      "root/STRASSE"
+    ],
+    "error": "unsafe_path"
+  },
+  {
+    "name": "Greek sigma",
+    "paths": [
+      "root/ς/a",
+      "root/σ/b"
+    ],
+    "error": "unsafe_path"
+  },
+  {
+    "name": "astral folding",
+    "paths": [
+      "root/𐐀/a"
+    ],
+    "keys": [
+      "root/𐐨/a"
+    ]
+  },
+  {
+    "name": "dotted I decomposition",
+    "paths": [
+      "root/İ/a"
+    ],
+    "keys": [
+      "root/i̇/a"
+    ]
+  },
+  {
+    "name": "Unicode 15 assigned",
+    "paths": [
+      "root/𑼂/a"
+    ],
+    "keys": [
+      "root/𑼂/a"
+    ]
+  },
+  {
+    "name": "Unicode 16 upper and lower aliases",
+    "paths": [
+      "root/Ᲊ/a",
+      "root/ᲊ/b"
+    ],
+    "error": "unsupported_name"
+  },
+  {
+    "name": "Unicode 16 uppercase alone",
+    "paths": [
+      "root/Ᲊ/a"
+    ],
+    "error": "unsupported_name"
+  },
+  {
+    "name": "Unicode 16 lowercase alone",
+    "paths": [
+      "root/ᲊ/b"
+    ],
+    "error": "unsupported_name"
+  },
+  {
+    "name": "unassigned character",
+    "paths": [
+      "root/͸/a"
+    ],
+    "error": "unsupported_name"
+  },
+  {
+    "name": "eight combining marks",
+    "paths": [
+      "root/x̅̅̅̅̅̅̅̅"
+    ],
+    "keys": [
+      "root/x̅̅̅̅̅̅̅̅"
+    ]
+  },
+  {
+    "name": "nine combining marks",
+    "paths": [
+      "root/x̅̅̅̅̅̅̅̅̅"
+    ],
+    "error": "unsupported_name"
+  },
+  {
+    "name": "eight decomposed marks",
+    "paths": [
+      "root/é̅̅̅̅̅̅̅"
+    ],
+    "keys": [
+      "root/é̅̅̅̅̅̅̅"
+    ]
+  },
+  {
+    "name": "nine decomposed marks",
+    "paths": [
+      "root/é̅̅̅̅̅̅̅̅"
+    ],
+    "error": "unsupported_name"
+  },
+  {
+    "name": "stream safe canonical aliases",
+    "paths": [
+      "root/x̖̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅",
+      "root/x̖̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅"
+    ],
+    "error": "unsupported_name"
+  },
+  {
+    "name": "stream safe reordered alone",
+    "paths": [
+      "root/x̖̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅"
+    ],
+    "error": "unsupported_name"
+  },
+  {
+    "name": "mark runs reset per component",
+    "paths": [
+      "root/x̅̅̅̅̅̅̅̅/x̅̅̅̅̅̅̅̅"
+    ],
+    "keys": [
+      "root/x̅̅̅̅̅̅̅̅/x̅̅̅̅̅̅̅̅"
+    ]
+  }
+]

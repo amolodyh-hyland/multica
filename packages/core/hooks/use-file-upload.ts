@@ -4,7 +4,7 @@ import { useState, useCallback } from "react";
 import type { ApiClient } from "../api/client";
 import type { Attachment } from "../types";
 import { attachmentDownloadPath } from "../types/attachment-url";
-import { MAX_FILE_SIZE } from "../constants/upload";
+import { uploadSizeLimit } from "../attachments/folder-snapshot";
 
 // UploadResult keeps raw storage and durable Markdown URLs separate.
 // link preserves att.url for avatars and other storage-reference consumers.
@@ -66,7 +66,7 @@ export function useFileUpload(
 
   const upload = useCallback(
     async (file: File, ctx?: UploadContext): Promise<UploadResult | null> => {
-      if (file.size > MAX_FILE_SIZE) {
+      if (file.size > uploadSizeLimit(file)) {
         throw new Error("File exceeds 100 MB limit");
       }
 

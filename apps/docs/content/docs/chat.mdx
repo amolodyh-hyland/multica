@@ -26,6 +26,20 @@ If the runtime is offline, the message waits until it comes back online. Once th
 
 Before the first message, Chat shows up to three suggestions configured for the selected agent. Selecting one copies its full prompt into the composer without sending it, so you can adapt it first. Agents without configured suggestions use localized general-purpose examples.
 
+## Attach folder snapshots
+
+Choose **+ → Attach file** for individual files or **+ → Attach folder** for a folder snapshot. Project context remains a separate menu entry.
+
+Before a folder uploads, review the destination server and workspace, folder name, file count, total size, and complete file list. **Confirm upload** sends that snapshot; **Cancel** sends no file contents. A snapshot contains the files selected for this upload, rather than a live reference to your computer.
+
+Each folder supports at most **500 files and 100 MiB of file contents**. A selection over either limit is refused in full. The preview lists skipped entries, including files inside `.git` and `node_modules`. Other hidden files are included, so review the list before confirming.
+
+Multica Desktop skips symbolic links automatically. In web chat and embedded views without native symlink filtering, the consent dialog warns that symbolic links cannot be detected: a linked file uploads whatever it points to. Check the full file list, count, size, and destination before confirming. Cancel sends no file contents on either path.
+
+The folder is stored as one `.multica-folder` attachment, so it is uploaded and bound to a message as a unit. Its archive uses uncompressed ZIP STORE entries on one disk, without an archive comment. Upload failures remain visible in the composer and cannot bind part of a folder. Sending the message uses the same attachment binding as individual files.
+
+In a task, `multica attachment download <id>` reconstructs the snapshot beneath a new `folder-snapshot-*` directory in the task work directory and returns the folder path. Nested relative paths are retained. File names and every directory prefix must be unambiguous under Unicode NFC normalization and pinned Unicode 15 full case folding; conflicting spellings are refused in both preview and download. Names must use characters assigned in Unicode 15 and contain no more than eight consecutive combining marks after canonical decomposition. Unsupported names are refused with a rename message before upload. Both runtimes use the same generated Unicode data and shared filename regression vectors. Downloads bound the central-directory record count before parsing entries, validate every file checksum, refuse symlinks and special files, and create files exclusively without merging into an existing folder. No database migration is required for this snapshot format.
+
 ## Chat vs. issues
 
 | Need | Better fit |

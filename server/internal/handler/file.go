@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/foldersnapshot"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -386,7 +387,7 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 
 	workspaceID := h.resolveWorkspaceID(r)
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	r.Body = http.MaxBytesReader(w, r.Body, foldersnapshot.MaxArchiveBytes+(1<<20))
 
 	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
 		writeError(w, http.StatusBadRequest, "file too large or invalid multipart form")
@@ -422,6 +423,22 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	data, err := io.ReadAll(file)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "failed to read file")
+		return
+	}
+
+	isFolder := strings.HasSuffix(header.Filename, foldersnapshot.Extension)
+	if isFolder {
+		if workspaceID == "" {
+			writeError(w, http.StatusBadRequest, "folder snapshot requires a workspace")
+			return
+		}
+		if _, err := foldersnapshot.Parse(data); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		contentType = foldersnapshot.ContentType
+	} else if len(data) > maxUploadSize {
+		writeError(w, http.StatusBadRequest, "file exceeds 100 MiB limit")
 		return
 	}
 
@@ -583,6 +600,11 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			slog.Error("failed to create attachment record", "error", err)
+			if isFolder {
+				h.deleteS3Objects(r.Context(), []string{link})
+				writeError(w, http.StatusInternalServerError, "folder snapshot upload failed; no folder was attached")
+				return
+			}
 			// S3 upload succeeded but DB record failed — still return the link
 			// so the file is usable. Log the error for investigation.
 		} else {
