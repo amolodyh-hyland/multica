@@ -1,7 +1,7 @@
 export { projectKeys, projectListOptions, projectDetailOptions } from "./queries";
 export { useCreateProject, useUpdateProject, useDeleteProject } from "./mutations";
 export { useProjectDraftStore } from "./draft-store";
-export { isProjectKnowledgeType, parseProjectKnowledgeRegistration, projectKnowledgeRef, projectKnowledgeMachine, projectKnowledgeHasNewerReference } from "./knowledge";
+export { isProjectKnowledgeType, parseProjectKnowledgeRegistration, projectKnowledgeRef } from "./knowledge";
 export {
   useProjectViewStore,
   PROJECT_SORT_DEFAULT_DIRECTION,
@@ -18,5 +18,6 @@ export {
   projectResourcesOptions,
   useCreateProjectResource,
   useUpdateProjectResource,
+  useCheckProjectKnowledgeStatus,
   useDeleteProjectResource,
 } from "./resource-queries";

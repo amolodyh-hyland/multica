@@ -326,6 +326,10 @@ func boundedLocalRead(path string, limit int64) ([]byte, error) {
 }
 
 func readSource(ctx context.Context, record registration) ([]TextFile, string, error) {
+	return readSourceBounded(ctx, record, MaxBytes, MaxFiles)
+}
+
+func readSourceBounded(ctx context.Context, record registration, byteLimit, fileLimit int) ([]TextFile, string, error) {
 	canonical, err := filepath.EvalSymlinks(record.Path)
 	if err != nil || canonical != record.Path {
 		return nil, "", errors.New("knowledge source unavailable or symlink")
@@ -414,10 +418,10 @@ func readSource(ctx context.Context, record registration) ([]TextFile, string, e
 			if record.Kind != File && rel == "." {
 				return errors.New("knowledge folder reference is a file")
 			}
-			if len(files) >= MaxFiles {
+			if len(files) >= fileLimit {
 				return errors.New("knowledge file limit")
 			}
-			raw, err := io.ReadAll(io.LimitReader(opened, MaxFileBytes+1))
+			raw, err := io.ReadAll(io.LimitReader(opened, int64(min(MaxFileBytes, byteLimit-total))+1))
 			if ctx.Err() != nil {
 				return errors.New("knowledge resolution timeout")
 			}
@@ -432,7 +436,7 @@ func readSource(ctx context.Context, record registration) ([]TextFile, string, e
 				return errors.New("knowledge source changed while reading")
 			}
 			total += len(raw)
-			if total > MaxBytes {
+			if total > byteLimit {
 				return errors.New("knowledge byte limit")
 			}
 			p := filepath.ToSlash(rel)

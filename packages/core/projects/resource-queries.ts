@@ -100,3 +100,12 @@ export function useDeleteProjectResource(wsId: string, projectId: string) {
     },
   });
 }
+
+export function useCheckProjectKnowledgeStatus(wsId: string, projectId: string) {
+  return useMutation({
+    mutationKey: [...projectKeys.detail(wsId, projectId), "knowledge-status"],
+    mutationFn: (resourceIds: string[]) => api.checkProjectKnowledgeStatus(projectId, resourceIds),
+    retry: false,
+    gcTime: 0,
+  });
+}

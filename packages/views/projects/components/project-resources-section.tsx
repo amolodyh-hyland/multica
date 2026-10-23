@@ -147,7 +147,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   // would have to infer it from data the server wrote, and that inference is
   // what told a user on the newest release to upgrade it (#7113). The save is
   // gated server-side and surfaced here as an inline error instead.
-  const { data: runtimes = [], refetch: reloadRuntimes, isFetching: runtimesLoading } = useQuery(runtimeListOptions(wsId));
+  const { data: runtimes = [] } = useQuery(runtimeListOptions(wsId));
   // The one thing the client must still check up front: whether this server
   // performs that gate at all. One declared boolean, no inference — servers
   // that predate it drop execution_mode and answer 201.
@@ -388,7 +388,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-5">
-      <ProjectKnowledgeSection projectId={projectId} resources={knowledgeResources} runtimes={runtimes} onRefresh={() => void reloadRuntimes()} refreshing={runtimesLoading} />
+      <ProjectKnowledgeSection projectId={projectId} resources={knowledgeResources} runtimes={runtimes} />
       <div>
       <button
         type="button"

@@ -1,5 +1,5 @@
-import { beforeEach, expect, it, vi } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
@@ -9,7 +9,7 @@ import { ProjectKnowledgeSection } from "./project-knowledge-section";
 
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "workspace1" }));
 vi.mock("@multica/core/auth", () => ({ useAuthStore: (selector: (state: { user: { id: string } }) => unknown) => selector({ user: { id: "owner1" } }) }));
-vi.mock("@multica/core/api", () => ({ api: { createProjectResource: vi.fn(), deleteProjectResource: vi.fn() } }));
+vi.mock("@multica/core/api", () => ({ api: { createProjectResource: vi.fn(), deleteProjectResource: vi.fn(), checkProjectKnowledgeStatus: vi.fn() } }));
 
 const ref = {
   schema_version: 1 as const, owner_id: "owner1", daemon_id: "machine1", resolver_id: "machine1",
@@ -19,7 +19,9 @@ const ref = {
 const resource: ProjectResource = { id: "resource1", project_id: "project1", workspace_id: "workspace1", resource_type: "knowledge_file", resource_ref: ref, label: null, position: 0, created_by: "owner1", created_at: "2026-10-23T00:00:00Z" };
 function renderSection(resources: ProjectResource[] = [], runtimes: AgentRuntime[] = []) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return renderWithI18n(<QueryClientProvider client={qc}><ProjectKnowledgeSection projectId="project1" resources={resources} runtimes={runtimes} /></QueryClientProvider>);
+  const view = (items: ProjectResource[]) => <QueryClientProvider client={qc}><ProjectKnowledgeSection projectId="project1" resources={items} runtimes={runtimes} /></QueryClientProvider>;
+  const rendered = renderWithI18n(view(resources));
+  return { ...rendered, rerenderSection: (items: ProjectResource[]) => rendered.rerender(view(items)) };
 }
 beforeEach(() => { vi.clearAllMocks(); });
 
@@ -85,23 +87,52 @@ it("shows metadata and reports a failed removal", async () => {
 });
 
 
-it("shows stale references with a removal action when a newer revision is attached", () => {
-  const newer = { ...resource, id: "resource2", resource_ref: { ...ref, source_revision: 2 }, label: "Updated notes" };
-  renderSection([resource, newer]);
-  expect(screen.getByText("Stale reference")).toBeInTheDocument();
-  expect(screen.getByText(/newer approved revision is already attached/)).toBeInTheDocument();
-  expect(screen.getAllByRole("button", { name: "Remove reference" })).toHaveLength(2);
+
+it("checks current source status only after an explicit human action", async () => {
+ const user=userEvent.setup();
+ vi.mocked(api.checkProjectKnowledgeStatus).mockResolvedValue({results:[{resource_id:resource.id,reference_hash:ref.content_hash,status:"stale",reason:"changed",exists:true,type:"file",size_bytes:42,content_hash:`sha256:${"b".repeat(64)}`}]});
+ renderSection([resource]);
+ expect(api.checkProjectKnowledgeStatus).not.toHaveBeenCalled();
+ expect(screen.getByText("Unverified")).toBeInTheDocument();
+ await user.click(screen.getByRole("button",{name:"Check status"}));
+ expect(await screen.findByText("Changed since pinned")).toBeInTheDocument();
+ expect(api.checkProjectKnowledgeStatus).toHaveBeenCalledExactlyOnceWith("project1",[resource.id]);
+ expect(screen.getByText(/register and approve the current content again/)).toBeInTheDocument();
 });
 
-it("offers an upgrade remedy for an incompatible owner daemon", () => {
-  const runtime: AgentRuntime = {
-    id: "runtime1", workspace_id: "workspace1", daemon_id: ref.daemon_id, owner_id: ref.owner_id,
-    name: "Local runtime", custom_name: "Research computer", runtime_mode: "local", provider: "opencode", launch_header: "",
-    status: "online", device_info: "Owner computer", metadata: { capabilities: [] }, visibility: "private",
-    last_seen_at: "2026-10-23T00:00:00Z", created_at: "", updated_at: "",
-  };
-  renderSection([resource], [runtime]);
-  expect(screen.getByText("Incompatible daemon")).toBeInTheDocument();
-  expect(screen.getByText(/Upgrade Multica on the owner machine/)).toBeInTheDocument();
-  expect(screen.getByText(/Research computer/)).toBeInTheDocument();
+it.each([
+ ["unverified","owner_offline","Unverified","Start the owner daemon"],
+ ["incompatible","needs_newer_runner","Needs newer runner","Update Multica"],
+ ["missing","missing","Missing","register and approve"],
+ ["available","checked","Available",null],
+] as const)("shows %s with actionable recovery",async (status,reason,label,remedy)=>{
+ const user=userEvent.setup();
+ vi.mocked(api.checkProjectKnowledgeStatus).mockResolvedValue({results:[{resource_id:resource.id,reference_hash:ref.content_hash,status,reason}]});
+ renderSection([resource]);
+ await user.click(screen.getByRole("button",{name:"Check status"}));
+ await waitFor(()=>expect(api.checkProjectKnowledgeStatus).toHaveBeenCalledTimes(1));
+ await waitFor(()=>expect(screen.getByRole("button",{name:"Check status"})).not.toBeDisabled());
+ expect(screen.getByText(label)).toBeInTheDocument();
+ if(remedy)expect(screen.getByText(new RegExp(remedy))).toBeInTheDocument();
+ expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+afterEach(()=>vi.useRealTimers());
+it("does not poll status on mount or in the background",async()=>{
+ vi.useFakeTimers();renderSection([resource]);
+ await act(async()=>{await vi.advanceTimersByTimeAsync(60000)});
+ expect(api.checkProjectKnowledgeStatus).not.toHaveBeenCalled();
+});
+
+
+it("discards an old check when a binding moves to another machine with the same content hash", async () => {
+ const user=userEvent.setup();
+ vi.mocked(api.checkProjectKnowledgeStatus).mockResolvedValue({results:[{resource_id:resource.id,reference_hash:ref.content_hash,status:"available",reason:"checked"}]});
+ const {rerenderSection}=renderSection([resource]);
+ await user.click(screen.getByRole("button",{name:"Check status"}));
+ expect(await screen.findByText("Available")).toBeInTheDocument();
+ rerenderSection([{...resource,resource_ref:{...ref,daemon_id:"other-machine",resolver_id:"other-machine"}}]);
+ expect(screen.getByText("Unverified")).toBeInTheDocument();
+ expect(screen.queryByText("Available")).not.toBeInTheDocument();
+ expect(api.checkProjectKnowledgeStatus).toHaveBeenCalledTimes(1);
 });

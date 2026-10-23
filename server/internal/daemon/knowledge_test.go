@@ -191,3 +191,37 @@ func TestKnowledgeDaemonResolution(t *testing.T) {
 		t.Fatalf("existing tasks changed: %v", err)
 	}
 }
+
+func TestKnowledgeStatusAndClaimsShareTwoPermits(t *testing.T) {
+	var limiter knowledgeResolutionLimiter
+	release := make(chan struct{})
+	defer close(release)
+	for i := 0; i < 2; i++ {
+		started := make(chan struct{})
+		done := make(chan struct{})
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			_, _ = runKnowledgeResolution(&limiter, ctx, func(context.Context) ([]knowledge.SourceStatus, error) { close(started); <-release; return nil, nil })
+			close(done)
+		}()
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			cancel()
+			t.Fatal("status work did not start")
+		}
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("status caller did not cancel")
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	called := false
+	_, err := runKnowledgeResolution(&limiter, ctx, func(context.Context) (*knowledge.Snapshot, error) { called = true; return nil, nil })
+	if err == nil || called {
+		t.Fatal("claim bypassed occupied status permits")
+	}
+}

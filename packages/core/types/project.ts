@@ -168,3 +168,18 @@ export interface ListProjectResourcesResponse {
   resources: ProjectResource[];
   total: number;
 }
+
+export interface ProjectKnowledgeStatus {
+  resource_id: string;
+  reference_hash: string;
+  status: "available" | "stale" | "missing" | "unverified" | "incompatible";
+  exists?: boolean;
+  type?: "file" | "folder" | "skill";
+  size_bytes?: number;
+  content_hash?: string;
+  reason: string;
+}
+
+export interface ProjectKnowledgeStatusResponse {
+  results: ProjectKnowledgeStatus[];
+}

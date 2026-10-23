@@ -3891,3 +3891,16 @@ export const RuntimeProfileSchema = z
     runtime_type: profile.runtime_type || profile.protocol_family,
   }));
 export const RuntimeProfileListSchema = z.array(RuntimeProfileSchema);
+
+export const ProjectKnowledgeStatusResponseSchema = z.object({
+  results: z.array(z.object({
+    resource_id: z.string(),
+    reference_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    status: z.enum(["available", "stale", "missing", "unverified", "incompatible"]).catch("unverified"),
+    exists: z.boolean().optional(),
+    type: z.enum(["file", "folder", "skill"]).optional(),
+    size_bytes: z.number().int().min(0).max(8 << 20).optional(),
+    content_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
+    reason: z.string().default("unreadable"),
+  }).strict()).max(8).default([]),
+}).strict();

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useAuthStore } from "@multica/core/auth";
-import { parseProjectKnowledgeRegistration, projectKnowledgeRef, projectKnowledgeMachine, projectKnowledgeHasNewerReference, useCreateProjectResource, useDeleteProjectResource } from "@multica/core/projects";
+import { parseProjectKnowledgeRegistration, projectKnowledgeRef, useCheckProjectKnowledgeStatus, useCreateProjectResource, useDeleteProjectResource } from "@multica/core/projects";
 import type { AgentRuntime, ProjectResource } from "@multica/core/types";
 import { runtimeDisplayLabel } from "@multica/core/runtimes";
 import { Button } from "@multica/ui/components/ui/button";
@@ -11,7 +11,7 @@ import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@multica/ui/components/ui/dialog";
 import { useT } from "../../i18n";
 
-export function ProjectKnowledgeSection({ projectId, resources, runtimes = [], onRefresh, refreshing }: { projectId: string; resources: ProjectResource[]; runtimes?: AgentRuntime[]; onRefresh?: () => void; refreshing?: boolean }) {
+export function ProjectKnowledgeSection({ projectId, resources, runtimes = [] }: { projectId: string; resources: ProjectResource[]; runtimes?: AgentRuntime[] }) {
   const { t } = useT("projects");
   const wsId = useWorkspaceId();
   const userId = useAuthStore((state) => state.user?.id);
@@ -55,13 +55,10 @@ export function ProjectKnowledgeSection({ projectId, resources, runtimes = [], o
       <h2 className="px-2 text-caption font-medium">{t(($) => $.knowledge.title)}</h2>
       <p className="pl-2 text-caption text-muted-foreground">{t(($) => $.knowledge.context_hint)}</p>
       {resources.length === 0 && <p className="pl-2 text-caption text-muted-foreground">{t(($) => $.knowledge.empty)}</p>}
-      {resources.length > 0 && <>
-        <p className="pl-2 text-caption text-muted-foreground">{t(($) => $.knowledge.verify_at_run)}</p>
-        {onRefresh && <Button variant="ghost" size="xs" disabled={refreshing} aria-busy={refreshing} onClick={onRefresh}>{t(($) => $.knowledge.refresh)}</Button>}
-      </>}
+      {resources.length > 0 && <p className="pl-2 text-caption text-muted-foreground">{t(($) => $.knowledge.verify_at_run)}</p>}
       <div className="max-h-96 space-y-2 overflow-y-auto pl-2">
         {resources.map((resource) => (
-          <KnowledgeRow key={resource.id} resource={resource} resources={resources} runtimes={runtimes} removing={removing !== null} onRemove={() => void detach(resource.id)} />
+          <KnowledgeRow key={`${resource.id}:${resource.resource_type}:${JSON.stringify(resource.resource_ref)}`} resource={resource} projectId={projectId} runtimes={runtimes} removing={removing !== null} onRemove={() => void detach(resource.id)} />
         ))}
       </div>
       {error && !open && <p role="alert" className="text-caption text-destructive">{error}</p>}
@@ -95,11 +92,24 @@ export function ProjectKnowledgeSection({ projectId, resources, runtimes = [], o
   );
 }
 
-function KnowledgeRow({ resource, resources, runtimes, removing, onRemove }: { resource: ProjectResource; resources: ProjectResource[]; runtimes: AgentRuntime[]; removing: boolean; onRemove: () => void }) {
+function KnowledgeRow({ resource, projectId, runtimes, removing, onRemove }: { resource: ProjectResource; projectId: string; runtimes: AgentRuntime[]; removing: boolean; onRemove: () => void }) {
   const { t } = useT("projects");
   const ref = projectKnowledgeRef(resource.resource_ref);
-  const machine = ref && projectKnowledgeMachine(ref, runtimes);
-  const stale = ref && projectKnowledgeHasNewerReference(ref, resources);
+  const userId = useAuthStore((state) => state.user?.id);
+  const check = useCheckProjectKnowledgeStatus(useWorkspaceId(), projectId);
+  const status = check.data?.results.find((result) => result.resource_id === resource.id && result.reference_hash === ref?.content_hash);
+  const runtime = runtimes.find((candidate) => candidate.daemon_id === ref?.daemon_id && candidate.owner_id === ref?.owner_id);
+  const label = status?.status === "available" ? t(($) => $.knowledge.available)
+    : status?.status === "stale" ? t(($) => $.knowledge.stale)
+    : status?.status === "missing" ? t(($) => $.knowledge.missing)
+    : status?.status === "incompatible" ? t(($) => $.knowledge.incompatible)
+    : t(($) => $.knowledge.unverified);
+  const remedy = status?.status === "incompatible" ? t(($) => $.knowledge.upgrade)
+    : status?.status === "stale" || status?.status === "missing" ? t(($) => $.knowledge.replace_hint)
+    : status?.reason === "limit" ? t(($) => $.knowledge.limits_hint)
+    : status?.status === "unverified" ? t(($) => $.knowledge.reconnect)
+    : ref?.owner_id !== userId ? t(($) => $.knowledge.owner_check)
+    : status?.status !== "available" ? t(($) => $.knowledge.check_hint) : null;
   return (
     <article className="rounded-md border p-2 space-y-2 text-caption break-all">
       <p className="font-medium">{resource.label || ref?.entry_point || resource.resource_type}</p>
@@ -107,17 +117,22 @@ function KnowledgeRow({ resource, resources, runtimes, removing, onRemove }: { r
       {ref && <>
         <p>{t(($) => $.knowledge.owner, { owner: ref.owner_id })}</p>
         <p>{t(($) => $.knowledge.machine, { machine: ref.daemon_id })}</p>
-        {machine?.runtime && <p>{runtimeDisplayLabel(machine.runtime)}</p>}
+        {runtime && <p>{runtimeDisplayLabel(runtime)}</p>}
       </>}
-      <p>{stale ? t(($) => $.knowledge.stale) : machine?.status === "available" ? t(($) => $.knowledge.available) : machine?.status === "incompatible" ? t(($) => $.knowledge.incompatible) : machine?.status === "unverified" ? t(($) => $.knowledge.unverified) : t(($) => $.knowledge.unavailable)}</p>
-      {(stale || machine?.status === "incompatible" || machine?.status === "unavailable") && <p className="text-muted-foreground">{stale ? t(($) => $.knowledge.stale_hint) : machine?.status === "incompatible" ? t(($) => $.knowledge.upgrade) : t(($) => $.knowledge.reconnect)}</p>}
-      <details>
+      <p>{label}</p>
+      {remedy && <p className="text-muted-foreground">{remedy}</p>}
+      {check.isError && <p role="alert" className="text-destructive">{check.error instanceof Error ? check.error.message : t(($) => $.knowledge.check_failed)}</p>}
+      {ref?.owner_id === userId && <Button variant="outline" size="xs" disabled={check.isPending} aria-busy={check.isPending} onClick={() => check.mutate([resource.id])}>
+        {check.isPending ? t(($) => $.knowledge.checking) : t(($) => $.knowledge.check)}
+      </Button>}
+      {status?.status !== "stale" && status?.status !== "missing" && <details>
         <summary className="cursor-pointer">{t(($) => $.knowledge.changed_source)}</summary>
         <p className="mt-2 text-muted-foreground">{t(($) => $.knowledge.replace_hint)}</p>
-      </details>
+      </details>}
       <details>
         <summary className="cursor-pointer">{t(($) => $.knowledge.details)}</summary>
         <pre className="whitespace-pre-wrap text-micro">{JSON.stringify(resource.resource_ref, null, 2)}</pre>
+        {status && <pre className="whitespace-pre-wrap text-micro">{JSON.stringify(status, null, 2)}</pre>}
       </details>
       <Button variant="ghost" size="xs" disabled={removing} onClick={onRemove}>{t(($) => $.knowledge.remove)}</Button>
     </article>

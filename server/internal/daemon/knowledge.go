@@ -30,39 +30,44 @@ func (r *knowledgeResolutionLimiter) resolve(ctx context.Context, store knowledg
 	if task.KnowledgeManifest == nil {
 		return nil, nil
 	}
+	return runKnowledgeResolution(r, ctx, func(ctx context.Context) (*knowledge.Snapshot, error) {
+		return resolveTaskKnowledge(ctx, store, server, daemonID, task)
+	})
+}
+
+func runKnowledgeResolution[T any](r *knowledgeResolutionLimiter, ctx context.Context, work func(context.Context) (T, error)) (T, error) {
+	var zero T
 	ctx, cancel := context.WithTimeout(ctx, knowledgeResolutionTimeout)
 	defer cancel()
 	r.once.Do(func() { r.slots = make(chan struct{}, maxKnowledgeResolutions) })
 	select {
 	case r.slots <- struct{}{}:
 	case <-ctx.Done():
-		return nil, context.Cause(ctx)
+		return zero, context.Cause(ctx)
 	}
 	if ctx.Err() != nil {
 		<-r.slots
-		return nil, context.Cause(ctx)
+		return zero, context.Cause(ctx)
 	}
 	type result struct {
-		snapshot *knowledge.Snapshot
-		err      error
+		value T
+		err   error
 	}
 	done := make(chan result, 1)
 	go func() {
-		// A mounted filesystem can ignore cancellation inside a syscall. Keep
-		// its permit until the read actually returns, even after its caller
-		// leaves, so repeated timeouts cannot accumulate unbounded readers.
+		// A stalled filesystem retains its shared permit until the syscall returns.
 		defer func() { <-r.slots }()
-		snapshot, err := resolveTaskKnowledge(ctx, store, server, daemonID, task)
-		done <- result{snapshot: snapshot, err: err}
+		value, err := work(ctx)
+		done <- result{value, err}
 	}()
 	select {
 	case <-ctx.Done():
-		return nil, context.Cause(ctx)
+		return zero, context.Cause(ctx)
 	case resolved := <-done:
 		if ctx.Err() != nil {
-			return nil, context.Cause(ctx)
+			return zero, context.Cause(ctx)
 		}
-		return resolved.snapshot, resolved.err
+		return resolved.value, resolved.err
 	}
 }
 
@@ -116,4 +121,26 @@ func resolveTaskKnowledge(ctx context.Context, store knowledgeSnapshotStore, ser
 		return nil, errors.New("knowledge and task context exceed the session byte limit")
 	}
 	return &snapshot, nil
+}
+
+func (d *Daemon) handleKnowledgeStatus(ctx context.Context, runtimeID string, request knowledge.StatusRequest) {
+	if d.findRuntime(runtimeID) == nil {
+		return
+	}
+	ctx, cancel := context.WithDeadline(ctx, request.Deadline)
+	defer cancel()
+	results := knowledge.UnverifiedStatuses(request.Bindings, "timeout")
+	dir, err := cli.ProfileDir(d.cfg.Profile)
+	if err == nil && request.DaemonID == d.cfg.DaemonID {
+		scope := knowledge.Scope{Server: d.cfg.ServerBaseURL, WorkspaceID: request.WorkspaceID, OwnerID: request.OwnerID, DaemonID: d.cfg.DaemonID}
+		checked, checkErr := runKnowledgeResolution(&d.knowledgeResolutions, ctx, func(ctx context.Context) ([]knowledge.SourceStatus, error) {
+			return (knowledge.LocalStore{Dir: filepath.Join(dir, "knowledge-v1")}).CheckStatus(ctx, scope, request)
+		})
+		if checkErr == nil {
+			results = checked
+		}
+	}
+	reportCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stop()
+	_ = d.client.ReportKnowledgeStatus(reportCtx, runtimeID, request.ID, results)
 }

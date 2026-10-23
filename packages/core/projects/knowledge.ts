@@ -1,25 +1,5 @@
 import { ProjectKnowledgeRefSchema } from "../api/schemas";
-import type { AgentRuntime, CreateProjectResourceRequest, ProjectKnowledgeRef, ProjectKnowledgeType, ProjectResource } from "../types";
-
-export function projectKnowledgeHasNewerReference(ref: ProjectKnowledgeRef, resources: ProjectResource[]): boolean {
-  return resources.some((resource) => {
-    if (!isProjectKnowledgeType(resource.resource_type)) return false;
-    const candidate = projectKnowledgeRef(resource.resource_ref);
-    return candidate !== null && candidate.owner_id === ref.owner_id && candidate.daemon_id === ref.daemon_id &&
-      candidate.authority_id === ref.authority_id && candidate.source_id === ref.source_id &&
-      (candidate.source_revision > ref.source_revision || candidate.root_generation > ref.root_generation);
-  });
-}
-
-export function projectKnowledgeMachine(ref: ProjectKnowledgeRef, runtimes: AgentRuntime[]) {
-  const owned = runtimes.filter((runtime) => runtime.daemon_id === ref.daemon_id && runtime.owner_id === ref.owner_id);
-  owned.sort((a, b) => (b.last_seen_at ?? "").localeCompare(a.last_seen_at ?? "") || Number(b.status === "online") - Number(a.status === "online") || a.id.localeCompare(b.id));
-  const runtime = owned[0];
-  if (!runtime || runtime.status !== "online") return { runtime, status: "unavailable" as const };
-  const capabilities = runtime.metadata?.capabilities;
-  if (!Array.isArray(capabilities)) return { runtime, status: "unverified" as const };
-  return { runtime, status: capabilities.includes("knowledge-context-v1") ? "available" as const : "incompatible" as const };
-}
+import type { CreateProjectResourceRequest, ProjectKnowledgeRef, ProjectKnowledgeType } from "../types";
 
 export function isProjectKnowledgeType(value: string): value is ProjectKnowledgeType {
   return value === "knowledge_file" || value === "knowledge_folder" || value === "knowledge_skill";
