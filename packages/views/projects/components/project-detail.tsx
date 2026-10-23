@@ -482,6 +482,26 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
         </div>}
       </div>
 
+      <div>
+        <h2 className="mb-2 px-2 text-caption font-medium">{t(($) => $.detail.section_instructions)}</h2>
+        <div className="pl-2">
+          <ContentEditor
+            key={`instructions-${projectId}`}
+            value={project.instructions || ""}
+            placeholder={t(($) => $.detail.instructions_placeholder)}
+            onUpdate={(md) => {
+              if (new TextEncoder().encode(md).length > 32768) {
+                toast.error(t(($) => $.detail.instructions_too_large));
+                return;
+              }
+              handleUpdateField({ instructions: md || null });
+            }}
+            debounceMs={1500}
+          />
+          <p className="mt-1 px-2 text-caption text-muted-foreground">{t(($) => $.detail.instructions_hint)}</p>
+        </div>
+      </div>
+
       {/* Resources */}
       <ProjectResourcesSection projectId={projectId} />
     </div>

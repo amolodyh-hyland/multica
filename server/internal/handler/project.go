@@ -22,15 +22,16 @@ import (
 )
 
 type ProjectResponse struct {
-	ID          string  `json:"id"`
-	WorkspaceID string  `json:"workspace_id"`
-	Title       string  `json:"title"`
-	Description *string `json:"description"`
-	Icon        *string `json:"icon"`
-	Status      string  `json:"status"`
-	Priority    string  `json:"priority"`
-	LeadType    *string `json:"lead_type"`
-	LeadID      *string `json:"lead_id"`
+	ID           string  `json:"id"`
+	WorkspaceID  string  `json:"workspace_id"`
+	Title        string  `json:"title"`
+	Instructions *string `json:"instructions"`
+	Description  *string `json:"description"`
+	Icon         *string `json:"icon"`
+	Status       string  `json:"status"`
+	Priority     string  `json:"priority"`
+	LeadType     *string `json:"lead_type"`
+	LeadID       *string `json:"lead_id"`
 	// StartDate / DueDate are calendar days ("YYYY-MM-DD"), no time-of-day or
 	// timezone — same contract as issue.start_date / issue.due_date.
 	StartDate  *string `json:"start_date"`
@@ -51,20 +52,21 @@ type ProjectResponse struct {
 
 func projectToResponse(p db.Project) ProjectResponse {
 	return ProjectResponse{
-		ID:          uuidToString(p.ID),
-		WorkspaceID: uuidToString(p.WorkspaceID),
-		Title:       p.Title,
-		Description: textToPtr(p.Description),
-		Icon:        textToPtr(p.Icon),
-		Status:      p.Status,
-		Priority:    p.Priority,
-		LeadType:    textToPtr(p.LeadType),
-		LeadID:      uuidToPtr(p.LeadID),
-		StartDate:   dateToPtr(p.StartDate),
-		DueDate:     dateToPtr(p.DueDate),
-		CreatedAt:   timestampToString(p.CreatedAt),
-		UpdatedAt:   timestampToString(p.UpdatedAt),
-		WorkflowID:  uuidToPtr(p.WorkflowID),
+		ID:           uuidToString(p.ID),
+		WorkspaceID:  uuidToString(p.WorkspaceID),
+		Title:        p.Title,
+		Description:  textToPtr(p.Description),
+		Instructions: textToPtr(p.Instructions),
+		Icon:         textToPtr(p.Icon),
+		Status:       p.Status,
+		Priority:     p.Priority,
+		LeadType:     textToPtr(p.LeadType),
+		LeadID:       uuidToPtr(p.LeadID),
+		StartDate:    dateToPtr(p.StartDate),
+		DueDate:      dateToPtr(p.DueDate),
+		CreatedAt:    timestampToString(p.CreatedAt),
+		UpdatedAt:    timestampToString(p.UpdatedAt),
+		WorkflowID:   uuidToPtr(p.WorkflowID),
 	}
 }
 
@@ -103,16 +105,17 @@ func (h *Handler) loadProjectResourceCount(ctx context.Context, projectID pgtype
 }
 
 type CreateProjectRequest struct {
-	Title       string                                `json:"title"`
-	Description *string                               `json:"description"`
-	Icon        *string                               `json:"icon"`
-	Status      string                                `json:"status"`
-	Priority    string                                `json:"priority"`
-	LeadType    *string                               `json:"lead_type"`
-	LeadID      *string                               `json:"lead_id"`
-	StartDate   *string                               `json:"start_date"`
-	DueDate     *string                               `json:"due_date"`
-	Resources   []CreateProjectResourceRequestPayload `json:"resources,omitempty"`
+	Title        string                                `json:"title"`
+	Instructions *string                               `json:"instructions"`
+	Description  *string                               `json:"description"`
+	Icon         *string                               `json:"icon"`
+	Status       string                                `json:"status"`
+	Priority     string                                `json:"priority"`
+	LeadType     *string                               `json:"lead_type"`
+	LeadID       *string                               `json:"lead_id"`
+	StartDate    *string                               `json:"start_date"`
+	DueDate      *string                               `json:"due_date"`
+	Resources    []CreateProjectResourceRequestPayload `json:"resources,omitempty"`
 	// WorkflowID picks the project's workflow at creation; omitted or null
 	// uses the workspace Default workflow. A new project has no issues, so no
 	// status mapping is involved. (MUL-7420)
@@ -130,15 +133,16 @@ type CreateProjectResourceRequestPayload struct {
 }
 
 type UpdateProjectRequest struct {
-	Title       *string `json:"title"`
-	Description *string `json:"description"`
-	Icon        *string `json:"icon"`
-	Status      *string `json:"status"`
-	Priority    *string `json:"priority"`
-	LeadType    *string `json:"lead_type"`
-	LeadID      *string `json:"lead_id"`
-	StartDate   *string `json:"start_date"`
-	DueDate     *string `json:"due_date"`
+	Title        *string `json:"title"`
+	Instructions *string `json:"instructions"`
+	Description  *string `json:"description"`
+	Icon         *string `json:"icon"`
+	Status       *string `json:"status"`
+	Priority     *string `json:"priority"`
+	LeadType     *string `json:"lead_type"`
+	LeadID       *string `json:"lead_id"`
+	StartDate    *string `json:"start_date"`
+	DueDate      *string `json:"due_date"`
 }
 
 func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
@@ -228,6 +232,16 @@ func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+const maxProjectInstructionsBytes = 32 * 1024
+
+func validateProjectInstructions(w http.ResponseWriter, instructions *string) bool {
+	if instructions != nil && len(*instructions) > maxProjectInstructionsBytes {
+		writeError(w, http.StatusBadRequest, "instructions must be at most 32768 bytes")
+		return false
+	}
+	return true
+}
+
 // validProjectStatuses / validProjectPriorities mirror the CHECK constraints on
 // the project table (migrations 034, 035). CreateProject / UpdateProject
 // pre-validate against these so an unknown enum value returns a clean 400 with
@@ -267,6 +281,9 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	var req CreateProjectRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if !validateProjectInstructions(w, req.Instructions) {
 		return
 	}
 	if req.Title == "" {
@@ -394,17 +411,18 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	createParams := db.CreateProjectParams{
-		WorkspaceID: wsUUID,
-		Title:       req.Title,
-		Description: ptrToText(req.Description),
-		Icon:        ptrToText(req.Icon),
-		Status:      status,
-		LeadType:    leadType,
-		LeadID:      leadID,
-		Priority:    priority,
-		StartDate:   startDate,
-		DueDate:     dueDate,
-		WorkflowID:  workflowID,
+		WorkspaceID:  wsUUID,
+		Title:        req.Title,
+		Description:  ptrToText(req.Description),
+		Instructions: ptrToText(req.Instructions),
+		Icon:         ptrToText(req.Icon),
+		Status:       status,
+		LeadType:     leadType,
+		LeadID:       leadID,
+		Priority:     priority,
+		StartDate:    startDate,
+		DueDate:      dueDate,
+		WorkflowID:   workflowID,
 	}
 
 	// Without resources, keep the simple non-tx path.
@@ -527,11 +545,16 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if !validateProjectInstructions(w, req.Instructions) {
+		return
+	}
 	var rawFields map[string]json.RawMessage
 	json.Unmarshal(bodyBytes, &rawFields)
 
-	params := db.UpdateProjectParams{ID: prevProject.ID}
+	params := db.UpdateProjectParams{ID: prevProject.ID, WorkspaceID: wsUUID}
 	_, params.DescriptionSet = rawFields["description"]
+	_, params.InstructionsSet = rawFields["instructions"]
+	params.Instructions = ptrToText(req.Instructions)
 	_, params.IconSet = rawFields["icon"]
 	_, params.LeadTypeSet = rawFields["lead_type"]
 	_, params.LeadIDSet = rawFields["lead_id"]
@@ -822,7 +845,7 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 	limitParam := nextArg(nil)
 	offsetParam := nextArg(nil)
 
-	query := fmt.Sprintf(`SELECT p.id, p.workspace_id, p.title, p.description, p.icon,
+	query := fmt.Sprintf(`SELECT p.id, p.workspace_id, p.title, p.description, p.icon, p.instructions,
 		p.status, p.priority, p.lead_type, p.lead_id,
 		p.start_date, p.due_date,
 		p.created_at, p.updated_at,
@@ -897,6 +920,7 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 				&row.project.Title,
 				&row.project.Description,
 				&row.project.Icon,
+				&row.project.Instructions,
 				&row.project.Status,
 				&row.project.Priority,
 				&row.project.LeadType,

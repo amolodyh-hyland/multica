@@ -41,6 +41,7 @@ func foreignWorkspaceWithProject(t *testing.T, slug, prefix string) (string, str
 	foreignProjectID := dbfx.Project(t, foreignProjectTitle, testutil.Cols{
 		"workspace_id": foreignWorkspaceID,
 		"description":  foreignProjectDescription,
+		"instructions": foreignProjectInstructions,
 	})
 	dbfx.Insert(t, "project_resource", testutil.Cols{
 		"project_id":    foreignProjectID,
@@ -60,11 +61,12 @@ func foreignWorkspaceWithProject(t *testing.T, slug, prefix string) (string, str
 }
 
 const (
-	foreignProjectTitle       = "Foreign project must not leak"
-	foreignProjectDescription = "Foreign project instructions must not leak"
-	foreignRepoURL            = "https://github.com/example/foreign-tenant-repo"
-	foreignLocalPath          = "/srv/foreign-tenant-project"
-	localFallbackRepoURL      = "https://github.com/example/local-workspace-fallback"
+	foreignProjectInstructions = "Foreign workspace instructions must stay private"
+	foreignProjectTitle        = "Foreign project must not leak"
+	foreignProjectDescription  = "Foreign project instructions must not leak"
+	foreignRepoURL             = "https://github.com/example/foreign-tenant-repo"
+	foreignLocalPath           = "/srv/foreign-tenant-project"
+	localFallbackRepoURL       = "https://github.com/example/local-workspace-fallback"
 )
 
 // assertNoForeignContext fails when any part of the foreign tenant's project
@@ -74,6 +76,7 @@ func assertNoForeignContext(t *testing.T, body string, extra ...string) {
 	for _, leaked := range append([]string{
 		foreignProjectTitle,
 		foreignProjectDescription,
+		foreignProjectInstructions,
 		foreignRepoURL,
 		foreignLocalPath,
 	}, extra...) {
@@ -87,12 +90,13 @@ func assertNoForeignContext(t *testing.T, body string, extra ...string) {
 }
 
 type claimProjectFields struct {
-	WorkspaceID        string                `json:"workspace_id"`
-	Repos              []RepoData            `json:"repos"`
-	ProjectID          string                `json:"project_id"`
-	ProjectTitle       string                `json:"project_title"`
-	ProjectDescription string                `json:"project_description"`
-	ProjectResources   []ProjectResourceData `json:"project_resources"`
+	WorkspaceID         string                `json:"workspace_id"`
+	Repos               []RepoData            `json:"repos"`
+	ProjectID           string                `json:"project_id"`
+	ProjectTitle        string                `json:"project_title"`
+	ProjectDescription  string                `json:"project_description"`
+	ProjectInstructions string                `json:"project_instructions"`
+	ProjectResources    []ProjectResourceData `json:"project_resources"`
 }
 
 // An issue whose project_id points at another workspace's project must degrade

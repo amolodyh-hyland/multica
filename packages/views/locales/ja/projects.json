@@ -79,7 +79,11 @@
     "no_issues_yet": "タスクはまだありません",
     "toast_link_copied": "リンクをコピーしました",
     "toast_project_deleted": "プロジェクトを削除しました",
-    "toast_move_issue_failed": "タスクを移動できませんでした"
+    "toast_move_issue_failed": "タスクを移動できませんでした",
+    "section_instructions": "指示",
+    "instructions_placeholder": "プロジェクトの指示を追加…",
+    "instructions_hint": "タスクの実行とプロジェクトのチャットで共有されます。最大 32 KiB。",
+    "instructions_too_large": "指示は 32 KiB 以下にしてください。"
   },
   "resources": {
     "section_header": "リソース",

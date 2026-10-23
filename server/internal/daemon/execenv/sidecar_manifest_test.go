@@ -390,9 +390,10 @@ func TestPrepareThenCleanupSidecarsWithProjectResources(t *testing.T) {
 			before := snapshot(t, workDir)
 
 			ctx := TaskContextForEnv{
-				IssueID:      "11111111-2222-3333-4444-555555555555",
-				ProjectID:    "proj-1",
-				ProjectTitle: "Demo project",
+				IssueID:             "11111111-2222-3333-4444-555555555555",
+				ProjectID:           "proj-1",
+				ProjectTitle:        "Demo project",
+				ProjectInstructions: "Remove project instructions with the owned context files.",
 				ProjectResources: []ProjectResourceForEnv{
 					{
 						ID:           "res-1",

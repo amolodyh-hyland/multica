@@ -30,7 +30,7 @@ func (d projectReadPauseDB) QueryRow(ctx context.Context, query string, args ...
 
 func projectNullableValues(p ProjectResponse) map[string]*string {
 	return map[string]*string{
-		"description": p.Description, "icon": p.Icon,
+		"instructions": p.Instructions, "description": p.Description, "icon": p.Icon,
 		"lead_type": p.LeadType, "lead_id": p.LeadID,
 		"start_date": p.StartDate, "due_date": p.DueDate,
 	}
@@ -44,7 +44,7 @@ func TestUpdateProjectConcurrentPartialUpdate(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			projectID := dbfx.Project(t, "original title", testutil.Cols{
-				"description": "original description", "icon": "original icon",
+				"instructions": "original instructions", "description": "original description", "icon": "original icon",
 				"lead_type": "member", "lead_id": testUserID,
 				"start_date": "2026-03-01", "due_date": "2026-03-31",
 			})
@@ -68,7 +68,7 @@ func TestUpdateProjectConcurrentPartialUpdate(t *testing.T) {
 			}()
 			waitContextLockSignal(t, paused, "title update did not read project")
 			changes := map[string]any{
-				"description": "new description", "icon": "new icon",
+				"instructions": "new instructions", "description": "new description", "icon": "new icon",
 				"lead_type": "agent", "lead_id": dbfx.Agent(t, "project lead", testRuntimeID),
 				"start_date": "2026-04-01", "due_date": "2026-04-30",
 			}
@@ -106,12 +106,12 @@ func TestUpdateProjectConcurrentPartialUpdate(t *testing.T) {
 func TestUpdateProjectNullableFieldPresence(t *testing.T) {
 	agentID := dbfx.Agent(t, "project lead", testRuntimeID)
 	initial := map[string]string{
-		"description": "original description", "icon": "original icon",
+		"instructions": "original instructions", "description": "original description", "icon": "original icon",
 		"lead_type": "member", "lead_id": testUserID,
 		"start_date": "2026-03-01", "due_date": "2026-03-31",
 	}
 	values := map[string]string{
-		"description": "new description", "icon": "new icon",
+		"instructions": "new instructions", "description": "new description", "icon": "new icon",
 		"lead_type": "agent", "lead_id": agentID,
 		"start_date": "2026-04-01", "due_date": "2026-04-30",
 	}

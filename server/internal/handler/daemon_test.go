@@ -2127,7 +2127,8 @@ func TestClaimTask_ProjectDescriptionInjected(t *testing.T) {
 
 	const projectDescription = "Always write copy in British English. Ship behind a feature flag."
 	projectID := dbfx.Project(t, "Claim project description", testutil.Cols{
-		"description": projectDescription,
+		"description":  projectDescription,
+		"instructions": "Keep the release checklist up to date.",
 	})
 
 	var agentID, runtimeID string
@@ -2153,8 +2154,9 @@ func TestClaimTask_ProjectDescriptionInjected(t *testing.T) {
 
 	var resp struct {
 		Task *struct {
-			ProjectID          string `json:"project_id"`
-			ProjectDescription string `json:"project_description"`
+			ProjectID           string `json:"project_id"`
+			ProjectDescription  string `json:"project_description"`
+			ProjectInstructions string `json:"project_instructions"`
 		} `json:"task"`
 	}
 	w.JSON(&resp)
@@ -2166,6 +2168,9 @@ func TestClaimTask_ProjectDescriptionInjected(t *testing.T) {
 	}
 	if resp.Task.ProjectDescription != projectDescription {
 		t.Errorf("project_description = %q, want %q", resp.Task.ProjectDescription, projectDescription)
+	}
+	if resp.Task.ProjectInstructions != "Keep the release checklist up to date." {
+		t.Fatalf("project_instructions = %q", resp.Task.ProjectInstructions)
 	}
 }
 
