@@ -31,6 +31,9 @@ test('bundle uses a unique dedicated profile and disables updates, reload and cl
   assert.equal(a.disableAutoUpdate, true);
   assert.equal(a.disableAutoReload, true);
   assert.equal(a.gcEnabled, false);
+  assert.equal(a.identityScope, 'profile');
+  assert.equal(a.identityFile, 'bundle-daemon.id');
+  assert.equal(a.migrateLegacyIdentities, false);
   assert.ok(a.preferredHealthPort > 19514 && a.preferredHealthPort < 20515);
   for (const target of ['darwin/arm64', 'darwin/amd64', 'linux/arm64', 'linux/amd64', 'windows/amd64']) assert.deepEqual(targets(target), [target]);
   for (const target of ['', 'darwin/x64', '../escape', 'linux/amd64,linux/amd64']) assert.throws(() => targets(target));
@@ -99,4 +102,7 @@ test('both generated profiles require read-only native execution without overrid
   assert.doesNotMatch(JSON.stringify([pilot, standaloneProfile(), nativeRestrictions()]), /bypassPermissions|danger-full-access|dangerously-skip|auto_approve/);
   assert.equal(nativeRestrictions().automaticApproval, false);
   assert.equal(nativeRestrictions().otherHarnesses, 'unsupported');
+  assert.deepEqual(nativeRestrictions().supported.codex.platforms, ['linux']);
+  assert.equal(nativeRestrictions().supported.codex.inheritedMcp, 'refuse-before-launch');
+  assert.equal(nativeRestrictions().supported.codex.managedConfiguration, 'never-overridden');
 });

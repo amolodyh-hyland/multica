@@ -34,6 +34,9 @@ export function profileSettings(source, identity = randomUUID()) {
     disableAutoReload: true,
     gcEnabled: false,
     standalone: true,
+    identityScope: 'profile',
+    identityFile: 'bundle-daemon.id',
+    migrateLegacyIdentities: false,
   };
 }
 
@@ -48,7 +51,7 @@ export const standaloneProfile = () => ({
 
 export const nativeRestrictions = () => ({
   mode: 'read_only', automaticApproval: false, localDirectoryMode: 'none',
-  supported: { claude: { minimumVersion: '2.1.259', mode: 'restricted', tools: [] }, codex: { minimumVersion: '0.100.0', sandbox: 'read-only', approvals: 'denied', platforms: ['darwin', 'linux'] } },
+  supported: { claude: { minimumVersion: '2.1.259', mode: 'restricted', tools: [] }, codex: { minimumVersion: '0.100.0', sandbox: 'read-only', approvals: 'denied', platforms: ['linux'], unsupportedPlatforms: { darwin: 'managed preferences cannot be attested before launch', windows: 'unverified sandbox' }, inheritedMcp: 'refuse-before-launch', managedConfiguration: 'never-overridden' } },
   otherHarnesses: 'unsupported', customCommands: 'unsupported',
   verification: 'disposable-native-protocol-and-config-fixtures', liveVerification: 'not-run', activation: 'requires-human-approval',
 });

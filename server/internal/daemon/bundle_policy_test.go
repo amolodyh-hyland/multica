@@ -65,6 +65,8 @@ func TestBundleReadOnlyTaskPolicy(t *testing.T) {
 
 func TestBundleReadOnlyPersistedCeiling(t *testing.T) {
 	stageFakeAgent(t)
+	redirectTestHome(t, t.TempDir())
+	t.Setenv("MULTICA_DAEMON_ID", "")
 	t.Setenv("SHELL", "/nonexistent")
 	if err := cli.SaveCLIConfigForProfile(cli.CLIConfig{BundleReadOnly: true, WorkspaceID: "workspace"}, "restricted"); err != nil {
 		t.Fatal(err)

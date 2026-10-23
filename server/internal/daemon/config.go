@@ -491,40 +491,59 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	// Profile
 	profile := overrides.Profile
 
-	// daemon_id resolution: override > env > persistent UUID on disk.
-	// The persistent UUID is written once to `<profile-dir>/daemon.id` and
-	// then reused forever so hostname drift (.local suffix, system rename,
-	// mDNS state, profile switch) no longer mints a new runtime identity.
-	// Callers may still pin a specific id via MULTICA_DAEMON_ID or the
-	// override field (e.g. for tests or embedded environments).
+	runtimePinned := false
+	if value := os.Getenv("MULTICA_DAEMON_PINNED"); value != "" {
+		runtimePinned, err = strconv.ParseBool(value)
+		if err != nil {
+			return Config{}, fmt.Errorf("MULTICA_DAEMON_PINNED: %w", err)
+		}
+	}
+	bundleReadOnly := false
+	if value := os.Getenv("MULTICA_DAEMON_READ_ONLY"); value != "" {
+		bundleReadOnly, err = strconv.ParseBool(value)
+		if err != nil {
+			return Config{}, fmt.Errorf("MULTICA_DAEMON_READ_ONLY: %w", err)
+		}
+	}
+	bundleReadOnly = bundleReadOnly || profileBundleReadOnly
+	if profileBundleReadOnly {
+		runtimePinned = true
+	}
+	bundleWorkspaceID := strings.TrimSpace(os.Getenv("MULTICA_DAEMON_WORKSPACE_ID"))
+	if bundleWorkspaceID == "" {
+		bundleWorkspaceID = profileWorkspaceID
+	}
+
+	// Ordinary profiles share the machine UUID and may migrate old IDs.
+	// Standalone bundles resolve a separate profile identity with no aliases
+	// or externally supplied ID, even against the same backend and workspace.
 	daemonID := strings.TrimSpace(os.Getenv("MULTICA_DAEMON_ID"))
 	if overrides.DaemonID != "" {
 		daemonID = overrides.DaemonID
 	}
-	if daemonID == "" {
-		persisted, err := EnsureDaemonID(profile)
-		if err != nil {
-			return Config{}, fmt.Errorf("ensure daemon id: %w", err)
+	var legacyDaemonIDs []string
+	if bundleReadOnly {
+		if daemonID != "" {
+			return Config{}, fmt.Errorf("read-only bundle forbids daemon identity overrides")
 		}
-		daemonID = persisted
+		daemonID, err = ensureBundleDaemonID(profile)
+		if err != nil {
+			return Config{}, fmt.Errorf("ensure bundle daemon id: %w", err)
+		}
+		// A standalone bundle must never merge an ordinary daemon's rows.
+	} else {
+		if daemonID == "" {
+			daemonID, err = EnsureDaemonID(profile)
+			if err != nil {
+				return Config{}, fmt.Errorf("ensure daemon id: %w", err)
+			}
+		}
+		legacyDaemonIDs = LegacyDaemonIDs(host, profile)
+		if uuids, err := LegacyDaemonUUIDs(); err == nil {
+			legacyDaemonIDs = append(legacyDaemonIDs, uuids...)
+		}
+		legacyDaemonIDs = filterLegacyIDs(legacyDaemonIDs, daemonID)
 	}
-	// Historical daemon_ids derived from the current hostname/profile. The
-	// server uses these at register time to merge any pre-UUID runtime rows
-	// for this machine into the new UUID-keyed row and delete the stale ones.
-	legacyDaemonIDs := LegacyDaemonIDs(host, profile)
-	// Pre-change (#1220) daemon identity was stored per profile, which means
-	// the same machine could end up with multiple leftover daemon.id files
-	// — e.g. ~/.multica/daemon.id (default) plus ~/.multica/profiles/<x>/
-	// daemon.id. Surface those UUIDs so the server can merge their runtime
-	// rows into the canonical machine UUID. Fatal-free: a broken profiles
-	// dir shouldn't block startup.
-	if uuids, err := LegacyDaemonUUIDs(); err == nil {
-		legacyDaemonIDs = append(legacyDaemonIDs, uuids...)
-	}
-	// Strip anything that collides with the resolved daemon_id (e.g. when
-	// the user explicitly pins MULTICA_DAEMON_ID=<hostname>, or when the
-	// canonical id was itself promoted from a pre-change profile file).
-	legacyDaemonIDs = filterLegacyIDs(legacyDaemonIDs, daemonID)
 
 	deviceName := envOrDefault("MULTICA_DAEMON_DEVICE_NAME", host)
 	if overrides.DeviceName != "" {
@@ -631,28 +650,6 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		autoReloadEnabled = false
 	}
 
-	runtimePinned := false
-	if value := os.Getenv("MULTICA_DAEMON_PINNED"); value != "" {
-		runtimePinned, err = strconv.ParseBool(value)
-		if err != nil {
-			return Config{}, fmt.Errorf("MULTICA_DAEMON_PINNED: %w", err)
-		}
-	}
-	bundleReadOnly := false
-	if value := os.Getenv("MULTICA_DAEMON_READ_ONLY"); value != "" {
-		bundleReadOnly, err = strconv.ParseBool(value)
-		if err != nil {
-			return Config{}, fmt.Errorf("MULTICA_DAEMON_READ_ONLY: %w", err)
-		}
-	}
-	bundleReadOnly = bundleReadOnly || profileBundleReadOnly
-	if profileBundleReadOnly {
-		runtimePinned = true
-	}
-	bundleWorkspaceID := strings.TrimSpace(os.Getenv("MULTICA_DAEMON_WORKSPACE_ID"))
-	if bundleWorkspaceID == "" {
-		bundleWorkspaceID = profileWorkspaceID
-	}
 	if bundleReadOnly {
 		if !runtimePinned || overrides.Profile == "" || bundleWorkspaceID == "" {
 			return Config{}, fmt.Errorf("read-only bundle requires a source pin, named profile and MULTICA_DAEMON_WORKSPACE_ID")

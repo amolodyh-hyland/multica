@@ -2739,7 +2739,9 @@ func (d *Daemon) detectBuiltinRuntimes(ctx context.Context) ([]map[string]string
 	g.SetLimit(runtimeVersionProbeConcurrency)
 	for name, entry := range d.agents() {
 		if d.cfg.BundleReadOnly && !bundleProviderSupported(name) {
+			mu.Lock()
 			skipped[name] = "unsupported by read-only bundle"
+			mu.Unlock()
 			continue
 		}
 		name, entry := name, entry

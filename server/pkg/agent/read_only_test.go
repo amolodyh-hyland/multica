@@ -49,7 +49,7 @@ func TestReadOnlyNativeRejectsOverridesAndUnsupportedPeers(t *testing.T) {
 			t.Fatalf("accepted override %+v", opts)
 		}
 	}
-	for _, tc := range []struct{ provider, version, goos string }{{"claude", "2.1.258", "darwin"}, {"claude", "unknown", "darwin"}, {"codex", "0.144.6", "windows"}, {"codex", "unknown", "linux"}, {"other", "99.0.0", "darwin"}} {
+	for _, tc := range []struct{ provider, version, goos string }{{"claude", "2.1.258", "darwin"}, {"claude", "unknown", "darwin"}, {"codex", "0.144.6", "windows"}, {"codex", "unknown", "linux"}, {"codex", "0.144.6", "darwin"}, {"other", "99.0.0", "darwin"}} {
 		if SupportsNativeReadOnly(tc.provider, tc.version, tc.goos) {
 			t.Fatalf("accepted unsupported peer: %+v", tc)
 		}
