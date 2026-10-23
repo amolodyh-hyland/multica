@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -122,14 +122,29 @@ export function build(output) {
     if (hash(readFileSync(path.join(output, 'source', file))) !== sha) throw new Error('Native patched source changed');
   }
   if (!process.env.CARGO_HOME || !path.isAbsolute(process.env.CARGO_HOME)) throw new Error('Set CARGO_HOME to a separate absolute build cache');
-  const probeHome = path.join(output, 'probe-home');
-  mkdirSync(probeHome, { mode: 0o700, recursive: true });
-  const options = { cwd: source, stdio: 'inherit', env: { ...process.env, CODEX_HOME: probeHome, CARGO_TARGET_DIR: path.join(source, 'target'), CARGO_INCREMENTAL: '0', GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_PARAMETERS: '', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: '' } };
-  const rustc = execFileSync('rustc', ['--version'], { encoding: 'utf8' }).trim();
+  if (['config', 'config.toml', 'credentials', 'credentials.toml'].some((file) => existsSync(path.join(process.env.CARGO_HOME, file)))) {
+    throw new Error('Use a separate cache without Cargo configuration or credentials');
+  }
+  const buildHome = mkdtempSync(path.join(output, 'build-home-'));
+  const probeHome = path.join(buildHome, 'codex');
+  mkdirSync(probeHome, { mode: 0o700 });
+  const env = Object.fromEntries(['PATH', 'TMPDIR', 'TMP', 'TEMP', 'SYSTEMROOT', 'SDKROOT', 'DEVELOPER_DIR', 'MACOSX_DEPLOYMENT_TARGET', 'RUSTUP_HOME']
+    .filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]));
+  Object.assign(env, {
+    HOME: buildHome, XDG_CONFIG_HOME: path.join(buildHome, 'config'), CODEX_HOME: probeHome,
+    CARGO_HOME: process.env.CARGO_HOME, CARGO_TARGET_DIR: path.join(source, 'target'), CARGO_INCREMENTAL: '0',
+    CARGO_NET_GIT_FETCH_WITH_CLI: 'true', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
+    GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_PARAMETERS: '', GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: '', GIT_CONFIG_KEY_1: 'core.askPass', GIT_CONFIG_VALUE_1: '',
+  });
+  const options = { cwd: source, stdio: 'inherit', env };
+  const rustc = execFileSync('rustc', ['--version'], { cwd: source, env, encoding: 'utf8' }).trim();
   if (!rustc.startsWith('rustc 1.95.0 ')) throw new Error('Use the pinned Rust 1.95.0 toolchain');
   if (!['darwin', 'linux'].includes(process.platform)) throw new Error('Unsupported native Codex platform');
-  execFileSync('cargo', ['build', '--locked', '--release', '-p', 'codex-cli', '--bin', 'codex', '-j', '2'], options);
-  const verification = ['test', '--locked', '--release', '-p', 'codex-app-server', '--lib', 'read_only_bundle', '-j', '2', '--', '--nocapture'];
+  const fetch = ['fetch', '--locked', '--config', 'net.git-fetch-with-cli=true'];
+  execFileSync('cargo', fetch, options);
+  execFileSync('cargo', ['build', '--offline', '--locked', '--release', '-p', 'codex-cli', '--bin', 'codex', '-j', '2'], options);
+  const verification = ['test', '--offline', '--locked', '--release', '-p', 'codex-app-server', '--lib', 'read_only_bundle', '-j', '2', '--', '--nocapture'];
   execFileSync('cargo', verification, options);
   const binary = path.join(output, 'codex');
   copyFileSync(path.join(source, 'target', 'release', path.basename(binary)), binary);
@@ -139,6 +154,8 @@ export function build(output) {
   if (!help.includes('--wi-fac-02-read-only')) throw new Error('Native startup guard switch missing');
   writeFileSync(path.join(output, 'native-manifest.json'), JSON.stringify({
     ...manifest, rustc, gitCredentialHelpers: false, verification: { result: 'passed', command: ['cargo', ...verification] }, platform: process.platform, arch: process.arch, binary: path.basename(binary), sha256: hash(readFileSync(binary)),
+    dependencyFetch: { command: ['cargo', ...fetch], anonymous: true, gitBackend: 'cli', isolatedHome: true, globalGitConfig: false, systemGitConfig: false, askpass: false },
+    build: { offline: true, locked: true },
     patchManifestSha256: hash(readFileSync(path.join(output, 'patch-manifest.json'))),
   }, null, 2) + '\n');
   for (const file of ['LICENSE', 'NOTICE']) copyFileSync(path.join(output, 'source', file), path.join(output, file));

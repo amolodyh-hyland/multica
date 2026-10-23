@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { disabledFeatures, upstream, patchSources, build } from './fork-codex-bundle.mjs';
@@ -62,7 +63,7 @@ test('native source patch installs the guard on every resolved load before plugi
   assert.match(patches['codex-rs/app-server/src/read_only_bundle_config_tests.rs'], /loader_with_enterprise_requirement/);
 });
 
-test('native build probes cannot see an inherited signed-in home', { skip: process.platform === 'win32' }, (t) => {
+test('native prefetch and offline build cannot invoke inherited credential helpers or see sign-in', { skip: process.platform === 'win32' }, (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'codex-bundle-probe-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const bin = path.join(dir, 'tools');
@@ -75,17 +76,33 @@ test('native build probes cannot see an inherited signed-in home', { skip: proce
   writeFileSync(path.join(output, 'upstream.json'), JSON.stringify(upstream));
   for (const file of ['LICENSE', 'NOTICE']) writeFileSync(path.join(output, 'source', file), 'fixture');
   const trace = path.join(dir, 'trace');
+  const marker = path.join(dir, 'credential-helper-invoked');
+  const helper = path.join(dir, 'credential-helper');
+  const globalConfig = path.join(inheritedHome, '.gitconfig');
+  const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
+  writeFileSync(helper, `#!/bin/sh\nprintf invoked > ${quote(marker)}\nprintf 'username=fixture\\npassword=fixture\\n'\n`, { mode: 0o700 });
+  execFileSync('git', ['config', '--file', globalConfig, 'credential.helper', helper]);
   const check = `
-[ "$CODEX_HOME" = "$EXPECTED_PROBE_HOME" ] || exit 81
+case "$HOME" in ${quote(output + '/build-home-')}*) ;; *) exit 81 ;; esac
+[ "$CODEX_HOME" = "$HOME/codex" ] || exit 81
 [ ! -f "$CODEX_HOME/auth.json" ] || exit 82
-[ "$GIT_CONFIG_COUNT" = 1 ] || exit 84
+[ "$GIT_CONFIG_COUNT" = 2 ] || exit 84
 [ "$GIT_CONFIG_KEY_0" = credential.helper ] || exit 85
 [ -z "$GIT_CONFIG_VALUE_0" ] || exit 86
 [ -z "$GIT_CONFIG_PARAMETERS" ] || exit 87
-printf '%s\\n' "$*" >> "$PROBE_TRACE"
+[ "$GIT_CONFIG_GLOBAL" = /dev/null ] || exit 88
+[ "$GIT_CONFIG_NOSYSTEM" = 1 ] || exit 88
+[ "$GIT_CONFIG_KEY_1" = core.askPass ] || exit 88
+[ -z "$GIT_CONFIG_VALUE_1" ] || exit 88
+[ "$GIT_TERMINAL_PROMPT" = 0 ] || exit 88
+[ "$CARGO_NET_GIT_FETCH_WITH_CLI" = true ] || exit 88
+[ -z "\${GIT_ASKPASS+x}\${SSH_ASKPASS+x}\${CARGO_REGISTRY_TOKEN+x}" ] || exit 88
+if printf 'protocol=https\\nhost=credential-fixture.invalid\\n\\n' | git credential fill >/dev/null 2>&1; then exit 89; fi
+[ ! -f ${quote(marker)} ] || exit 90
+printf '%s\\n' "$*" >> ${quote(trace)}
 `;
   writeFileSync(path.join(bin, 'cargo'), '#!/bin/sh\n' + check + 'exit 0\n', { mode: 0o700 });
-  writeFileSync(path.join(bin, 'rustc'), '#!/bin/sh\necho "rustc 1.95.0 (fixture)"\n', { mode: 0o700 });
+  writeFileSync(path.join(bin, 'rustc'), '#!/bin/sh\n' + check + 'echo "rustc 1.95.0 (fixture)"\n', { mode: 0o700 });
   writeFileSync(path.join(release, 'codex'), '#!/bin/sh\n' + check + `
 case "$*" in
   --version) echo 'codex-cli ${upstream.version}' ;;
@@ -93,15 +110,30 @@ case "$*" in
   *) exit 83 ;;
 esac
 `, { mode: 0o700 });
-  const env = { PATH: bin, CODEX_HOME: inheritedHome, CARGO_HOME: path.join(dir, 'cargo-cache'), EXPECTED_PROBE_HOME: path.join(output, 'probe-home'), PROBE_TRACE: trace, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: 'must-not-use-inherited-helper', GIT_CONFIG_PARAMETERS: 'must-not-use-inherited-parameters' };
+  const env = { PATH: bin + path.delimiter + process.env.PATH, HOME: inheritedHome, CODEX_HOME: inheritedHome, CARGO_HOME: path.join(dir, 'cargo-cache'), GIT_CONFIG_GLOBAL: globalConfig, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: helper, GIT_CONFIG_PARAMETERS: 'must-not-use-inherited-parameters', GIT_ASKPASS: helper, SSH_ASKPASS: helper, GIT_TERMINAL_PROMPT: '0', CARGO_NET_GIT_FETCH_WITH_CLI: 'false', CARGO_REGISTRY_TOKEN: 'must-not-inherit' };
+  execFileSync('git', ['credential', 'fill'], { cwd: dir, env: { ...process.env, ...env, GIT_CONFIG_COUNT: '0', GIT_CONFIG_PARAMETERS: '' }, input: 'protocol=https\nhost=credential-fixture.invalid\n\n', stdio: ['pipe', 'pipe', 'pipe'] });
+  assert.equal(readFileSync(marker, 'utf8'), 'invoked');
+  rmSync(marker);
   const saved = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
   t.after(() => { for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
   Object.assign(process.env, env);
   build(output);
+  assert.equal(existsSync(marker), false);
   assert.equal(readFileSync(path.join(inheritedHome, 'auth.json'), 'utf8'), 'private-fixture');
   const calls = readFileSync(trace, 'utf8');
-  assert.match(calls, /build --locked --release/);
-  assert.match(calls, /test --locked --release/);
+  assert.match(calls, /fetch --locked --config net.git-fetch-with-cli=true\nbuild --offline --locked --release[^\n]*\ntest --offline --locked --release/);
   assert.match(calls, /--version/);
   assert.match(calls, /app-server --help/);
+  const receipt = JSON.parse(readFileSync(path.join(output, 'native-manifest.json')));
+  assert.equal(receipt.gitCredentialHelpers, false);
+  assert.equal(receipt.dependencyFetch.gitBackend, 'cli');
+  assert.equal(receipt.dependencyFetch.anonymous, true);
+  assert.deepEqual(receipt.build, { offline: true, locked: true });
+  mkdirSync(env.CARGO_HOME);
+  for (const file of ['config', 'config.toml', 'credentials', 'credentials.toml']) {
+    writeFileSync(path.join(env.CARGO_HOME, file), 'must-not-load');
+    assert.throws(() => build(output), /without Cargo configuration or credentials/);
+    rmSync(path.join(env.CARGO_HOME, file));
+  }
+  assert.equal(readFileSync(trace, 'utf8'), calls);
 });
