@@ -124,7 +124,7 @@ export function build(output) {
   if (!process.env.CARGO_HOME || !path.isAbsolute(process.env.CARGO_HOME)) throw new Error('Set CARGO_HOME to a separate absolute build cache');
   const probeHome = path.join(output, 'probe-home');
   mkdirSync(probeHome, { mode: 0o700, recursive: true });
-  const options = { cwd: source, stdio: 'inherit', env: { ...process.env, CODEX_HOME: probeHome, CARGO_TARGET_DIR: path.join(source, 'target'), CARGO_INCREMENTAL: '0', GIT_TERMINAL_PROMPT: '0' } };
+  const options = { cwd: source, stdio: 'inherit', env: { ...process.env, CODEX_HOME: probeHome, CARGO_TARGET_DIR: path.join(source, 'target'), CARGO_INCREMENTAL: '0', GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_PARAMETERS: '', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: '' } };
   const rustc = execFileSync('rustc', ['--version'], { encoding: 'utf8' }).trim();
   if (!rustc.startsWith('rustc 1.95.0 ')) throw new Error('Use the pinned Rust 1.95.0 toolchain');
   if (!['darwin', 'linux'].includes(process.platform)) throw new Error('Unsupported native Codex platform');
@@ -138,7 +138,7 @@ export function build(output) {
   const help = execFileSync(binary, ['app-server', '--help'], { cwd: source, env: options.env, encoding: 'utf8' });
   if (!help.includes('--wi-fac-02-read-only')) throw new Error('Native startup guard switch missing');
   writeFileSync(path.join(output, 'native-manifest.json'), JSON.stringify({
-    ...manifest, rustc, verification: { result: 'passed', command: ['cargo', ...verification] }, platform: process.platform, arch: process.arch, binary: path.basename(binary), sha256: hash(readFileSync(binary)),
+    ...manifest, rustc, gitCredentialHelpers: false, verification: { result: 'passed', command: ['cargo', ...verification] }, platform: process.platform, arch: process.arch, binary: path.basename(binary), sha256: hash(readFileSync(binary)),
     patchManifestSha256: hash(readFileSync(path.join(output, 'patch-manifest.json'))),
   }, null, 2) + '\n');
   for (const file of ['LICENSE', 'NOTICE']) copyFileSync(path.join(output, 'source', file), path.join(output, file));

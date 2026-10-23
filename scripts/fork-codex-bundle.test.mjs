@@ -78,6 +78,10 @@ test('native build probes cannot see an inherited signed-in home', { skip: proce
   const check = `
 [ "$CODEX_HOME" = "$EXPECTED_PROBE_HOME" ] || exit 81
 [ ! -f "$CODEX_HOME/auth.json" ] || exit 82
+[ "$GIT_CONFIG_COUNT" = 1 ] || exit 84
+[ "$GIT_CONFIG_KEY_0" = credential.helper ] || exit 85
+[ -z "$GIT_CONFIG_VALUE_0" ] || exit 86
+[ -z "$GIT_CONFIG_PARAMETERS" ] || exit 87
 printf '%s\\n' "$*" >> "$PROBE_TRACE"
 `;
   writeFileSync(path.join(bin, 'cargo'), '#!/bin/sh\n' + check + 'exit 0\n', { mode: 0o700 });
@@ -89,7 +93,7 @@ case "$*" in
   *) exit 83 ;;
 esac
 `, { mode: 0o700 });
-  const env = { PATH: bin, CODEX_HOME: inheritedHome, CARGO_HOME: path.join(dir, 'cargo-cache'), EXPECTED_PROBE_HOME: path.join(output, 'probe-home'), PROBE_TRACE: trace };
+  const env = { PATH: bin, CODEX_HOME: inheritedHome, CARGO_HOME: path.join(dir, 'cargo-cache'), EXPECTED_PROBE_HOME: path.join(output, 'probe-home'), PROBE_TRACE: trace, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: 'must-not-use-inherited-helper', GIT_CONFIG_PARAMETERS: 'must-not-use-inherited-parameters' };
   const saved = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
   t.after(() => { for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
   Object.assign(process.env, env);
