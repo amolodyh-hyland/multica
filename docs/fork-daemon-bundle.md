@@ -91,6 +91,7 @@ go build ./cmd/multica ./cmd/server ./cmd/migrate
 go vet ./internal/daemon/... ./cmd/multica/... ./pkg/agent/...
 go test ./internal/daemon -run 'TestBundle|TestDelegation|TestStartTask|TestHandleTask_AcksCancel' -count=1
 go test -race ./internal/daemon -run 'TestBundle|TestDelegation|TestStartTask|TestHandleTask_AcksCancel' -count=1
+go test ./cmd/multica -run 'TestBundleProfileIsolation|TestBuildDaemonStartArgs|TestApplyConfigSet' -count=1
 go test ./pkg/agent -run 'TestCodexHandleServerRequest|TestCodexPermissionsApprovalResponse|TestBuildCodexArgsExtraArgs' -count=1
 ```
 
