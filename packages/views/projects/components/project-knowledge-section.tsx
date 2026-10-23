@@ -107,7 +107,9 @@ function KnowledgeRow({ resource, projectId, runtimes, removing, onRemove }: { r
   const remedy = status?.status === "incompatible" ? t(($) => $.knowledge.upgrade)
     : status?.status === "stale" || status?.status === "missing" ? t(($) => $.knowledge.replace_hint)
     : status?.reason === "limit" ? t(($) => $.knowledge.limits_hint)
-    : status?.status === "unverified" ? t(($) => $.knowledge.reconnect)
+    : status?.reason === "busy" || status?.reason === "timeout" ? t(($) => $.knowledge.retry_hint)
+    : status?.reason === "unreadable" ? t(($) => $.knowledge.unreadable_hint)
+    : status?.reason === "owner_offline" ? t(($) => $.knowledge.reconnect)
     : ref?.owner_id !== userId ? t(($) => $.knowledge.owner_check)
     : status?.status !== "available" ? t(($) => $.knowledge.check_hint) : null;
   return (

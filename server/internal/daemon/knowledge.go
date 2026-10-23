@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -21,9 +22,12 @@ type knowledgeSnapshotStore interface {
 	Resolve(context.Context, knowledge.Scope, knowledge.Selection) (knowledge.Snapshot, error)
 }
 
+var errKnowledgeStatusBusy = errors.New("knowledge status check is busy")
+
 type knowledgeResolutionLimiter struct {
-	once  sync.Once
-	slots chan struct{}
+	once         sync.Once
+	slots        chan struct{}
+	statusActive atomic.Bool
 }
 
 func (r *knowledgeResolutionLimiter) resolve(ctx context.Context, store knowledgeSnapshotStore, server, daemonID string, task Task) (*knowledge.Snapshot, error) {
@@ -35,7 +39,20 @@ func (r *knowledgeResolutionLimiter) resolve(ctx context.Context, store knowledg
 	})
 }
 
+func (r *knowledgeResolutionLimiter) checkStatus(ctx context.Context, work func(context.Context) ([]knowledge.SourceStatus, error)) ([]knowledge.SourceStatus, error) {
+	if !r.statusActive.CompareAndSwap(false, true) {
+		return nil, errKnowledgeStatusBusy
+	}
+	// Release the status slot only when the underlying read finishes, even if
+	// its caller has timed out. This leaves one shared permit for task claims.
+	return runKnowledgeRead(r, ctx, work, func() { r.statusActive.Store(false) })
+}
+
 func runKnowledgeResolution[T any](r *knowledgeResolutionLimiter, ctx context.Context, work func(context.Context) (T, error)) (T, error) {
+	return runKnowledgeRead(r, ctx, work, func() {})
+}
+
+func runKnowledgeRead[T any](r *knowledgeResolutionLimiter, ctx context.Context, work func(context.Context) (T, error), finished func()) (T, error) {
 	var zero T
 	ctx, cancel := context.WithTimeout(ctx, knowledgeResolutionTimeout)
 	defer cancel()
@@ -43,10 +60,12 @@ func runKnowledgeResolution[T any](r *knowledgeResolutionLimiter, ctx context.Co
 	select {
 	case r.slots <- struct{}{}:
 	case <-ctx.Done():
+		finished()
 		return zero, context.Cause(ctx)
 	}
 	if ctx.Err() != nil {
 		<-r.slots
+		finished()
 		return zero, context.Cause(ctx)
 	}
 	type result struct {
@@ -56,7 +75,10 @@ func runKnowledgeResolution[T any](r *knowledgeResolutionLimiter, ctx context.Co
 	done := make(chan result, 1)
 	go func() {
 		// A stalled filesystem retains its shared permit until the syscall returns.
-		defer func() { <-r.slots }()
+		defer func() {
+			<-r.slots
+			finished()
+		}()
 		value, err := work(ctx)
 		done <- result{value, err}
 	}()
@@ -133,11 +155,13 @@ func (d *Daemon) handleKnowledgeStatus(ctx context.Context, runtimeID string, re
 	dir, err := cli.ProfileDir(d.cfg.Profile)
 	if err == nil && request.DaemonID == d.cfg.DaemonID {
 		scope := knowledge.Scope{Server: d.cfg.ServerBaseURL, WorkspaceID: request.WorkspaceID, OwnerID: request.OwnerID, DaemonID: d.cfg.DaemonID}
-		checked, checkErr := runKnowledgeResolution(&d.knowledgeResolutions, ctx, func(ctx context.Context) ([]knowledge.SourceStatus, error) {
+		checked, checkErr := d.knowledgeResolutions.checkStatus(ctx, func(ctx context.Context) ([]knowledge.SourceStatus, error) {
 			return (knowledge.LocalStore{Dir: filepath.Join(dir, "knowledge-v1")}).CheckStatus(ctx, scope, request)
 		})
 		if checkErr == nil {
 			results = checked
+		} else if errors.Is(checkErr, errKnowledgeStatusBusy) {
+			results = knowledge.UnverifiedStatuses(request.Bindings, "busy")
 		}
 	}
 	reportCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)

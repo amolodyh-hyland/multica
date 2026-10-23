@@ -217,6 +217,8 @@
     "unverified": "Non vérifiée",
     "upgrade": "Mettez Multica à jour sur la machine du propriétaire et reconnectez le démon. Le contexte reste vérifié avant l’exécution.",
     "reconnect": "Démarrez le démon sur la machine du propriétaire, puis réessayez. Le contexte reste vérifié avant l’exécution.",
+    "retry_hint": "La vérification est occupée ou a expiré. Patientez, puis réessayez. Le contexte reste vérifié avant chaque exécution.",
+    "unreadable_hint": "Vérifiez les autorisations et l’enregistrement de la source sur la machine propriétaire, puis réessayez.",
     "verify_at_run": "Seules les métadonnées quittent la machine du propriétaire. Si elle est hors ligne ou utilise un ancien runner, la vérification se fait à la préparation de l’exécution.",
     "changed_source": "Source modifiée ou périmée ?",
     "replace_hint": "Sur la machine du propriétaire, réenregistrez et approuvez le contenu actuel. Retirez cette référence et associez le nouvel enregistrement. Les sessions existantes conservent leur instantané figé. Retirer une référence ne supprime pas les fichiers sources.",

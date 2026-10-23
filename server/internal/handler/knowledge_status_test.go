@@ -85,13 +85,13 @@ func TestKnowledgeStatusQueueDispatchAndReportScope(t *testing.T) {
 		req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityKnowledgeStatusV1)
 		return req
 	}
-	results := knowledge.UnverifiedStatuses(request.Bindings, "unreadable")
+	results := knowledge.UnverifiedStatuses(request.Bindings, "busy")
 	testutil.Call(t, testHandler.ReportKnowledgeStatus, report("foreign-machine", map[string]any{"results": results})).Want(403)
 	invalid := map[string]any{"results": []map[string]any{{"resource_id": "resource1", "reference_hash": ref.ContentHash, "status": "available", "reason": "checked", "content": "PRIVATE FILE CONTENT"}}}
 	testutil.Call(t, testHandler.ReportKnowledgeStatus, report(daemonID, invalid)).Want(400)
 	testutil.Call(t, testHandler.ReportKnowledgeStatus, report(daemonID, map[string]any{"results": results})).Want(200)
 	saved, _, err := testHandler.KnowledgeStatusStore.read(context.Background(), runtimeID)
-	if err != nil || saved.State != "completed" {
+	if err != nil || saved.State != "completed" || len(saved.Results) != 1 || saved.Results[0].Reason != "busy" {
 		t.Fatal("status result not retained", err)
 	}
 }

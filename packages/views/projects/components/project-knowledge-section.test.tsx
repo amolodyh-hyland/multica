@@ -102,6 +102,9 @@ it("checks current source status only after an explicit human action", async () 
 
 it.each([
  ["unverified","owner_offline","Unverified","Start the owner daemon"],
+ ["unverified","busy","Unverified","Wait, then check again"],
+ ["unverified","timeout","Unverified","Wait, then check again"],
+ ["unverified","unreadable","Unverified","Check the source permissions and registration"],
  ["incompatible","needs_newer_runner","Needs newer runner","Update Multica"],
  ["missing","missing","Missing","register and approve"],
  ["available","checked","Available",null],
@@ -114,6 +117,7 @@ it.each([
  await waitFor(()=>expect(screen.getByRole("button",{name:"Check status"})).not.toBeDisabled());
  expect(screen.getByText(label)).toBeInTheDocument();
  if(remedy)expect(screen.getByText(new RegExp(remedy))).toBeInTheDocument();
+ if(reason!=="owner_offline")expect(screen.queryByText(/Start the owner daemon/)).not.toBeInTheDocument();
  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 

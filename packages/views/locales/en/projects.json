@@ -217,6 +217,8 @@
     "unverified": "Unverified",
     "upgrade": "Update Multica on the owner machine and reconnect its daemon to check status. Runs still verify context before execution.",
     "reconnect": "Start the owner daemon on its machine, then check again. Runs still verify context before execution.",
+    "retry_hint": "The check is busy or timed out. Wait, then check again. Runs still verify context before execution.",
+    "unreadable_hint": "Check the source permissions and registration on the owner machine, then check again.",
     "verify_at_run": "Only metadata leaves the owner machine. Offline or older runners fall back to verification when a run prepares context.",
     "changed_source": "Changed or stale source?",
     "replace_hint": "On the owner machine, register and approve the current content again. Remove this reference and attach the new registration. Existing sessions retain their pinned snapshot. Removing a reference does not delete source files.",

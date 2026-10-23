@@ -222,7 +222,7 @@ func validKnowledgeStatusResults(request knowledge.StatusRequest, results []know
 			return false
 		}
 		switch result.Reason {
-		case "checked", "changed", "missing", "unreadable", "timeout", "limit", "unsupported_source":
+		case "checked", "changed", "missing", "unreadable", "timeout", "busy", "limit", "unsupported_source":
 		default:
 			return false
 		}
