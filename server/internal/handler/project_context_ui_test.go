@@ -41,9 +41,9 @@ func TestProjectContextWithoutResourcesKeepsNativeIssueAndChatGrouping(t *testin
 				}
 			} else {
 				var session ChatSessionResponse
-				testutil.Call(t, testHandler.CreateChatSession, newRequest(http.MethodPost, "/api/chat/sessions", map[string]any{
+				testutil.Call(t, testHandler.CreateChatSession, withChatTestWorkspaceCtx(t, newRequest(http.MethodPost, "/api/chat/sessions", map[string]any{
 					"agent_id": agentID, "title": "Research chat", "project_id": project.ID,
-				})).Want(http.StatusCreated).JSON(&session)
+				}))).Want(http.StatusCreated).JSON(&session)
 				t.Cleanup(func() { dbfx.Exec(t, `DELETE FROM chat_session WHERE id = $1`, session.ID) })
 				cols["chat_session_id"] = session.ID
 				var groupedProjectID string
