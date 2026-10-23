@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -132,5 +133,24 @@ func TestBundleReadOnlyRunTaskNative(t *testing.T) {
 	args := string(bytes)
 	if strings.Contains(args, "bypassPermissions") || strings.Contains(args, "dangerously-skip") || !strings.Contains(args, "--restricted\n") || !strings.Contains(args, "--permission-prompts\nnone\n") || !strings.Contains(args, "--tools\n\n") {
 		t.Fatalf("unsafe effective launch:\n%s", args)
+	}
+}
+
+func TestBundleCodexUnsupportedNoRegistration(t *testing.T) {
+	d := New(Config{BundleReadOnly: true, BundleWorkspaceID: "workspace", WorkspacesRoot: t.TempDir()}, slog.Default())
+	d.client = NewClient("https://fixture.invalid")
+	d.client.client.Transport = startTaskTransport(func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("unsupported Codex reached registration: %s", r.URL.Path)
+		return nil, nil
+	})
+	if bundleProviderSupported("codex") {
+		t.Fatal("Codex advertised as bundle-supported")
+	}
+	if err := d.validateBundleTask(bundleTestTask(), "codex"); err == nil {
+		t.Fatal("Codex task accepted")
+	}
+	response, _, err := d.registerRuntimesForWorkspaceBatchLocked(context.Background(), "workspace", []map[string]string{{"type": "codex", "version": "0.144.6", "name": "native-fixture"}})
+	if !errors.Is(err, ErrNoRuntimesToRegister) || response != nil {
+		t.Fatalf("unsupported registration=%+v err=%v", response, err)
 	}
 }

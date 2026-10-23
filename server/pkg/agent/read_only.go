@@ -8,7 +8,23 @@ import (
 )
 
 const MinReadOnlyClaudeVersion = "2.1.259"
-const MinReadOnlyCodexVersion = "0.144.6"
+const AuditedReadOnlyCodexVersion = "0.144.6"
+
+// Audited against Codex rust-v0.144.6. Keep startup, thread config and
+// attestation aligned: config/read does not materialize native defaults.
+var readOnlyCodexDisabledFeatures = [...]string{
+	"shell_tool", "unified_exec", "apps", "plugins", "remote_plugin",
+	"plugin_sharing", "skill_mcp_dependency_install", "tool_suggest",
+	"in_app_browser", "browser_use", "browser_use_full_cdp_access", "browser_use_external",
+	"computer_use", "image_generation", "hooks", "multi_agent", "code_mode_host",
+	"shell_snapshot", "mentions_v2", "guardian_approval", "goals",
+	"tool_call_mcp_elicitation", "auth_elicitation", "workspace_dependencies", "remote_compaction_v2",
+}
+
+// ReadOnlyCodexDisabledFeatures returns the startup policy for isolated homes.
+func ReadOnlyCodexDisabledFeatures() []string {
+	return append([]string(nil), readOnlyCodexDisabledFeatures[:]...)
+}
 
 func validateReadOnlyExecution(cfg Config, opts ExecOptions) error {
 	if len(cfg.LaunchPrefix) != 0 || len(opts.ExtraArgs) != 0 || len(opts.CustomArgs) != 0 || opts.ResumeSessionID != "" || opts.ResumeExpected {
@@ -35,15 +51,25 @@ func validateReadOnlyExecution(cfg Config, opts ExecOptions) error {
 }
 
 func readOnlyCodexConfig() map[string]any {
-	return map[string]any{
+	config := map[string]any{
 		"sandbox_mode": "read-only", "approval_policy": "never", "web_search": "disabled",
-		"mcp_servers": map[string]any{}, "features.shell_tool": false, "features.unified_exec": false,
+		"mcp_servers": map[string]any{},
 	}
+	for _, feature := range readOnlyCodexDisabledFeatures {
+		config["features."+feature] = false
+	}
+	return config
 }
 
-func readOnlyCodexArgs() []string {
-	return []string{"app-server", "--listen", "stdio://", "-c", `sandbox_mode="read-only"`, "-c", `approval_policy="never"`,
-		"-c", `web_search="disabled"`, "-c", "mcp_servers={}", "-c", "features.shell_tool=false", "-c", "features.unified_exec=false"}
+// ReadOnlyCodexArgs emits the audited candidate policy; emission does not
+// establish native support for managed startup requirements.
+func ReadOnlyCodexArgs() []string {
+	args := []string{"app-server", "--strict-config", "--listen", "stdio://", "-c", `sandbox_mode="read-only"`, "-c", `approval_policy="never"`,
+		"-c", `web_search="disabled"`, "-c", "mcp_servers={}"}
+	for _, feature := range readOnlyCodexDisabledFeatures {
+		args = append(args, "-c", "features."+feature+"=false")
+	}
+	return args
 }
 
 func applyReadOnlyCodexTurn(params map[string]any, opts ExecOptions) {
@@ -61,7 +87,9 @@ func SupportsNativeReadOnly(provider, version, goos string) bool {
 	case "claude":
 		return codexVersionAtLeast(version, MinReadOnlyClaudeVersion)
 	case "codex":
-		return (goos == "linux" || goos == "darwin") && codexVersionAtLeast(version, MinReadOnlyCodexVersion)
+		// Managed feature pins can re-enable plugin warmups before config/read.
+		// The stock CLI has no pre-warmup validation/skip option.
+		return false
 	default:
 		return false
 	}

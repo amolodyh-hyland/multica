@@ -380,7 +380,7 @@ type codexBackend struct {
 
 func buildCodexArgs(opts ExecOptions, logger *slog.Logger) []string {
 	if opts.NativeReadOnly {
-		return readOnlyCodexArgs()
+		return ReadOnlyCodexArgs()
 	}
 	args := []string{"app-server", "--listen", "stdio://"}
 	launchArgs := NormalizeCodexLaunchArgs(opts.ExtraArgs, opts.CustomArgs, opts.McpConfig, logger)

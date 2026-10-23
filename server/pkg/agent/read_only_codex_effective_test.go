@@ -24,6 +24,10 @@ func readOnlyEffectiveConfigFixture(t *testing.T, source string, mutate func(map
 		"layers":  []any{map[string]any{"name": map[string]any{"type": source}, "version": "fixture-version", "config": map[string]any{}}},
 		"origins": map[string]any{},
 	}
+	features := response["config"].(map[string]any)["features"].(map[string]any)
+	for _, feature := range readOnlyCodexDisabledFeatures {
+		features[feature] = false
+	}
 	if mutate != nil {
 		mutate(response)
 	}
@@ -150,11 +154,12 @@ case "$line" in
 esac
 done
 `)
-				backend, err := New("codex", Config{NativeReadOnly: true, CLIVersion: MinReadOnlyCodexVersion, ExecutablePath: fake, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Env: map[string]string{"CODEX_HOME": home, "TRANSCRIPT": transcript}})
+				backend, err := New("codex", Config{NativeReadOnly: true, CLIVersion: AuditedReadOnlyCodexVersion, ExecutablePath: fake, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Env: map[string]string{"CODEX_HOME": home, "TRANSCRIPT": transcript}})
 				if err != nil {
 					t.Fatal(err)
 				}
-				session, err := backend.Execute(context.Background(), "fixture", ExecOptions{Cwd: cwd, Timeout: 5 * time.Second, HandshakeTimeout: time.Second})
+				// Check candidate protocol emission separately from the public unsupported gate.
+				session, err := backend.(*codexBackend).executeOnce(context.Background(), "fixture", ExecOptions{NativeReadOnly: true, Cwd: cwd, Timeout: 5 * time.Second, HandshakeTimeout: time.Second}, 1)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -196,9 +201,45 @@ done
 			})
 		}
 	}
-	for _, osName := range []string{"darwin", "linux"} {
-		if !SupportsNativeReadOnly("codex", MinReadOnlyCodexVersion, osName) {
-			t.Fatalf("supported platform excluded: %s", osName)
+}
+
+func TestReadOnlyCodexEffectiveConfigRequiresExplicitStartupFlags(t *testing.T) {
+	for _, feature := range ReadOnlyCodexDisabledFeatures() {
+		for _, value := range []any{nil, true, "false"} {
+			response := readOnlyEffectiveConfigFixture(t, "enterpriseManaged", func(r map[string]any) {
+				features := r["config"].(map[string]any)["features"].(map[string]any)
+				if value == nil {
+					delete(features, feature)
+				} else {
+					features[feature] = value
+				}
+			})
+			if err := validateReadOnlyCodexEffectiveConfig(response); err == nil {
+				t.Fatalf("accepted missing or incompatible native flag: %s=%v", feature, value)
+			}
 		}
+	}
+	// Reproduce the previous fixture's absent native defaults explicitly.
+	response := readOnlyEffectiveConfigFixture(t, "mdm", func(r map[string]any) {
+		r["config"].(map[string]any)["features"] = map[string]any{"shell_tool": false, "unified_exec": false}
+	})
+	if err := validateReadOnlyCodexEffectiveConfig(response); err == nil {
+		t.Fatal("accepted omitted Apps/plugin defaults")
+	}
+}
+
+func TestReadOnlyCodexUnsupportedBeforeNativeStartup(t *testing.T) {
+	home, cwd := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte("[mcp_servers]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, platform := range []string{"darwin", "linux", "windows"} {
+		if SupportsNativeReadOnly("codex", AuditedReadOnlyCodexVersion, platform) {
+			t.Fatalf("advertised unsafe managed startup on %s", platform)
+		}
+	}
+	b := &codexBackend{cfg: Config{provider: "codex", NativeReadOnly: true, CLIVersion: AuditedReadOnlyCodexVersion, ExecutablePath: "/missing/native-codex-must-not-be-looked-up", Env: map[string]string{"CODEX_HOME": home}}}
+	if _, err := b.Execute(context.Background(), "fixture", ExecOptions{Cwd: cwd}); err == nil || !strings.Contains(err.Error(), "unsupported read-only") {
+		t.Fatalf("unsupported harness reached launch: %v", err)
 	}
 }

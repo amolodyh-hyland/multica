@@ -5,18 +5,20 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
-const readOnlyCodexConfig = `sandbox_mode = "read-only"
-approval_policy = "never"
-web_search = "disabled"
-
-[features]
-shell_tool = false
-unified_exec = false
-
-[mcp_servers]
-`
+func readOnlyCodexHomeConfig() string {
+	var config strings.Builder
+	config.WriteString("sandbox_mode = \"read-only\"\napproval_policy = \"never\"\nweb_search = \"disabled\"\n\n[features]\n")
+	for _, feature := range agent.ReadOnlyCodexDisabledFeatures() {
+		fmt.Fprintf(&config, "%s = false\n", feature)
+	}
+	config.WriteString("\n[mcp_servers]\n")
+	return config.String()
+}
 
 func prepareReadOnlyCodexHome(home, sharedHome, goos string) error {
 	if resolveGOOS(goos) == "windows" {
@@ -31,7 +33,7 @@ func prepareReadOnlyCodexHome(home, sharedHome, goos string) error {
 	if err := os.MkdirAll(filepath.Join(home, "sessions"), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(home, "config.toml"), []byte(readOnlyCodexConfig), 0o600)
+	return os.WriteFile(filepath.Join(home, "config.toml"), []byte(readOnlyCodexHomeConfig()), 0o600)
 }
 
 func hydrateReadOnlyAwareCodexSkills(home string, readOnly bool, skills []SkillContextForEnv, disabled []RuntimeSkillRefForEnv, logger *slog.Logger) error {

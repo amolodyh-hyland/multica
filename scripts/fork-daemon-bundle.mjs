@@ -51,7 +51,7 @@ export const standaloneProfile = () => ({
 
 export const nativeRestrictions = () => ({
   mode: 'read_only', automaticApproval: false, localDirectoryMode: 'none',
-  supported: { claude: { minimumVersion: '2.1.259', mode: 'restricted', tools: [] }, codex: { minimumVersion: '0.144.6', sandbox: 'read-only', approvals: 'denied', platforms: ['darwin', 'linux'], unsupportedPlatforms: { windows: 'unverified sandbox' }, inheritedMcp: 'effective-config-refusal-before-thread-start', configAttestation: { method: 'config/read', includeLayers: true, sources: ['local', 'managed', 'mdm', 'cloud'], missingOrUnknownLayers: 'refuse' }, managedConfiguration: 'never-overridden' } },
+  supported: { claude: { minimumVersion: '2.1.259', mode: 'restricted', tools: [] } }, unsupported: { codex: { auditedVersion: '0.144.6', reason: 'managed feature pins can enable warmups before config/read; native pre-start validation is required', startupFeatures: 'explicitly-disabled-in-config-and-argv-before-spawn', sandbox: 'read-only', approvals: 'denied', platforms: ['darwin', 'linux', 'windows'], inheritedMcp: 'effective-config-refusal-before-thread-start', configAttestation: { method: 'config/read', includeLayers: true, sources: ['local', 'managed', 'mdm', 'cloud'], missingOrUnknownLayers: 'refuse' }, managedConfiguration: 'never-overridden' } },
   otherHarnesses: 'unsupported', customCommands: 'unsupported',
   verification: 'disposable-native-protocol-and-config-fixtures', liveVerification: 'not-run', activation: 'requires-human-approval',
 });

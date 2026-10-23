@@ -3,11 +3,10 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
-	"runtime"
 )
 
 func bundleProviderSupported(provider string) bool {
-	return provider == "claude" || (provider == "codex" && (runtime.GOOS == "linux" || runtime.GOOS == "darwin"))
+	return provider == "claude"
 }
 
 func (d *Daemon) validateBundleTask(task Task, provider string) error {

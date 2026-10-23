@@ -63,7 +63,7 @@ func codexConfigHasMCP(config map[string]any) bool {
 		if key == "profile" && value != nil && value != "" {
 			return true
 		}
-		if key == "mcp_servers" || key == "plugins" || key == "apps" {
+		if key == "mcp_servers" || key == "plugins" || key == "apps" || key == "remote_plugin" {
 			if key != "mcp_servers" && (value == nil || value == false) {
 				continue
 			}
@@ -114,9 +114,14 @@ func validateReadOnlyCodexEffectiveConfig(result json.RawMessage) error {
 		return refuse()
 	}
 	features, ok := config["features"].(map[string]any)
-	if !ok || features["shell_tool"] != false || features["unified_exec"] != false ||
+	if !ok ||
 		config["sandbox_mode"] != "read-only" || config["approval_policy"] != "never" || config["web_search"] != "disabled" {
 		return refuse()
+	}
+	for _, feature := range readOnlyCodexDisabledFeatures {
+		if features[feature] != false {
+			return refuse()
+		}
 	}
 	for _, layer := range response.Layers {
 		if layer.Config == nil || layer.Version == "" || codexConfigHasMCP(layer.Config) {
