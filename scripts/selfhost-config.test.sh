@@ -51,6 +51,12 @@ config="$(
     config
 )"
 
+require_config "$config" 'FF_PUBLIC_DELEGATIONS_V1: "false"'
+fork_config="$(FF_PUBLIC_DELEGATIONS_V1=true MULTICA_BACKEND_IMAGE=local/multica-backend MULTICA_WEB_IMAGE=local/multica-web MULTICA_IMAGE_TAG=fork-test docker compose --env-file "$tmp_env" -f docker-compose.selfhost.yml config)"
+require_config "$fork_config" 'FF_PUBLIC_DELEGATIONS_V1: "true"'
+require_config "$fork_config" 'image: local/multica-backend:fork-test'
+require_config "$fork_config" 'image: local/multica-web:fork-test'
+
 require_config "$config" 'published: "3100"'
 require_config "$config" 'published: "9100"'
 require_config "$config" 'FRONTEND_ORIGIN: http://localhost:3100'
