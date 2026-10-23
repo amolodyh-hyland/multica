@@ -271,6 +271,7 @@
       "too_many_files": "Folders are limited to 500 files. Nothing was uploaded.",
       "too_large": "Folders are limited to 100 MiB total. Nothing was uploaded.",
       "unsafe_path": "The folder contains an unsafe or conflicting path. Nothing was uploaded.",
+      "unsupported_name": "Folder names must use Unicode 15 characters and at most 8 consecutive combining marks after decomposition. Rename the files or folders and try again. Nothing was uploaded.",
       "changed": "The destination or folder changed. Select the folder again.",
       "failed": "Could not prepare the folder. Nothing was uploaded."
     },

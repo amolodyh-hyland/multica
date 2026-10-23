@@ -176,7 +176,6 @@
     "i18next": "catalog:",
     "posthog-js": "catalog:",
     "react-i18next": "catalog:",
-    "unicode-case-folding": "1.1.2",
     "yaml": "catalog:",
     "zod": "catalog:",
     "zustand": "catalog:"

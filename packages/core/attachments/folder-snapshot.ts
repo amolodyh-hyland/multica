@@ -1,5 +1,5 @@
 import { packStoreZip } from "../skills/pack-archive";
-import { caseFold } from "unicode-case-folding";
+import { folderPathKey, supportedFolderUnicode } from "./folder-unicode";
 
 export const FOLDER_SNAPSHOT_EXTENSION = ".multica-folder";
 export const FOLDER_SNAPSHOT_TYPE = "application/vnd.multica.folder+zip";
@@ -7,7 +7,7 @@ export const MAX_FOLDER_FILES = 500;
 export const MAX_FOLDER_BYTES = 100 * 1024 * 1024;
 export const MAX_FOLDER_ARCHIVE_BYTES = MAX_FOLDER_BYTES + 2 * 1024 * 1024;
 
-export type FolderSnapshotErrorCode = "empty" | "too_many_files" | "too_large" | "unsafe_path" | "changed";
+export type FolderSnapshotErrorCode = "empty" | "too_many_files" | "too_large" | "unsafe_path" | "unsupported_name" | "changed";
 
 export class FolderSnapshotError extends Error {
   constructor(public readonly code: FolderSnapshotErrorCode) {
@@ -23,7 +23,7 @@ export interface FolderSnapshot {
 }
 
 export function validFolderPath(path: string): boolean {
-  if (!path || new TextEncoder().encode(path).length > 1024 || /[\\:<>"|?*]/.test(path)) return false;
+  if (!path || new TextEncoder().encode(path).length > 1024 || /[\\:<>"|?*]/.test(path) || !supportedFolderUnicode(path)) return false;
   if ([...path].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) return false;
   return path.split("/").every((part) =>
     !!part && part !== "." && part !== ".." && !/[. ]$/.test(part)
@@ -37,6 +37,7 @@ export function previewFolderSnapshot(files: File[], skipped: string[] = []): Fo
   const directories = new Map<string, string>();
   for (const file of files) {
     const path = file.webkitRelativePath;
+    if (!supportedFolderUnicode(path)) throw new FolderSnapshotError("unsupported_name");
     if (!validFolderPath(path) || !path.includes("/")) throw new FolderSnapshotError("unsafe_path");
     const parts = path.split("/");
     if (!snapshot.name) snapshot.name = parts[0]!;
@@ -68,10 +69,6 @@ export function previewFolderSnapshot(files: File[], skipped: string[] = []): Fo
   }
   snapshot.files.sort((a, b) => a.path.localeCompare(b.path));
   return snapshot;
-}
-
-function folderPathKey(path: string): string {
-  return caseFold(path.normalize("NFC")).normalize("NFC");
 }
 
 export async function packFolderSnapshot(snapshot: FolderSnapshot): Promise<File> {

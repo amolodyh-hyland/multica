@@ -45,6 +45,15 @@ beforeEach(() => {
 });
 
 describe("folder consent", () => {
+  it.each(["project/\u1c89/a", "project/x" + "\u0305".repeat(9)])("explains unsupported names before reading or uploading: %s", async (path) => {
+    const { files, upload } = setup([file(path)]);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Unicode 15");
+    expect(screen.getByRole("alert")).toHaveTextContent("8 consecutive combining marks");
+    expect(files[0]!.arrayBuffer).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Confirm upload" })).toBeDisabled();
+  });
+
   it("shows the destination, name, count, size and full list before any read or upload", async () => {
     const { files, upload } = setup();
     expect(await screen.findByText("project")).toBeInTheDocument();

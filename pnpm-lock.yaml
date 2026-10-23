@@ -739,9 +739,6 @@ importers:
       react-i18next:
         specifier: 'catalog:'
         version: 17.0.6(i18next@26.0.8(typescript@5.9.3))(react-dom@19.2.3(react@19.2.3))(react-native@0.86.3(@babel/core@7.29.0)(@react-native/metro-config@0.86.3(@babel/core@7.29.0))(@types/react@19.2.14)(react@19.2.3))(react@19.2.3)(typescript@5.9.3)
-      unicode-case-folding:
-        specifier: 1.1.2
-        version: 1.1.2
       yaml:
         specifier: 'catalog:'
         version: 2.9.0
@@ -10531,9 +10528,6 @@ packages:
   unicode-canonical-property-names-ecmascript@2.0.1:
     resolution: {integrity: sha512-dA8WbNeb2a6oQzAQ55YlT5vQAWGV9WXOsi3SskE3bcCdM0P4SDd+24zS/OCacdRq5BkdsRj9q3Pg6YyQoxIGqg==}
     engines: {node: '>=4'}
-
-  unicode-case-folding@1.1.2:
-    resolution: {integrity: sha512-03vMM1kVkJbiSIPDW1D0hu42prq3Pe000yC5PaNMjhBJQxDuhAfh+R1V4TXXL21adjBqj7fUtBjZuWCRmiOQQQ==}
 
   unicode-match-property-ecmascript@2.0.0:
     resolution: {integrity: sha512-5kaZCrbp5mmbz5ulBkDkbY0SsPOjKqVS35VpL9ulMPfSl0J0Xsm+9Evphv9CoIZFwre7aJoa94AY6seMKGVN5Q==}
@@ -22150,8 +22144,6 @@ snapshots:
   unicode-animations@1.0.3: {}
 
   unicode-canonical-property-names-ecmascript@2.0.1: {}
-
-  unicode-case-folding@1.1.2: {}
 
   unicode-match-property-ecmascript@2.0.0:
     dependencies:

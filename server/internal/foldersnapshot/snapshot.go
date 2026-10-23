@@ -15,9 +15,6 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
-
-	"golang.org/x/text/cases"
-	"golang.org/x/text/unicode/norm"
 )
 
 func validateCentralDirectory(data []byte) error {
@@ -74,10 +71,6 @@ func validateCentralDirectory(data []byte) error {
 	return nil
 }
 
-func pathKey(name string) string {
-	return norm.NFC.String(cases.Fold().String(norm.NFC.String(name)))
-}
-
 const (
 	Extension       = ".multica-folder"
 	ContentType     = "application/vnd.multica.folder+zip"
@@ -88,7 +81,7 @@ const (
 )
 
 func ValidPath(name string) bool {
-	if name == "" || len(name) > MaxPathBytes || !utf8.ValidString(name) || strings.ContainsAny(name, "\\:\x00") || strings.HasPrefix(name, "/") {
+	if name == "" || len(name) > MaxPathBytes || !utf8.ValidString(name) || strings.ContainsAny(name, "\\:\x00") || strings.HasPrefix(name, "/") || !supportedUnicode(name) {
 		return false
 	}
 	for _, part := range strings.Split(name, "/") {
@@ -127,6 +120,9 @@ func Parse(data []byte) (*zip.Reader, error) {
 	root := ""
 	var total uint64
 	for _, f := range r.File {
+		if !supportedUnicode(f.Name) {
+			return nil, errors.New("folder names require Unicode 15 characters and at most 8 consecutive decomposed combining marks")
+		}
 		parts := strings.SplitN(f.Name, "/", 2)
 		if !ValidPath(f.Name) || len(parts) != 2 || !f.Mode().IsRegular() {
 			return nil, fmt.Errorf("unsafe folder entry: %q", f.Name)

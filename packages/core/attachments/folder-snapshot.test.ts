@@ -1,5 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
+import vectors from "./folder-path-vectors.json";
+import { folderPathKey } from "./folder-unicode";
 import { FolderSnapshotError, MAX_FOLDER_BYTES, packFolderSnapshot, previewFolderSnapshot, uploadSizeLimit, validFolderPath } from "./folder-snapshot";
 
 function selected(path: string, contents = "body", size?: number): File {
@@ -10,6 +12,16 @@ function selected(path: string, contents = "body", size?: number): File {
 }
 
 describe("folder snapshots", () => {
+  it.each(vectors)("shared filename rules: $name", ({ paths, error, keys }) => {
+    const files = paths.map((path) => selected(path));
+    if (error) {
+      expect(() => previewFolderSnapshot(files)).toThrow(new FolderSnapshotError(error as "unsafe_path" | "unsupported_name"));
+    } else {
+      expect(previewFolderSnapshot(files).files).toHaveLength(paths.length);
+      expect(paths.map(folderPathKey)).toEqual(keys);
+    }
+  });
+
   it("previews nested paths, count and exact size without reading bytes", () => {
     const a = selected("project/a.txt");
     const b = selected("project/src/a.txt", "nested");
