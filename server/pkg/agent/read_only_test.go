@@ -49,7 +49,7 @@ func TestReadOnlyNativeRejectsOverridesAndUnsupportedPeers(t *testing.T) {
 			t.Fatalf("accepted override %+v", opts)
 		}
 	}
-	for _, tc := range []struct{ provider, version, goos string }{{"claude", "2.1.258", "darwin"}, {"claude", "unknown", "darwin"}, {"codex", "0.144.6", "windows"}, {"codex", "unknown", "linux"}, {"codex", "0.144.6", "darwin"}, {"other", "99.0.0", "darwin"}} {
+	for _, tc := range []struct{ provider, version, goos string }{{"claude", "2.1.258", "darwin"}, {"claude", "unknown", "darwin"}, {"codex", "0.144.6", "windows"}, {"codex", "unknown", "linux"}, {"codex", "0.144.5", "darwin"}, {"other", "99.0.0", "darwin"}} {
 		if SupportsNativeReadOnly(tc.provider, tc.version, tc.goos) {
 			t.Fatalf("accepted unsupported peer: %+v", tc)
 		}
@@ -128,7 +128,16 @@ func TestReadOnlyCodexThreadAndTurn(t *testing.T) {
 		if err := json.Unmarshal([]byte(lines[len(lines)-1]), &captured); err != nil {
 			t.Fatal(err)
 		}
-		client.handleLine(`{"id":1,"result":{"thread":{"id":"fresh"}}}`)
+		id := int(captured["id"].(float64))
+		result := json.RawMessage(`{"thread":{"id":"fresh"}}`)
+		if captured["method"] == "config/read" {
+			result = readOnlyEffectiveConfigFixture(t, "mdm", nil)
+		}
+		reply, err := json.Marshal(map[string]any{"id": id, "result": result})
+		if err != nil {
+			t.Fatal(err)
+		}
+		client.handleLine(string(reply))
 	}
 	opts := ExecOptions{NativeReadOnly: true, Cwd: "/scratch"}
 	id, resumed, err := client.startOrResumeThread(context.Background(), opts, slog.Default())
@@ -150,7 +159,7 @@ func TestReadOnlyCodexThreadAndTurn(t *testing.T) {
 	if _, _, err := client.startOrResumeThread(context.Background(), opts, slog.Default()); err == nil {
 		t.Fatal("resumed under old permissions")
 	}
-	if len(stdin.Lines()) != 1 {
+	if len(stdin.Lines()) != 2 {
 		t.Fatal("resume reached transport")
 	}
 }

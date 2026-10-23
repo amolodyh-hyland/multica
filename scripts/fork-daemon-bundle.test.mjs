@@ -102,7 +102,10 @@ test('both generated profiles require read-only native execution without overrid
   assert.doesNotMatch(JSON.stringify([pilot, standaloneProfile(), nativeRestrictions()]), /bypassPermissions|danger-full-access|dangerously-skip|auto_approve/);
   assert.equal(nativeRestrictions().automaticApproval, false);
   assert.equal(nativeRestrictions().otherHarnesses, 'unsupported');
-  assert.deepEqual(nativeRestrictions().supported.codex.platforms, ['linux']);
-  assert.equal(nativeRestrictions().supported.codex.inheritedMcp, 'refuse-before-launch');
+  assert.deepEqual(nativeRestrictions().supported.codex.platforms, ['darwin', 'linux']);
+  assert.equal(nativeRestrictions().supported.codex.inheritedMcp, 'effective-config-refusal-before-thread-start');
   assert.equal(nativeRestrictions().supported.codex.managedConfiguration, 'never-overridden');
+  assert.equal(nativeRestrictions().supported.codex.configAttestation.method, 'config/read');
+  assert.equal(nativeRestrictions().supported.codex.configAttestation.includeLayers, true);
+  assert.equal(nativeRestrictions().supported.codex.minimumVersion, '0.144.6');
 });

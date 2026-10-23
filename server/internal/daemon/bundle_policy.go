@@ -7,7 +7,7 @@ import (
 )
 
 func bundleProviderSupported(provider string) bool {
-	return provider == "claude" || (provider == "codex" && runtime.GOOS == "linux")
+	return provider == "claude" || (provider == "codex" && (runtime.GOOS == "linux" || runtime.GOOS == "darwin"))
 }
 
 func (d *Daemon) validateBundleTask(task Task, provider string) error {

@@ -1569,6 +1569,9 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		// back to a fresh thread so the task still makes progress.
 		threadID, resumed, err := c.startOrResumeThread(runCtx, opts, b.cfg.Logger)
 		if err != nil {
+			if opts.NativeReadOnly {
+				stopProcess()
+			}
 			var handshakeErr *codexHandshakeTimeoutError
 			timedOut := errors.As(err, &handshakeErr) && isCodexThreadSetupRPC(handshakeErr.Method)
 			if timedOut {
@@ -2042,6 +2045,11 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 	}
 	if opts.NativeReadOnly && opts.ResumeSessionID != "" {
 		return "", false, fmt.Errorf("read-only bundle requires a fresh conversation")
+	}
+	if opts.NativeReadOnly {
+		if err := c.attestReadOnlyCodexConfig(ctx, opts.Cwd); err != nil {
+			return "", false, err
+		}
 	}
 	if priorThreadID := opts.ResumeSessionID; priorThreadID != "" {
 		// thread/resume reuses the thread's persisted model and reasoning
@@ -2634,7 +2642,7 @@ func (e *codexHandshakeTimeoutError) Unwrap() error {
 
 func isCodexHandshakeRPC(method string) bool {
 	switch method {
-	case "initialize", "thread/start", "thread/resume", "thread/name/set", "turn/start":
+	case "initialize", "config/read", "thread/start", "thread/resume", "thread/name/set", "turn/start":
 		return true
 	default:
 		return false

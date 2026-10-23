@@ -8,6 +8,7 @@ import (
 )
 
 const MinReadOnlyClaudeVersion = "2.1.259"
+const MinReadOnlyCodexVersion = "0.144.6"
 
 func validateReadOnlyExecution(cfg Config, opts ExecOptions) error {
 	if len(cfg.LaunchPrefix) != 0 || len(opts.ExtraArgs) != 0 || len(opts.CustomArgs) != 0 || opts.ResumeSessionID != "" || opts.ResumeExpected {
@@ -60,7 +61,7 @@ func SupportsNativeReadOnly(provider, version, goos string) bool {
 	case "claude":
 		return codexVersionAtLeast(version, MinReadOnlyClaudeVersion)
 	case "codex":
-		return goos == "linux" && codexVersionAtLeast(version, "0.100.0")
+		return (goos == "linux" || goos == "darwin") && codexVersionAtLeast(version, MinReadOnlyCodexVersion)
 	default:
 		return false
 	}

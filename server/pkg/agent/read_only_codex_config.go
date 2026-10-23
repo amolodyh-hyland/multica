@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -58,10 +60,13 @@ func codexConfigHasMCP(config map[string]any) bool {
 	for key, value := range config {
 		// A selected external profile introduces another configuration file.
 		// The bundle never selects profiles; refuse inherited selection.
-		if key == "profile" && value != "" {
+		if key == "profile" && value != nil && value != "" {
 			return true
 		}
 		if key == "mcp_servers" || key == "plugins" || key == "apps" {
+			if key != "mcp_servers" && (value == nil || value == false) {
+				continue
+			}
 			table, ok := value.(map[string]any)
 			if !ok || len(table) != 0 {
 				return true
@@ -72,4 +77,56 @@ func codexConfigHasMCP(config map[string]any) bool {
 		}
 	}
 	return false
+}
+
+// config/read uses the app-server's config manager: its response includes cloud
+// fragments, macOS managed preferences and exact managed requirements. Inspect
+// it before thread/start, which is the boundary that starts MCP connections.
+func (c *codexClient) attestReadOnlyCodexConfig(ctx context.Context, cwd string) error {
+	result, err := c.request(ctx, "config/read", map[string]any{"includeLayers": true, "cwd": cwd})
+	if err != nil {
+		// RPC errors can contain configuration values. Persist only the refusal.
+		return fmt.Errorf("read-only Codex effective configuration unavailable; refusing thread startup")
+	}
+	return validateReadOnlyCodexEffectiveConfig(result)
+}
+
+func validateReadOnlyCodexEffectiveConfig(result json.RawMessage) error {
+	refuse := func() error {
+		return fmt.Errorf("read-only Codex effective configuration is unsafe or incomplete; refusing thread startup without overriding managed settings")
+	}
+	var response struct {
+		Config map[string]any `json:"config"`
+		Layers []struct {
+			Name struct {
+				Type string `json:"type"`
+			} `json:"name"`
+			Version string         `json:"version"`
+			Config  map[string]any `json:"config"`
+		} `json:"layers"`
+	}
+	if err := json.Unmarshal(result, &response); err != nil || response.Config == nil || len(response.Layers) == 0 {
+		return refuse()
+	}
+	config := response.Config
+	servers, ok := config["mcp_servers"].(map[string]any)
+	if !ok || len(servers) != 0 || codexConfigHasMCP(config) {
+		return refuse()
+	}
+	features, ok := config["features"].(map[string]any)
+	if !ok || features["shell_tool"] != false || features["unified_exec"] != false ||
+		config["sandbox_mode"] != "read-only" || config["approval_policy"] != "never" || config["web_search"] != "disabled" {
+		return refuse()
+	}
+	for _, layer := range response.Layers {
+		if layer.Config == nil || layer.Version == "" || codexConfigHasMCP(layer.Config) {
+			return refuse()
+		}
+		switch layer.Name.Type {
+		case "mdm", "system", "enterpriseManaged", "user", "project", "sessionFlags", "legacyManagedConfigTomlFromFile", "legacyManagedConfigTomlFromMdm", "packagedDefaults":
+		default:
+			return refuse()
+		}
+	}
+	return nil
 }
