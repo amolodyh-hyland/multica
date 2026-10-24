@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -68,7 +69,7 @@ func TestPublicDelegationResultUnavailableAndAuthorization(t *testing.T) {
 	delegationOperation(t, router, "GET", path, testUserID, uuid.NewString(), scopes, "\""+d.Revision+"\"").Want(404)
 	delegationOperation(t, router, "GET", path, testUserID, testWorkspaceID, scopes, "").Want(409)
 	delegationOperation(t, router, "GET", path, testUserID, testWorkspaceID, scopes, "\"stale\"").Want(409)
-	for _, item := range []struct{ status, output string }{{"running", "answer"}, {"cancelled", ""}, {"completed", ""}, {"completed", string(make([]byte, 32769))}, {"completed", "https://private.test"}, {"completed", "mul_private"}} {
+	for _, item := range []struct{ status, output string }{{"running", "answer"}, {"cancelled", ""}, {"completed", ""}, {"completed", strings.Repeat("x", 32769)}, {"completed", "https://private.test"}, {"completed", "mul_private"}} {
 		payload, _ := json.Marshal(map[string]string{"output": item.output})
 		dbfx.Exec(t, "UPDATE agent_task_queue SET status=$2,result=$3 WHERE id=$1", d.TaskID, item.status, string(payload))
 		revision := publicapiv1.DelegationRevision(d.TaskID, item.status, "")
