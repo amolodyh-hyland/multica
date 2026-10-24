@@ -55,6 +55,9 @@ func privateDaemonFixture(t *testing.T, origin string) (Task, libraryimport.Obje
 }
 
 func TestPrivateLibraryCacheReauthorizesExactTaskAndFailsOffline(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("private cache requires an owner-only ACL implementation")
+	}
 	task, object := privateDaemonFixture(t, "https://example.test")
 	gets, heads := 0, 0
 	allowed, offline := true, false

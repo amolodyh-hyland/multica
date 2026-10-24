@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/multica-ai/multica/server/pkg/knowledge"
@@ -19,6 +20,9 @@ func NewPrivateSkillBundleCache(root string) *SkillBundleCache {
 }
 
 func (c *SkillBundleCache) privateRoot(create bool) (*os.Root, error) {
+	if runtime.GOOS == "windows" {
+		return nil, errors.New("private_cache_permissions_unsupported")
+	}
 	if c.root == "" {
 		return nil, errors.New("private cache root is required")
 	}
@@ -46,6 +50,11 @@ func (c *SkillBundleCache) privateRoot(create bool) (*os.Root, error) {
 	if err := root.Chmod(".", 0700); err != nil {
 		root.Close()
 		return nil, err
+	}
+	restricted, err := root.Stat(".")
+	if err != nil || restricted.Mode().Perm() != 0700 {
+		root.Close()
+		return nil, errors.New("private_cache_permissions_unsupported")
 	}
 	return root, nil
 }

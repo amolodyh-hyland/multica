@@ -142,6 +142,15 @@ func TestPrivateLibraryClaimChecksAggregateBudgetBeforeLoadingPayloads(t *testin
 	}
 }
 
+func TestPrivateLibraryCapabilityDoesNotAdvertiseActivationOrReload(t *testing.T) {
+	h, _ := privateImportFixture(t)
+	var capability libraryimport.Capability
+	testutil.Call(t, h.PrivateLibraryCapabilities, newRequest(http.MethodGet, "/api/private-library/capabilities", nil)).Want(200).JSON(&capability)
+	if !capability.Supported || capability.TaskActivation != "unsupported_provider" || capability.TaskActivationReason != "native_conformance_missing" || capability.Reload != "unsupported" {
+		t.Fatalf("capabilities overstated activation: %+v", capability)
+	}
+}
+
 func TestPrivateLibraryManifestIsNotInPublicTaskProjection(t *testing.T) {
 	task := db.AgentTaskQueue{PrivateLibraryManifest: []byte(`{"private":"must-not-leak"}`)}
 	raw, err := json.Marshal(taskToResponse(task, testWorkspaceID))

@@ -49,7 +49,7 @@ func (h *Handler) PrivateLibraryCapabilities(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	destination, supported := h.privateImportDestination(r, member)
-	cap := libraryimport.Capability{Supported: supported, Destination: destination}
+	cap := libraryimport.Capability{Supported: supported, Destination: destination, TaskActivation: "unsupported_provider", TaskActivationReason: "native_conformance_missing", Reload: "unsupported"}
 	if !supported {
 		cap.ReasonCode = "private_import_unsupported"
 	}

@@ -12,6 +12,7 @@ import (
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/knowledge"
+	"github.com/multica-ai/multica/server/pkg/libraryimport"
 	"gopkg.in/yaml.v3"
 )
 
@@ -243,12 +244,13 @@ func writeTaskContextMarker(workDir string, ctx TaskContextForEnv, manifest *sid
 // directory. Schema is intentionally a thin pass-through of the API response
 // so consumers (skills, future tooling) don't need a separate parser.
 type projectResourceFile struct {
-	ProjectID           string                  `json:"project_id,omitempty"`
-	ProjectTitle        string                  `json:"project_title,omitempty"`
-	ProjectDescription  string                  `json:"project_description,omitempty"`
-	ProjectInstructions string                  `json:"project_instructions,omitempty"`
-	Knowledge           *knowledge.Snapshot     `json:"knowledge,omitempty"`
-	Resources           []ProjectResourceForEnv `json:"resources"`
+	ProjectID           string                      `json:"project_id,omitempty"`
+	ProjectTitle        string                      `json:"project_title,omitempty"`
+	ProjectDescription  string                      `json:"project_description,omitempty"`
+	ProjectInstructions string                      `json:"project_instructions,omitempty"`
+	PrivateLibrary      *libraryimport.TaskSnapshot `json:"private_library,omitempty"`
+	Knowledge           *knowledge.Snapshot         `json:"knowledge,omitempty"`
+	Resources           []ProjectResourceForEnv     `json:"resources"`
 }
 
 // MarshalJSON renders the resource_ref field as raw JSON instead of a base64
@@ -281,7 +283,7 @@ func (p ProjectResourceForEnv) MarshalJSON() ([]byte, error) {
 // of created directories and the resources.json file so CleanupSidecars
 // can undo them on local_directory teardown.
 func writeProjectResources(workDir string, ctx TaskContextForEnv, manifest *sidecarManifest) error {
-	if ctx.ProjectID == "" && len(ctx.ProjectResources) == 0 && ctx.KnowledgeSnapshot == nil {
+	if ctx.ProjectID == "" && len(ctx.ProjectResources) == 0 && ctx.KnowledgeSnapshot == nil && ctx.PrivateLibrary == nil {
 		return nil
 	}
 	resources := ctx.ProjectResources
@@ -294,13 +296,14 @@ func writeProjectResources(workDir string, ctx TaskContextForEnv, manifest *side
 		ProjectDescription:  ctx.ProjectDescription,
 		ProjectInstructions: ctx.ProjectInstructions,
 		Knowledge:           ctx.KnowledgeSnapshot,
+		PrivateLibrary:      ctx.PrivateLibrary,
 		Resources:           resources,
 	}
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return err
 	}
-	if ctx.KnowledgeSnapshot != nil {
+	if ctx.KnowledgeSnapshot != nil || ctx.PrivateLibrary != nil {
 		return writeKnowledgeProjectContext(workDir, data, manifest)
 	}
 	dir := filepath.Join(workDir, ".multica", "project")

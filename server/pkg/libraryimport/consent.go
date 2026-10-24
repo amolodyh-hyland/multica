@@ -61,9 +61,12 @@ type Request struct {
 }
 
 type Capability struct {
-	Supported   bool        `json:"supported"`
-	ReasonCode  string      `json:"reasonCode,omitempty"`
-	Destination Destination `json:"destination"`
+	TaskActivation       string      `json:"taskActivation"`
+	TaskActivationReason string      `json:"taskActivationReason"`
+	Reload               string      `json:"reload"`
+	Supported            bool        `json:"supported"`
+	ReasonCode           string      `json:"reasonCode,omitempty"`
+	Destination          Destination `json:"destination"`
 }
 
 type Receipt struct {
