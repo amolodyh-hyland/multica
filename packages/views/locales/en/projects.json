@@ -84,10 +84,11 @@
     "section_instructions": "Instructions",
     "instructions_placeholder": "Add project instructions…",
     "instructions_hint": "Shared with issue runs and project chats. Maximum 32 KiB.",
-    "instructions_too_large": "Instructions must be at most 32 KiB."
+    "instructions_too_large": "Instructions must be at most 32 KiB.",
+    "instructions_save_failed": "Could not save project instructions."
   },
   "resources": {
-    "section_header": "Resources",
+    "section_header": "Execution resources",
     "empty": "No resources attached.",
     "add_button": "Add resource",
     "popover_title": "Attach a GitHub repo",
@@ -154,7 +155,11 @@
     "toast_ref_update_failed": "Could not update the branch",
     "ref_error_commit": "That's a commit, not a branch. Tasks deliver back to the branch they start from — for a one-off revision, pass --ref to multica repo checkout.",
     "ref_default_label": "Default branch",
-    "ref_default_tooltip": "No branch set — tasks use whatever the repository's default branch is at the time."
+    "ref_default_tooltip": "No branch set — tasks use whatever the repository's default branch is at the time.",
+    "execution_hint": "Choose where runs work. Knowledge references above provide context separately.",
+    "loading": "Loading project resources…",
+    "load_failed": "Could not load project resources.",
+    "retry": "Retry"
   },
   "delete_dialog": {
     "title": "Delete project",
@@ -186,5 +191,44 @@
     "direction_desc": "Descending",
     "section_columns": "Columns",
     "view": "View"
+  },
+  "knowledge": {
+    "title": "Knowledge references",
+    "context_hint": "Read-only context for issue runs and project chats. These links do not choose an execution directory or install skills.",
+    "empty": "Optional: this project works without knowledge or a repository.",
+    "add": "Add knowledge reference",
+    "registration_hint": "On the owner machine, select the intended configuration profile and register a file, folder or skill with the CLI. Review the local content before approving it, then paste the returned JSON. Only reference metadata is saved; files stay on that machine.",
+    "registration": "Registration JSON",
+    "invalid": "Paste a valid file, folder or skill registration, containing only resource_type and resource_ref.",
+    "owner": "Owner: {{owner}}",
+    "machine": "Owner machine: {{machine}}",
+    "owner_only": "Only the registered owner can attach this reference.",
+    "details": "View reference metadata",
+    "remove": "Remove reference",
+    "remove_failed": "Could not remove the reference.",
+    "save_failed": "Could not save the reference.",
+    "cancel": "Cancel",
+    "attach": "Attach reference",
+    "file": "File",
+    "folder": "Folder",
+    "skill": "Skill (text context only)",
+    "available": "Available",
+    "incompatible": "Needs newer runner",
+    "unverified": "Unverified",
+    "upgrade": "Update Multica on the owner machine and reconnect its daemon to check status. Runs still verify context before execution.",
+    "reconnect": "Start the owner daemon on its machine, then check again. Runs still verify context before execution.",
+    "retry_hint": "The check is busy or timed out. Wait, then check again. Runs still verify context before execution.",
+    "unreadable_hint": "Check the source permissions and registration on the owner machine, then check again.",
+    "verify_at_run": "Only metadata leaves the owner machine. Offline or older runners fall back to verification when a run prepares context.",
+    "changed_source": "Changed or stale source?",
+    "replace_hint": "On the owner machine, register and approve the current content again. Remove this reference and attach the new registration. Existing sessions retain their pinned snapshot. Removing a reference does not delete source files.",
+    "stale": "Changed since pinned",
+    "missing": "Missing",
+    "check": "Check status",
+    "checking": "Checking…",
+    "check_hint": "Press Check status to inspect the registered source on its owner machine.",
+    "owner_check": "Ask the owner to check this reference on their machine.",
+    "check_failed": "Could not check this reference.",
+    "limits_hint": "The source exceeds inspection limits. Register a smaller source on the owner machine and attach its approved reference."
   }
 }

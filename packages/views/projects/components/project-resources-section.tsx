@@ -17,6 +17,7 @@ import {
   useCreateProjectResource,
   useDeleteProjectResource,
   useUpdateProjectResource,
+  isProjectKnowledgeType,
 } from "@multica/core/projects";
 import { splitGithubUrlRef } from "@multica/core/github";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -60,6 +61,7 @@ import { GithubRefField, githubRefHasError } from "./github-ref-field";
 import { localDirectoryLabel } from "./local-directory-label";
 import { useT } from "../../i18n";
 import { githubShortLabel } from "../../common/github-url";
+import { ProjectKnowledgeSection } from "./project-knowledge-section";
 
 // Project Resources sidebar section.
 //
@@ -124,9 +126,11 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const [refSaving, setRefSaving] = useState(false);
   const [refError, setRefError] = useState<string | null>(null);
 
-  const { data: resources = [] } = useQuery(
+  const { data: resources = [], isPending: resourcesLoading, isError: resourcesError, refetch: reloadResources } = useQuery(
     projectResourcesOptions(wsId, projectId),
   );
+  const executionResources = resources.filter((resource) => !isProjectKnowledgeType(resource.resource_type));
+  const knowledgeResources = resources.filter((resource) => isProjectKnowledgeType(resource.resource_type));
   const createResource = useCreateProjectResource(wsId, projectId);
   const updateResource = useUpdateProjectResource(wsId, projectId);
   const deleteResource = useDeleteProjectResource(wsId, projectId);
@@ -374,8 +378,18 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
     }
   };
 
+  if (resourcesLoading) return <p className="px-2 text-caption text-muted-foreground">{t(($) => $.resources.loading)}</p>;
+  if (resourcesError) return (
+    <div role="alert" className="px-2 space-y-2 text-caption">
+      <p>{t(($) => $.resources.load_failed)}</p>
+      <Button variant="outline" size="sm" onClick={() => void reloadResources()}>{t(($) => $.resources.retry)}</Button>
+    </div>
+  );
+
   return (
-    <div>
+    <div className="space-y-5">
+      <ProjectKnowledgeSection projectId={projectId} resources={knowledgeResources} runtimes={runtimes} />
+      <div>
       <button
         type="button"
         className={`flex w-full items-center gap-1 rounded-md px-2 py-1 text-caption font-medium transition-colors mb-2 hover:bg-accent/70 ${open ? "" : "text-muted-foreground hover:text-foreground"}`}
@@ -388,14 +402,15 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
       </button>
       {open && (
         <div className="pl-2 space-y-1.5">
-          {resources.length === 0 && (
+          <p className="text-caption text-muted-foreground">{t(($) => $.resources.execution_hint)}</p>
+          {executionResources.length === 0 && (
             <p className="text-caption text-muted-foreground">
               {t(($) => $.resources.empty)}
             </p>
           )}
-          {resources.length > 0 && (
+          {executionResources.length > 0 && (
             <div className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
-              {resources.map((resource) => (
+              {executionResources.map((resource) => (
                 <ResourceRow
                   key={resource.id}
                   resource={resource}
@@ -600,6 +615,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
           onConfirm={(mode) => void handleConfirmMode(mode)}
         />
       )}
+      </div>
     </div>
   );
 }

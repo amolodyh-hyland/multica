@@ -113,6 +113,7 @@ import type {
   CreateProjectResourceRequest,
   UpdateProjectResourceRequest,
   ListProjectResourcesResponse,
+  ProjectKnowledgeStatusResponse,
   Label,
   IssueProperty,
   IssuePropertyValue,
@@ -345,6 +346,7 @@ import {
   SearchProjectsResponseSchema,
   ProjectSchema,
   ProjectResourceSchema,
+  ProjectKnowledgeStatusResponseSchema,
   ListProjectResourcesResponseSchema,
   EMPTY_PROJECT_RESOURCE,
   EMPTY_LIST_PROJECT_RESOURCES_RESPONSE,
@@ -4087,6 +4089,16 @@ export class ApiClient {
   }
 
   // Project resources
+  async checkProjectKnowledgeStatus(projectId: string, resourceIds: string[]): Promise<ProjectKnowledgeStatusResponse> {
+    const raw: unknown = await this.fetch(`/api/projects/${projectId}/knowledge/status`, {
+      method: "POST",
+      body: JSON.stringify({ resource_ids: resourceIds }),
+    });
+    return parseWithFallback(raw, ProjectKnowledgeStatusResponseSchema, { results: [] }, {
+      endpoint: "POST /api/projects/:id/knowledge/status",
+    });
+  }
+
   async listProjectResources(
     projectId: string,
   ): Promise<ListProjectResourcesResponse> {

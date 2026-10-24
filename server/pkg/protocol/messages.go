@@ -1,8 +1,12 @@
 package protocol
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"github.com/multica-ai/multica/server/pkg/knowledge"
+)
 
 const (
+	DaemonCapabilityKnowledgeStatusV1   = "knowledge-status-v1"
 	DaemonCapabilityKnowledgeV1         = "knowledge-context-v1"
 	DaemonCapabilityPublicDelegationV1  = "public-delegation-v1"
 	DaemonCapabilitySkillBundlesV1      = "skill-bundles-v1"
@@ -423,6 +427,7 @@ type DaemonHeartbeatAckPayload struct {
 	RuntimeGone             bool                                    `json:"runtime_gone,omitempty"`
 	PendingUpdate           *DaemonHeartbeatPendingUpdate           `json:"pending_update,omitempty"`
 	PendingModelList        *DaemonHeartbeatPendingModelList        `json:"pending_model_list,omitempty"`
+	PendingKnowledgeStatus  *knowledge.StatusRequest                `json:"pending_knowledge_status,omitempty"`
 	PendingLocalSkills      *DaemonHeartbeatPendingLocalSkills      `json:"pending_local_skills,omitempty"`
 	PendingLocalSkillImport *DaemonHeartbeatPendingLocalSkillImport `json:"pending_local_skill_import,omitempty"`
 	// PendingLocalSkillImports carries multiple import requests in a single

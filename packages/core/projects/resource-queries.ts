@@ -4,7 +4,6 @@ import { projectKeys } from "./queries";
 import type {
   CreateProjectResourceRequest,
   ListProjectResourcesResponse,
-  ProjectResource,
   UpdateProjectResourceRequest,
 } from "../types";
 
@@ -84,37 +83,29 @@ export function useDeleteProjectResource(wsId: string, projectId: string) {
   return useMutation({
     mutationFn: (resourceId: string) =>
       api.deleteProjectResource(projectId, resourceId),
-    onMutate: async (resourceId) => {
-      await qc.cancelQueries({
-        queryKey: projectResourceKeys.list(wsId, projectId),
-      });
-      const prev = qc.getQueryData<ListProjectResourcesResponse>(
-        projectResourceKeys.list(wsId, projectId),
-      );
+    onSuccess: (_data, resourceId) => {
       qc.setQueryData<ListProjectResourcesResponse>(
         projectResourceKeys.list(wsId, projectId),
-        (old) =>
-          old
-            ? {
-                ...old,
-                resources: old.resources.filter(
-                  (r: ProjectResource) => r.id !== resourceId,
-                ),
-                total: old.total - 1,
-              }
-            : old,
+        (old) => old ? {
+          ...old,
+          resources: old.resources.filter((resource) => resource.id !== resourceId),
+          total: old.total - 1,
+        } : old,
       );
-      return { prev };
-    },
-    onError: (_err, _id, ctx) => {
-      if (ctx?.prev) {
-        qc.setQueryData(projectResourceKeys.list(wsId, projectId), ctx.prev);
-      }
     },
     onSettled: () => {
       qc.invalidateQueries({
         queryKey: projectResourceKeys.list(wsId, projectId),
       });
     },
+  });
+}
+
+export function useCheckProjectKnowledgeStatus(wsId: string, projectId: string) {
+  return useMutation({
+    mutationKey: [...projectKeys.detail(wsId, projectId), "knowledge-status"],
+    mutationFn: (resourceIds: string[]) => api.checkProjectKnowledgeStatus(projectId, resourceIds),
+    retry: false,
+    gcTime: 0,
   });
 }

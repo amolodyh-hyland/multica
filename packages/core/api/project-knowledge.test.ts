@@ -31,3 +31,18 @@ it("validates list, create and update payloads and handles malformed responses",
   mock.mockResolvedValueOnce(new Response(JSON.stringify({ resources: [{ ...resource, resource_ref: null }], total: 1 })));
   await expect(client.listProjectResources("project1")).resolves.toEqual({ resources: [], total: 0 });
 });
+
+it("checks status using resource IDs and parses only metadata", async () => {
+ const status={resource_id:resource.id,reference_hash:ref.content_hash,status:"stale",reason:"changed",exists:true,type:"file",size_bytes:10,content_hash:`sha256:${"b".repeat(64)}`};
+ const mock=vi.fn().mockImplementation(async()=>new Response(JSON.stringify({results:[status]})));
+ vi.stubGlobal("fetch",mock);
+ const client=new ApiClient("https://server.test");
+ await expect(client.checkProjectKnowledgeStatus("project1",[resource.id])).resolves.toEqual({results:[status]});
+ expect(JSON.parse(mock.mock.calls[0]?.[1]?.body)).toEqual({resource_ids:[resource.id]});
+ for(const invalid of [{...status,content:"private text"},{...status,content_hash:"bad"},{...status,exists:"yes"}]){
+  mock.mockResolvedValueOnce(new Response(JSON.stringify({results:[invalid]})));
+  await expect(client.checkProjectKnowledgeStatus("project1",[resource.id])).resolves.toEqual({results:[]});
+ }
+ mock.mockResolvedValueOnce(new Response(JSON.stringify({results:[{...status,status:"future_state"}]})));
+ await expect(client.checkProjectKnowledgeStatus("project1",[resource.id])).resolves.toMatchObject({results:[{status:"unverified"}]});
+});

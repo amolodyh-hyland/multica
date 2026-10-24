@@ -84,10 +84,11 @@
     "section_instructions": "Instructions",
     "instructions_placeholder": "Ajouter des instructions au projet…",
     "instructions_hint": "Partagées avec les exécutions des tâches et les discussions du projet. Maximum 32 KiB.",
-    "instructions_too_large": "Les instructions ne doivent pas dépasser 32 KiB."
+    "instructions_too_large": "Les instructions ne doivent pas dépasser 32 KiB.",
+    "instructions_save_failed": "Impossible d’enregistrer les instructions du projet."
   },
   "resources": {
-    "section_header": "Ressources",
+    "section_header": "Ressources d’exécution",
     "empty": "Aucune ressource rattachée.",
     "add_button": "Ajouter une ressource",
     "popover_title": "Rattacher un dépôt GitHub",
@@ -154,7 +155,11 @@
     "toast_ref_update_failed": "Impossible de mettre à jour la branche",
     "ref_error_commit": "Ceci est un commit, pas une branche. Les tâches livrent sur la branche depuis laquelle elles démarrent — pour une révision ponctuelle, utilisez multica repo checkout --ref.",
     "ref_default_label": "Branche par défaut",
-    "ref_default_tooltip": "Aucune branche définie — les tâches utilisent la branche par défaut du dépôt au moment voulu."
+    "ref_default_tooltip": "Aucune branche définie — les tâches utilisent la branche par défaut du dépôt au moment voulu.",
+    "execution_hint": "Choisissez où les exécutions travaillent. Les références ci-dessus fournissent le contexte séparément.",
+    "loading": "Chargement des ressources du projet…",
+    "load_failed": "Impossible de charger les ressources du projet.",
+    "retry": "Réessayer"
   },
   "delete_dialog": {
     "title": "Supprimer le projet",
@@ -186,5 +191,44 @@
     "direction_desc": "Décroissant",
     "section_columns": "Colonnes",
     "view": "Vue"
+  },
+  "knowledge": {
+    "title": "Références de connaissances",
+    "context_hint": "Contexte en lecture seule pour les exécutions de tâches et les chats du projet. Ces liens ne choisissent pas de répertoire d’exécution et n’installent pas de skills.",
+    "empty": "Le projet fonctionne sans connaissances ni dépôt.",
+    "add": "Ajouter une référence",
+    "registration_hint": "Sur la machine du propriétaire, choisissez le profil de configuration et enregistrez un fichier, dossier ou skill avec la CLI. Vérifiez le contenu avant de l’approuver, puis collez le JSON retourné. Seules les métadonnées sont enregistrées ; les fichiers restent sur cette machine.",
+    "registration": "JSON d’enregistrement",
+    "invalid": "Collez un enregistrement valide contenant uniquement resource_type et resource_ref.",
+    "owner": "Propriétaire : {{owner}}",
+    "machine": "Machine du propriétaire : {{machine}}",
+    "owner_only": "Seul le propriétaire enregistré peut ajouter cette référence.",
+    "details": "Voir les métadonnées",
+    "remove": "Retirer la référence",
+    "remove_failed": "Impossible de retirer la référence.",
+    "save_failed": "Impossible d’enregistrer la référence.",
+    "cancel": "Annuler",
+    "attach": "Associer la référence",
+    "file": "Fichier",
+    "folder": "Dossier",
+    "skill": "Skill (contexte textuel uniquement)",
+    "available": "Disponible",
+    "incompatible": "Runner plus récent requis",
+    "unverified": "Non vérifiée",
+    "upgrade": "Mettez Multica à jour sur la machine du propriétaire et reconnectez le démon. Le contexte reste vérifié avant l’exécution.",
+    "reconnect": "Démarrez le démon sur la machine du propriétaire, puis réessayez. Le contexte reste vérifié avant l’exécution.",
+    "retry_hint": "La vérification est occupée ou a expiré. Patientez, puis réessayez. Le contexte reste vérifié avant chaque exécution.",
+    "unreadable_hint": "Vérifiez les autorisations et l’enregistrement de la source sur la machine propriétaire, puis réessayez.",
+    "verify_at_run": "Seules les métadonnées quittent la machine du propriétaire. Si elle est hors ligne ou utilise un ancien runner, la vérification se fait à la préparation de l’exécution.",
+    "changed_source": "Source modifiée ou périmée ?",
+    "replace_hint": "Sur la machine du propriétaire, réenregistrez et approuvez le contenu actuel. Retirez cette référence et associez le nouvel enregistrement. Les sessions existantes conservent leur instantané figé. Retirer une référence ne supprime pas les fichiers sources.",
+    "stale": "Modifiée depuis la version figée",
+    "missing": "Manquante",
+    "check": "Vérifier l’état",
+    "checking": "Vérification…",
+    "check_hint": "Vérifier l’état inspecte la source enregistrée sur la machine du propriétaire.",
+    "owner_check": "Demandez au propriétaire de vérifier cette référence sur sa machine.",
+    "check_failed": "Impossible de vérifier cette référence.",
+    "limits_hint": "La source dépasse les limites d’inspection. Enregistrez une source plus petite sur la machine du propriétaire et associez sa référence approuvée."
   }
 }

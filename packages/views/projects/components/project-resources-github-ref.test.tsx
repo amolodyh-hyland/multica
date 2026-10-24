@@ -62,11 +62,16 @@ vi.mock("@tanstack/react-query", () => ({
   queryOptions: (options: unknown) => options,
 }));
 
-vi.mock("@multica/core/projects", () => ({
+vi.mock("@multica/core/projects", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@multica/core/projects")>()),
   projectResourcesOptions: () => ({ queryKey: ["project-resources"], queryFn: vi.fn() }),
   useCreateProjectResource: () => ({ mutateAsync: createMock, isPending: false }),
   useUpdateProjectResource: () => ({ mutateAsync: updateMock }),
   useDeleteProjectResource: () => ({ mutateAsync: vi.fn() }),
+}));
+
+vi.mock("@multica/core/auth", () => ({
+  useAuthStore: (selector: (state: { user: { id: string } }) => unknown) => selector({ user: { id: "u1" } }),
 }));
 
 vi.mock("@multica/core/config", () => ({

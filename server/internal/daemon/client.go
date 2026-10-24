@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/knowledge"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
@@ -210,6 +211,7 @@ func daemonCommonCapabilities() []string {
 		protocol.DaemonCapabilityRemoteMCPV1,
 		protocol.DaemonCapabilityLocalWorktreeV1,
 		protocol.DaemonCapabilityKnowledgeV1,
+		protocol.DaemonCapabilityKnowledgeStatusV1,
 		protocol.DaemonCapabilitySourceContextQuickCreateV1,
 		protocol.DaemonCapabilityRPCV1,
 		protocol.DaemonCapabilityPlatformSkillV1,
@@ -1416,4 +1418,8 @@ func (c *Client) InvokeAgentPluginHook(ctx context.Context, daemonToken, taskID,
 		return nil, errors.New("the plugin hook did not succeed")
 	}
 	return response.Output, nil
+}
+
+func (c *Client) ReportKnowledgeStatus(ctx context.Context, runtimeID, requestID string, results []knowledge.SourceStatus) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/knowledge/status/%s", runtimeID, requestID), map[string]any{"results": results}, nil)
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/multica-ai/multica/server/pkg/knowledge"
@@ -189,5 +190,86 @@ func TestKnowledgeDaemonResolution(t *testing.T) {
 	}
 	if got, err := resolveTaskKnowledge(context.Background(), store, scope.Server, scope.DaemonID, Task{}); err != nil || got != nil {
 		t.Fatalf("existing tasks changed: %v", err)
+	}
+}
+
+func TestKnowledgeStatusReservesCapacityForClaims(t *testing.T) {
+	var limiter knowledgeResolutionLimiter
+	filesystem := &stalledKnowledgeFS{started: make(chan struct{}, 1), release: make(chan struct{})}
+	defer close(filesystem.release)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := limiter.checkStatus(ctx, func(ctx context.Context) ([]knowledge.SourceStatus, error) {
+			_, err := (filesystemKnowledgeStore{filesystem: filesystem}).Resolve(ctx, knowledge.Scope{}, knowledge.Selection{})
+			return nil, err
+		})
+		done <- err
+	}()
+	select {
+	case <-filesystem.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("status read did not start")
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("status caller did not time out: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("stalled read held the status caller past its deadline")
+	}
+
+	// A timeout must not release the status slot: retries cannot occupy the
+	// second shared permit while the first underlying read remains stalled.
+	for i := 0; i < 3; i++ {
+		_, err := limiter.checkStatus(context.Background(), func(context.Context) ([]knowledge.SourceStatus, error) {
+			t.Error("busy status retry started another underlying read")
+			return nil, nil
+		})
+		if !errors.Is(err, errKnowledgeStatusBusy) {
+			t.Fatalf("status retry = %v; want busy", err)
+		}
+	}
+	if got := len(limiter.slots); got != 1 {
+		t.Fatalf("stalled status must retain exactly one shared permit, got %d", got)
+	}
+	store := filesystemKnowledgeStore{filesystem: fstest.MapFS{"snapshot.json": &fstest.MapFile{Data: []byte("snapshot")}}}
+	task := Task{WorkspaceID: "workspace1", KnowledgeManifest: &knowledge.Selection{WorkspaceID: "workspace1", OwnerID: "owner1", DaemonID: "machine1"}}
+	claimCtx, stop := context.WithTimeout(context.Background(), 2*time.Second)
+	defer stop()
+	if snapshot, err := limiter.resolve(claimCtx, store, "https://server.test", "machine1", task); err != nil || snapshot == nil {
+		t.Fatalf("stalled status blocked a healthy claim: %v", err)
+	}
+	if got := filesystem.opens.Load(); got != 1 {
+		t.Fatalf("status reads accumulated: %d", got)
+	}
+
+	filesystem.release <- struct{}{}
+	// The slot is reusable only after the underlying read and its cleanup finish.
+	deadline := time.After(2 * time.Second)
+	for limiter.statusActive.Load() {
+		select {
+		case <-deadline:
+			t.Fatal("finished status read did not release its slot")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if _, err := limiter.checkStatus(claimCtx, func(context.Context) ([]knowledge.SourceStatus, error) { return nil, nil }); err != nil {
+		t.Fatalf("status check did not recover: %v", err)
+	}
+}
+
+func TestKnowledgeStatusCancellationBeforeReadReleasesSlot(t *testing.T) {
+	var limiter knowledgeResolutionLimiter
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := limiter.checkStatus(ctx, func(context.Context) ([]knowledge.SourceStatus, error) {
+		t.Error("cancelled status check started a read")
+		return nil, nil
+	})
+	if !errors.Is(err, context.Canceled) || limiter.statusActive.Load() {
+		t.Fatalf("cancelled status check retained its slot: %v", err)
 	}
 }

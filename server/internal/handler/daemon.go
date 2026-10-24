@@ -1179,11 +1179,18 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if requestHasClientCapability(r, protocol.DaemonCapabilityKnowledgeStatusV1) {
+		ack.PendingKnowledgeStatus = h.takeKnowledgeStatus(r.Context(), runtimeID, middleware.DaemonIDFromContext(r.Context()), requestUserID(r))
+	}
+
 	outcome = "ok"
 	// Preserve the existing HTTP response shape: the runtime_id field is new
 	// in the WS path and would be redundant noise on the HTTP path where the
 	// caller already knows which runtime it asked about.
 	resp := map[string]any{"status": ack.Status}
+	if ack.PendingKnowledgeStatus != nil {
+		resp["pending_knowledge_status"] = ack.PendingKnowledgeStatus
+	}
 	if ack.PendingUpdate != nil {
 		resp["pending_update"] = ack.PendingUpdate
 	}
@@ -1228,6 +1235,14 @@ func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws
 		return nil, err
 	}
 	ack, _, err := h.processHeartbeat(ctx, runtimeID, supportsBatchImport)
+	if err == nil && ack != nil {
+		for _, capability := range strings.Split(identity.Capabilities, ",") {
+			if strings.TrimSpace(capability) == protocol.DaemonCapabilityKnowledgeStatusV1 {
+				ack.PendingKnowledgeStatus = h.takeKnowledgeStatus(ctx, runtimeID, identity.DaemonID, identity.UserID)
+				break
+			}
+		}
+	}
 	return ack, err
 }
 

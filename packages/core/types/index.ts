@@ -202,6 +202,8 @@ export type {
   ProjectResourceType,
   ProjectKnowledgeType,
   ProjectKnowledgeRef,
+  ProjectKnowledgeStatus,
+  ProjectKnowledgeStatusResponse,
   ProjectResourceRef,
   GithubRepoResourceRef,
   LocalDirectoryResourceRef,

@@ -4532,6 +4532,9 @@ func (d *Daemon) handleHeartbeatActions(ctx context.Context, runtimeID string, r
 			"local_skill_import", resp.PendingLocalSkillImport != nil,
 		)
 	}
+	if resp.PendingKnowledgeStatus != nil {
+		go d.handleKnowledgeStatus(ctx, runtimeID, *resp.PendingKnowledgeStatus)
+	}
 	if resp.PendingUpdate != nil {
 		go d.handleUpdate(ctx, runtimeID, resp.PendingUpdate)
 	}
