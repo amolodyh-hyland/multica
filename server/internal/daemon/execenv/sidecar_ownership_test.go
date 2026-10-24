@@ -148,3 +148,21 @@ func TestSidecarOwnershipCannotBeRestoredWithModificationTimestamp(t *testing.T)
 		t.Fatal("revised file removed")
 	}
 }
+
+func TestSidecarManifestRestrictsPrivatePathMetadata(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions")
+	}
+	root := t.TempDir()
+	path := filepath.Join(root, sidecarManifestFile)
+	if err := os.WriteFile(path, []byte(`{"files":[]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSidecarManifest(root, &sidecarManifest{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("private sidecar paths are readable by others: %v, %v", info, err)
+	}
+}

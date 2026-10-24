@@ -362,7 +362,33 @@ func writeSidecarManifest(envRoot string, m *sidecarManifest) error {
 	if err != nil {
 		return fmt.Errorf("marshal sidecar manifest: %w", err)
 	}
-	return os.WriteFile(filepath.Join(envRoot, sidecarManifestFile), data, 0o644)
+	root, err := os.OpenRoot(envRoot)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return err
+	}
+	name := ".sidecars-" + hex.EncodeToString(nonce[:])
+	file, err := root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	defer root.Remove(name)
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return root.Rename(name, sidecarManifestFile)
 }
 
 // CleanupSidecars removes manifest-owned files, then directories deepest first.
