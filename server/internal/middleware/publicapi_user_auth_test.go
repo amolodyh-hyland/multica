@@ -266,3 +266,12 @@ func assertPublicAPIProblem(t *testing.T, response *httptest.ResponseRecorder, w
 		t.Fatalf("problem type = %q", problem.Type)
 	}
 }
+
+func TestRevokedPATCannotReadDelegationResult(t *testing.T) {
+	store := &publicAPIPATStoreStub{err: pgx.ErrNoRows}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/delegations/00000000-0000-0000-0000-000000000001/result", nil)
+	req.Header.Set("Authorization", "Bearer mul_revoked_test")
+	response := httptest.NewRecorder()
+	PublicAPIUserPAT(store)(RequirePublicAPIScope("delegations:results:read")(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("revoked credential reached result operation") }))).ServeHTTP(response, req)
+	assertPublicAPIProblem(t, response, http.StatusUnauthorized, "invalid_token")
+}

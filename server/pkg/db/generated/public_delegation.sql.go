@@ -155,6 +155,15 @@ func (q *Queries) CreatePublicDelegationTask(ctx context.Context, arg CreatePubl
 	return i, err
 }
 
+const deletePublicDelegationResultsForWorkspace = `-- name: DeletePublicDelegationResultsForWorkspace :exec
+DELETE FROM public_delegation_result WHERE workspace_id = $1
+`
+
+func (q *Queries) DeletePublicDelegationResultsForWorkspace(ctx context.Context, workspaceID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deletePublicDelegationResultsForWorkspace, workspaceID)
+	return err
+}
+
 const deletePublicDelegationsForWorkspace = `-- name: DeletePublicDelegationsForWorkspace :exec
 DELETE FROM public_delegation WHERE workspace_id = $1
 `
@@ -513,4 +522,29 @@ func (q *Queries) LockPublicDelegationTask(ctx context.Context, arg LockPublicDe
 		&i.KnowledgeManifest,
 	)
 	return i, err
+}
+
+const recordPublicDelegationResult = `-- name: RecordPublicDelegationResult :exec
+INSERT INTO public_delegation_result (delegation_id, workspace_id, requester_id, revision, snapshot)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (workspace_id, delegation_id, revision) DO NOTHING
+`
+
+type RecordPublicDelegationResultParams struct {
+	DelegationID pgtype.UUID `json:"delegation_id"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	RequesterID  pgtype.UUID `json:"requester_id"`
+	Revision     string      `json:"revision"`
+	Snapshot     []byte      `json:"snapshot"`
+}
+
+func (q *Queries) RecordPublicDelegationResult(ctx context.Context, arg RecordPublicDelegationResultParams) error {
+	_, err := q.db.Exec(ctx, recordPublicDelegationResult,
+		arg.DelegationID,
+		arg.WorkspaceID,
+		arg.RequesterID,
+		arg.Revision,
+		arg.Snapshot,
+	)
+	return err
 }

@@ -1378,6 +1378,15 @@ type PublicDelegation struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
+type PublicDelegationResult struct {
+	DelegationID pgtype.UUID        `json:"delegation_id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	RequesterID  pgtype.UUID        `json:"requester_id"`
+	Revision     string             `json:"revision"`
+	Snapshot     []byte             `json:"snapshot"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
 type QuickAction struct {
 	ID            pgtype.UUID        `json:"id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`

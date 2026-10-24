@@ -311,3 +311,9 @@ plain text, then obtain separate consent before import. Import must revalidate t
 snapshot; no execution, continuation or remote upload is authorized.
 The paired fixture is `testdata/multica-delegation-result-v1.json`; set
 `AO_RESULT_CONTRACT_FIXTURE` to the AO peer when testing this package.
+
+Result snapshots are stored once per workspace, delegation and revision in
+`public_delegation_result` until workspace deletion. Migrations 594–595 create
+the ledger and its concurrent unique index; interrupted index builds use the
+registered invalid-index cleanup. Roll back 595 before 594. Workspace deletion
+removes the snapshots explicitly; there are no foreign keys or cascades.

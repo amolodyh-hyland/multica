@@ -143,6 +143,7 @@ var pgBigmOperatorClass = extensionOperatorClass{
 // a column CHECK constraint; neither migration needs index cleanup.
 // 592_task_knowledge_manifest adds a JSONB column with no index to clean up.
 var concurrentIndexCleanups = map[string]string{
+	"595_public_delegation_result_index":                        "public_delegation_result_identity_idx",
 	"593_task_knowledge_session_index":                          "idx_task_knowledge_session",
 	"589_public_delegation_identity_index":                      "public_delegation_identity_idx",
 	"588_public_delegation_id_index":                            "public_delegation_id_idx",

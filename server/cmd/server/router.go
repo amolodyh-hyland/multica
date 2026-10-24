@@ -116,6 +116,7 @@ func registerPluginActionRoutes(r chi.Router, h *handler.Handler) {
 
 func registerMemberPublicAPIRoutes(r chi.Router, h *handler.Handler) {
 	operations := map[string]http.Handler{
+		http.MethodGet + " " + publicapiv1.PathDelegationResult:  http.HandlerFunc(h.GetPublicDelegationResult),
 		http.MethodGet + " " + publicapiv1.PathDelegations:       http.HandlerFunc(h.ListPublicDelegations),
 		http.MethodGet + " " + publicapiv1.PathDelegation:        http.HandlerFunc(h.GetPublicDelegation),
 		http.MethodPost + " " + publicapiv1.PathDelegationCancel: http.HandlerFunc(h.CancelPublicDelegation),
