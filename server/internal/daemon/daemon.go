@@ -2084,6 +2084,9 @@ func (d *Daemon) run(ctx context.Context, healthLn net.Listener) error {
 		logFields = append(logFields, "profile", d.cfg.Profile)
 	}
 	d.logger.Info("starting daemon", logFields...)
+	if d.cfg.BundleReadOnly {
+		d.logger.Warn(agent.ReadOnlyCodexCloudRiskWarning)
+	}
 	d.logger.Debug("daemon config resolved",
 		"daemon_id", d.cfg.DaemonID,
 		"device_name", d.cfg.DeviceName,
@@ -2738,9 +2741,21 @@ func (d *Daemon) detectBuiltinRuntimes(ctx context.Context) ([]map[string]string
 	)
 	g.SetLimit(runtimeVersionProbeConcurrency)
 	for name, entry := range d.agents() {
+		if d.cfg.BundleReadOnly && !bundleProviderSupported(name) {
+			mu.Lock()
+			skipped[name] = "unsupported by read-only bundle"
+			mu.Unlock()
+			continue
+		}
 		name, entry := name, entry
 		g.Go(func() error {
 			version, reason, verdict := d.probeBuiltinRuntime(ctx, name, entry)
+			if d.cfg.BundleReadOnly && verdict == builtinProbeOK {
+				if !agent.SupportsNativeReadOnly(name, version, runtime.GOOS) {
+					reason = "native read-only policy unsupported by " + name + " " + version
+					verdict = builtinProbeBelowMinimum
+				}
+			}
 			if verdict != builtinProbeOK {
 				demote := demotableBuiltinProbeVerdict(verdict) &&
 					(!builtinProbeNeedsConfirmation(verdict) ||
@@ -2901,6 +2916,15 @@ func preserveProvidersFromProbe(unavailable map[string]string, demotable map[str
 func (d *Daemon) registerRuntimesForWorkspaceBatchLocked(ctx context.Context, workspaceID string, builtins []map[string]string) (*RegisterResponse, string, error) {
 	d.logger.Debug("registering runtimes for workspace", "workspace_id", workspaceID, "agent_count", len(d.agents()))
 	runtimes := cloneRuntimeEntries(builtins)
+	if d.cfg.BundleReadOnly {
+		allowed := runtimes[:0]
+		for _, rt := range runtimes {
+			if bundleProviderSupported(rt["type"]) && agent.SupportsNativeReadOnly(rt["type"], rt["version"], runtime.GOOS) {
+				allowed = append(allowed, rt)
+			}
+		}
+		runtimes = allowed
+	}
 	var failedProfiles []map[string]string
 
 	// Append any workspace custom runtime profiles whose command resolves on
@@ -2915,7 +2939,10 @@ func (d *Daemon) registerRuntimesForWorkspaceBatchLocked(ctx context.Context, wo
 	// the effective profile set is already current (MUL-3332). An empty string
 	// means the fetch failed and the caller must keep whatever signature was
 	// previously cached on the workspaceState.
-	profileSig := d.appendProfileRuntimes(ctx, workspaceID, &runtimes, &failedProfiles)
+	profileSig := "read-only-bundle"
+	if !d.cfg.BundleReadOnly {
+		profileSig = d.appendProfileRuntimes(ctx, workspaceID, &runtimes, &failedProfiles)
+	}
 
 	if len(runtimes) == 0 && len(failedProfiles) == 0 {
 		// profileSig is still meaningful even when nothing resolves: the
@@ -4204,7 +4231,9 @@ func (d *Daemon) syncWorkspacesFromAPI(ctx context.Context, reconcileProfiles bo
 
 	apiIDs := make(map[string]string, len(workspaces)) // id -> name
 	for _, ws := range workspaces {
-		apiIDs[ws.ID] = ws.Name
+		if !d.cfg.BundleReadOnly || ws.ID == d.cfg.BundleWorkspaceID {
+			apiIDs[ws.ID] = ws.Name
+		}
 	}
 
 	d.mu.Lock()
@@ -4669,6 +4698,12 @@ func (d *Daemon) handlePendingWorkHint(runtimeID, kind string) {
 // usable; only the second one tells the user why it is empty.
 func (d *Daemon) handleModelList(ctx context.Context, rt Runtime, requestID string) {
 	d.logger.Info("model list requested", "runtime_id", rt.ID, "request_id", requestID, "provider", rt.Provider)
+	if d.cfg.BundleReadOnly {
+		d.reportModelListResult(ctx, rt, requestID, map[string]any{
+			"status": "failed", "error": "Live model discovery is unavailable for this standalone profile; specify a model explicitly.",
+		})
+		return
+	}
 
 	// Discovery must enumerate the binary this runtime will actually execute,
 	// otherwise the picker advertises a catalog the launched CLI never agreed
@@ -4964,6 +4999,13 @@ func (d *Daemon) reportRuntimeResultWithRetry(ctx context.Context, kind, runtime
 
 // handleUpdate performs the CLI update when triggered by the server via heartbeat.
 func (d *Daemon) handleUpdate(ctx context.Context, runtimeID string, update *PendingUpdate) {
+	if d.cfg.RuntimePinned {
+		d.reportUpdateResult(ctx, runtimeID, update.ID, map[string]any{
+			"status": "failed",
+			"error":  "runtime is source-pinned; replace the verified bundle manually after stopping this profile",
+		})
+		return
+	}
 	// Desktop-managed daemons share their CLI binary with the Electron app,
 	// which is responsible for shipping and replacing it. Letting the daemon
 	// self-update would just get overwritten on the next Desktop launch and
@@ -5702,6 +5744,12 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		return
 	}
 	provider := rt.Provider
+	if d.cfg.BundleReadOnly {
+		if err := d.validateBundleTask(task, provider); err != nil {
+			d.reportTaskResult(ctx, task.ID, TaskResult{Status: "failed", Comment: err.Error()}, d.logger)
+			return
+		}
+	}
 
 	// Task-scoped logger. The task id goes in whole: it is the key every
 	// other surface prints (task JSON, env-root ownership manifest, server
@@ -7663,6 +7711,11 @@ func qualifyTaskModel(
 }
 
 func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot int, taskLog *slog.Logger) (taskResult TaskResult, returnErr error) {
+	if d.cfg.BundleReadOnly {
+		if err := d.validateBundleTask(task, provider); err != nil {
+			return TaskResult{}, err
+		}
+	}
 	phaseRecorder := taskPhaseRecorderFromContext(ctx)
 	phaseRecorder.Mark(taskPhasePrepareStarted)
 	// A claim carries the task-row agent id both at the top level and inside
@@ -7753,6 +7806,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{}, fmt.Errorf("no agent configured for provider %q", provider)
 	}
 
+	if d.cfg.BundleReadOnly && !agent.SupportsNativeReadOnly(provider, resolvedVersion, runtime.GOOS) {
+		return TaskResult{}, fmt.Errorf("unsupported restricted native version: %s %s", provider, resolvedVersion)
+	}
 	stopPrepareLease := d.startTaskPrepareLeaseExtender(prepareCtx, task, taskLog)
 	defer stopPrepareLease()
 
@@ -7995,6 +8051,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			cursorMcpAuthSource = strings.TrimSpace(task.Agent.CustomEnv[execenv.CursorMcpAuthSourceEnv])
 		}
 	}
+	if d.cfg.BundleReadOnly {
+		effectiveMcpConfig = json.RawMessage(`{"mcpServers":{}}`)
+	}
 	// Decode openclaw-specific runtime_config knobs once so reuse / prepare /
 	// ExecOptions all see the same mode + gateway pin (issue #3260). Parse
 	// failures fail soft to local mode — a broken JSON blob must never block
@@ -8146,6 +8205,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			HermesMemoryStore:     hermesMemoryStore,
 			HermesSessionStore:    hermesSessionStore,
 			ReasonixEnv:           reasonixEnv,
+			NativeReadOnly:        d.cfg.BundleReadOnly,
 			CodexCustomArgs:       codexSandboxArgs,
 			Task:                  taskCtx,
 		})
@@ -8196,6 +8256,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			HermesMemoryStore:     hermesMemoryStore,
 			HermesSessionStore:    hermesSessionStore,
 			ReasonixEnv:           reasonixEnv,
+			NativeReadOnly:        d.cfg.BundleReadOnly,
 			CodexCustomArgs:       codexSandboxArgs,
 			Task:                  taskCtx,
 		}
@@ -8440,10 +8501,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if supplementSupported && provider == "cursor" {
 		cursorHookCommand, supplementSupported = cursorSupplementHookCommand(env)
 	}
-	if supplementSupported {
+	if supplementSupported && !d.cfg.BundleReadOnly {
 		taskCapabilities = append(taskCapabilities, protocol.DaemonCapabilityTaskSupplementV1)
 	}
 	taskSupplementNegotiated, err := d.client.StartTask(prepareCtx, task, taskCapabilities...)
+	if d.cfg.BundleReadOnly {
+		taskSupplementNegotiated = false
+	}
 	if err != nil {
 		stopPrepareLease()
 		return TaskResult{}, fmt.Errorf("start task failed: %w", err)
@@ -8636,6 +8700,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// daemon never calls agent.New or agent.NewRuntime directly, so the two
 	// factories stay meaning exactly one thing each.
 	backend, err := agent.ResolveBackend(provider, agent.Config{
+		NativeReadOnly: d.cfg.BundleReadOnly,
 		ExecutablePath: entry.Path,
 		LaunchPrefix:   profileFixedArgs,
 		CLIVersion:     resolvedVersion,
@@ -8708,7 +8773,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		thinkingLevel = task.Agent.ThinkingLevel
 		serviceTier = task.Agent.ServiceTier
 	}
-	selection := resolveTaskModelSelection(ctx, provider, agent.NewCommand(entry.Path, profileFixedArgs),
+	selection := d.resolveBundleAwareModelSelection(ctx, provider, agent.NewCommand(entry.Path, profileFixedArgs),
 		taskModelSelection{Model: model, ThinkingLevel: thinkingLevel, ServiceTier: serviceTier}, taskLog)
 	model, thinkingLevel, serviceTier = selection.Model, selection.ThinkingLevel, selection.ServiceTier
 
@@ -8717,6 +8782,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		idleWatchdogTimeout = d.cfg.OpenCodeIdleWatchdog
 	}
 	execOpts := agent.ExecOptions{
+		NativeReadOnly:             d.cfg.BundleReadOnly,
 		EnableTaskSupplement:       taskSupplementNegotiated,
 		CursorHookCommand:          cursorHookCommand,
 		Cwd:                        env.WorkDir,
@@ -8837,7 +8903,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	var retiredSessionID string
 	defer func() { taskResult.RetiredSessionID = retiredSessionID }()
 
-	if shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
+	if !d.cfg.BundleReadOnly && shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
 		firstResult := result
 		firstUsage := result.Usage
 		firstTools := tools

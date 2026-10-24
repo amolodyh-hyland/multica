@@ -241,3 +241,62 @@ func filterLegacyIDs(ids []string, current string) []string {
 	}
 	return out
 }
+
+// A different filename prevents ordinary daemon migration from adopting this ID.
+const bundleDaemonIDFileName = "bundle-daemon.id"
+
+func ensureBundleDaemonID(profile string) (string, error) {
+	if profile == "" {
+		return "", fmt.Errorf("bundle identity requires a named profile")
+	}
+	dir, err := cli.ProfileDir(profile)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, bundleDaemonIDFileName)
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		id, err := uuid.NewRandom()
+		if err != nil {
+			return "", err
+		}
+		// Link a complete file exclusively: simultaneous starts cannot replace
+		// one another's UUID or observe a partially written identity.
+		tmp, err := os.CreateTemp(dir, ".bundle-id-*")
+		if err != nil {
+			return "", err
+		}
+		defer os.Remove(tmp.Name())
+		_, writeErr := tmp.WriteString(id.String() + "\n")
+		closeErr := tmp.Close()
+		if writeErr != nil {
+			return "", writeErr
+		}
+		if closeErr != nil {
+			return "", closeErr
+		}
+		if err := os.Link(tmp.Name(), path); err != nil && !errors.Is(err, os.ErrExist) {
+			return "", err
+		}
+	} else if err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("bundle identity must be a regular file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	id := strings.TrimSpace(string(data))
+	if _, err := uuid.Parse(id); err != nil {
+		return "", fmt.Errorf("invalid persisted bundle identity: %w", err)
+	}
+	return id, nil
+}

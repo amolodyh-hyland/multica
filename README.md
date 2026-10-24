@@ -284,3 +284,5 @@ covering hosted services, commercial embedding, and branding. Self-host it, modi
 it; the exact terms are in the [LICENSE](LICENSE), attribution notices in [NOTICE](NOTICE).
 
 For source-pinned local backend and web images managed by the desktop local server controls, see [Local fork server images](docs/fork-server-images.md).
+
+For a source-matched standalone CLI/daemon bundle and its activation gates, see [the native bundle guide](docs/fork-daemon-bundle.md).

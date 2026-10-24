@@ -38,6 +38,7 @@ type ProjectResourceForEnv struct {
 
 // PrepareParams holds all inputs needed to set up an execution environment.
 type PrepareParams struct {
+	NativeReadOnly  bool
 	WorkspacesRoot  string // base path for all envs (e.g., ~/multica_workspaces)
 	WorkspaceID     string // workspace UUID — stable identity and path suffix
 	WorkspaceSlug   string // human-readable workspace path prefix
@@ -633,10 +634,10 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	// For Codex, set up a per-task CODEX_HOME seeded from ~/.codex/ with skills.
 	if params.Provider == "codex" {
 		codexHome := filepath.Join(envRoot, codexHomeDirName)
-		if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{CodexVersion: params.CodexVersion, IsLocalDirectory: params.LocalWorkDir != "" || params.LocalWorktree != nil, SessionStoreKey: codexSessionStoreKey(params.Profile, params.Task), CodexCustomArgs: params.CodexCustomArgs}, logger); err != nil {
+		if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{NativeReadOnly: params.NativeReadOnly, CodexVersion: params.CodexVersion, IsLocalDirectory: params.LocalWorkDir != "" || params.LocalWorktree != nil, SessionStoreKey: codexSessionStoreKey(params.Profile, params.Task), CodexCustomArgs: params.CodexCustomArgs}, logger); err != nil {
 			return nil, fmt.Errorf("execenv: prepare codex-home: %w", err)
 		}
-		if err := hydrateCodexSkills(codexHome, params.Task.AgentSkills, params.Task.DisabledRuntimeSkills, logger); err != nil {
+		if err := hydrateReadOnlyAwareCodexSkills(codexHome, params.NativeReadOnly, params.Task.AgentSkills, params.Task.DisabledRuntimeSkills, logger); err != nil {
 			return nil, fmt.Errorf("execenv: hydrate codex skills: %w", err)
 		}
 		env.CodexHome = codexHome
@@ -749,6 +750,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 // the per-provider knobs (CodexVersion, OpenclawBin) so callers can pass
 // the same resolved binary path on both first-run and reuse paths.
 type ReuseParams struct {
+	NativeReadOnly bool
 	// WorkspacesRoot is the daemon-owned root under which all task envs live.
 	// Passed on reuse so the root-level fail-closed marker is self-healed here
 	// too — a marker removed while the daemon runs is restored before a reused
@@ -919,7 +921,7 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	// config (especially sandbox/network access) is up to date.
 	if params.Provider == "codex" {
 		codexHome := filepath.Join(env.RootDir, codexHomeDirName)
-		if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{CodexVersion: params.CodexVersion, ResumeSessionID: params.ResumeSessionID, IsLocalDirectory: params.LocalDirectory, SessionStoreKey: codexSessionStoreKey(params.Profile, params.Task), CodexCustomArgs: params.CodexCustomArgs}, logger); err != nil {
+		if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{NativeReadOnly: params.NativeReadOnly, CodexVersion: params.CodexVersion, ResumeSessionID: params.ResumeSessionID, IsLocalDirectory: params.LocalDirectory, SessionStoreKey: codexSessionStoreKey(params.Profile, params.Task), CodexCustomArgs: params.CodexCustomArgs}, logger); err != nil {
 			// Leaving env.CodexHome empty does not launch Codex against an
 			// ambient home: configureCodexTaskShellEnvironment rejects the empty
 			// value ("task CODEX_HOME is missing") and the run fails before
@@ -931,7 +933,7 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 			return nil
 		} else {
 			env.CodexHome = codexHome
-			if err := hydrateCodexSkills(codexHome, params.Task.AgentSkills, params.Task.DisabledRuntimeSkills, logger); err != nil {
+			if err := hydrateReadOnlyAwareCodexSkills(codexHome, params.NativeReadOnly, params.Task.AgentSkills, params.Task.DisabledRuntimeSkills, logger); err != nil {
 				logger.Warn("execenv: refresh codex skills failed", "error", err)
 			}
 		}

@@ -46,6 +46,7 @@ var codexModelsCacheConfigFiles = []string{
 // CodexHomeOptions carries optional inputs for prepareCodexHomeWithOpts that
 // affect the generated per-task config.toml.
 type CodexHomeOptions struct {
+	NativeReadOnly bool
 	// CodexVersion is the detected Codex CLI version (e.g. "0.121.0"). Empty
 	// means unknown; on macOS, unknown is treated as "probably broken" so the
 	// daemon falls back to danger-full-access for network access. See
@@ -197,6 +198,9 @@ func classifyPerTaskWindowsSandbox(configFile string, configSyncErr error, share
 // daemon-managed sandbox block picked by codexSandboxPolicyFor.
 func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *slog.Logger) error {
 	sharedHome := resolveSharedCodexHome()
+	if opts.NativeReadOnly {
+		return prepareReadOnlyCodexHome(codexHome, sharedHome, opts.GOOS)
+	}
 	freshHome := false
 	if _, err := os.Lstat(codexHome); os.IsNotExist(err) {
 		freshHome = true
