@@ -277,6 +277,11 @@ func recordWriteFile(path string, data []byte, perm os.FileMode, m *sidecarManif
 	if err != nil {
 		return err
 	}
+	identity, err = sidecarFileIdentity(f)
+	if err != nil {
+		return err
+	}
+	owned.Identity = identity
 	digest := sha256.Sum256(data)
 	owned.Hash, owned.Size, owned.Mode, owned.Modified = hex.EncodeToString(digest[:]), info.Size(), uint32(info.Mode()), info.ModTime().UnixNano()
 	m.Owned[canonical] = owned
@@ -467,6 +472,10 @@ func removeOwnedSidecar(path string, owned sidecarOwnership, directory bool) err
 		if err != nil || after.Size() != info.Size() || after.ModTime() != info.ModTime() {
 			return errors.New("entry changed during verification")
 		}
+	}
+	finalIdentity, err := sidecarFileIdentity(f)
+	if err != nil || finalIdentity != owned.Identity {
+		return errors.New("entry ownership changed during verification")
 	}
 	current, err := root.Lstat(name)
 	if err != nil || !os.SameFile(info, current) {

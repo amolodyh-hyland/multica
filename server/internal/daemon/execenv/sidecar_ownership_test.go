@@ -3,6 +3,7 @@ package execenv
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -115,5 +116,35 @@ func TestSidecarWriteRefusesExistingMarkerChanges(t *testing.T) {
 	}
 	if err := writeTaskContextMarker(dir, TaskContextForEnv{AgentID: "two"}, &sidecarManifest{}); err == nil {
 		t.Fatal("unverified existing marker overwritten")
+	}
+}
+
+func TestSidecarOwnershipCannotBeRestoredWithModificationTimestamp(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix change-time ownership check")
+	}
+	path := filepath.Join(t.TempDir(), "owned")
+	manifest := &sidecarManifest{}
+	if err := recordWriteFile(path, []byte("baseline"), 0600, manifest); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if err := rollBackPreparedSidecars(*manifest); err == nil {
+		t.Fatal("timestamp restoration forged original ownership")
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "baseline" {
+		t.Fatal("revised file removed")
 	}
 }
