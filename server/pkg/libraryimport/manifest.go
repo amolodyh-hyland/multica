@@ -1,6 +1,7 @@
 package libraryimport
 
 import (
+	"encoding/json"
 	"errors"
 
 	"github.com/multica-ai/multica/server/pkg/knowledge"
@@ -9,6 +10,40 @@ import (
 
 const SourcePrivate = "private"
 const MaxRequestBytes = 16 << 20
+const MaxTaskPayloadBytes = 16 << 20
+const MaxSelectionBytes = 1 << 20
+const MaxSelectionHeaderBytes = 32 << 10
+const MaxEntryMetadataBytes = 64 << 10
+const MaxMetadataTextBytes = 1024
+const MaxMetadataTokenBytes = 128
+
+// ValidateMetadata bounds every variable-size entry field before serialization.
+func (e Entry) ValidateMetadata() error {
+	if !knowledge.ValidID(e.EntryID) || !knowledge.ValidID(e.SourceID) || !knowledge.ValidID(e.Provenance.OriginAuthorityID) || !knowledge.ValidID(e.Provenance.OriginSourceID) || !knowledge.ValidID(e.Provenance.OriginEntryID) || !knowledge.ValidID(e.Provenance.ResolverID) || len(e.Files) == 0 || len(e.Files) > knowledge.MaxFiles || len(e.Requirements) != 0 {
+		return errors.New("invalid_manifest_metadata")
+	}
+	for _, value := range []string{e.Kind, e.Format, e.ContentHash, e.Status, e.ReasonCode, e.Provenance.OriginKind, e.Provenance.AdapterVersion, e.Provenance.Verification} {
+		if len(value) > MaxMetadataTokenBytes {
+			return errors.New("metadata_limit")
+		}
+	}
+	if len(e.DisplayName) > MaxMetadataTextBytes || len(e.EntryPoint) > MaxMetadataTextBytes {
+		return errors.New("metadata_limit")
+	}
+	for _, f := range e.Files {
+		if len(f.Path) > MaxMetadataTextBytes || len(f.Mode) > MaxMetadataTokenBytes || len(f.SHA256) > MaxMetadataTokenBytes {
+			return errors.New("metadata_limit")
+		}
+	}
+	raw, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	if len(raw) > MaxEntryMetadataBytes {
+		return errors.New("metadata_limit")
+	}
+	return nil
+}
 
 type Provenance struct {
 	OriginAuthorityID string `json:"originAuthorityId"`
@@ -51,6 +86,9 @@ type Payload struct {
 
 func (p Payload) Verify() error {
 	e := p.Entry
+	if err := e.ValidateMetadata(); err != nil {
+		return err
+	}
 	if e.SchemaVersion != 1 || !knowledge.ValidID(e.EntryID) || !knowledge.ValidID(e.SourceID) || e.DisplayName == "" || len(e.DisplayName) > 1024 {
 		return errors.New("invalid_manifest")
 	}

@@ -225,19 +225,20 @@ func (q *Queries) GetPrivateLibraryImportForTask(ctx context.Context, arg GetPri
 }
 
 const getSessionPrivateLibraryManifest = `-- name: GetSessionPrivateLibraryManifest :one
-SELECT private_library_manifest FROM agent_task_queue
-WHERE agent_id = $1 AND session_id = $2 AND knowledge_manifest IS NOT NULL
+SELECT (CASE WHEN octet_length(private_library_manifest::text) > $1::integer THEN '{}'::jsonb ELSE private_library_manifest END)::jsonb AS private_library_manifest FROM agent_task_queue
+WHERE agent_id = $2 AND session_id = $3 AND knowledge_manifest IS NOT NULL
 ORDER BY created_at DESC, id DESC
 LIMIT 1
 `
 
 type GetSessionPrivateLibraryManifestParams struct {
-	AgentID   pgtype.UUID `json:"agent_id"`
-	SessionID pgtype.Text `json:"session_id"`
+	MaxSelectionBytes int32       `json:"max_selection_bytes"`
+	AgentID           pgtype.UUID `json:"agent_id"`
+	SessionID         pgtype.Text `json:"session_id"`
 }
 
 func (q *Queries) GetSessionPrivateLibraryManifest(ctx context.Context, arg GetSessionPrivateLibraryManifestParams) ([]byte, error) {
-	row := q.db.QueryRow(ctx, getSessionPrivateLibraryManifest, arg.AgentID, arg.SessionID)
+	row := q.db.QueryRow(ctx, getSessionPrivateLibraryManifest, arg.MaxSelectionBytes, arg.AgentID, arg.SessionID)
 	var private_library_manifest []byte
 	err := row.Scan(&private_library_manifest)
 	return private_library_manifest, err
@@ -506,7 +507,10 @@ func (q *Queries) PinTaskPrivateLibraryManifest(ctx context.Context, arg PinTask
 const privateLibraryTaskBudget = `-- name: PrivateLibraryTaskBudget :one
 SELECT count(*)::bigint AS import_count,
  COALESCE(sum((payload #>> '{preview,totalBytes}')::bigint),0)::bigint AS total_bytes,
- COALESCE(sum(jsonb_array_length(payload #> '{preview,entry,files}')),0)::bigint AS total_files
+ COALESCE(sum(jsonb_array_length(payload #> '{preview,entry,files}')),0)::bigint AS total_files,
+ COALESCE(sum(octet_length(payload::text)),0)::bigint AS serialized_payload_bytes,
+ -- Go JSON may escape each UTF-8 byte as six ASCII bytes; include each selected envelope.
+ COALESCE(sum(6::bigint * octet_length((payload #> '{preview,entry}')::text) + 1024),0)::bigint AS selection_bytes_upper_bound
 FROM private_library_import WHERE workspace_id = $1 AND task_id = $2 AND removed_at IS NULL
 `
 
@@ -516,15 +520,23 @@ type PrivateLibraryTaskBudgetParams struct {
 }
 
 type PrivateLibraryTaskBudgetRow struct {
-	ImportCount int64 `json:"import_count"`
-	TotalBytes  int64 `json:"total_bytes"`
-	TotalFiles  int64 `json:"total_files"`
+	ImportCount              int64 `json:"import_count"`
+	TotalBytes               int64 `json:"total_bytes"`
+	TotalFiles               int64 `json:"total_files"`
+	SerializedPayloadBytes   int64 `json:"serialized_payload_bytes"`
+	SelectionBytesUpperBound int64 `json:"selection_bytes_upper_bound"`
 }
 
 func (q *Queries) PrivateLibraryTaskBudget(ctx context.Context, arg PrivateLibraryTaskBudgetParams) (PrivateLibraryTaskBudgetRow, error) {
 	row := q.db.QueryRow(ctx, privateLibraryTaskBudget, arg.WorkspaceID, arg.TaskID)
 	var i PrivateLibraryTaskBudgetRow
-	err := row.Scan(&i.ImportCount, &i.TotalBytes, &i.TotalFiles)
+	err := row.Scan(
+		&i.ImportCount,
+		&i.TotalBytes,
+		&i.TotalFiles,
+		&i.SerializedPayloadBytes,
+		&i.SelectionBytesUpperBound,
+	)
 	return i, err
 }
 

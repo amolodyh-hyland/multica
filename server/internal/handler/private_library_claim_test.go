@@ -192,3 +192,87 @@ func TestPrivateLibraryImportEnforcesAggregateTransactionBudget(t *testing.T) {
 		t.Fatalf("oversize import escaped rollback: %+v, %v", budget, err)
 	}
 }
+
+func TestPrivateLibraryClaimBoundsSerializedMetadataBeforeSelection(t *testing.T) {
+	for _, scenario := range []string{"legacy large status", "aggregate valid payloads", "aggregate valid entries"} {
+		t.Run(scenario, func(t *testing.T) {
+			h, input := privateImportFixture(t)
+			ctx := context.Background()
+			copies := 1
+			switch scenario {
+			case "legacy large status":
+				input.Preview.Entry.Status = strings.Repeat("x", 12<<20)
+			case "aggregate valid payloads":
+				input.Preview.Entry.DisplayName = strings.Repeat("x", libraryimport.MaxMetadataTextBytes)
+				input.Preview.Excluded = make([]string, 256)
+				for i := range input.Preview.Excluded {
+					input.Preview.Excluded[i] = strings.Repeat("x", libraryimport.MaxMetadataTextBytes)
+				}
+				copies = 64
+			case "aggregate valid entries":
+				input.Content = map[string]string{}
+				input.Preview.Entry.Files = nil
+				var files []knowledge.TextFile
+				for i := 0; i < 32; i++ {
+					path := fmt.Sprintf("rules/%02d-", i) + strings.Repeat("x", 1000)
+					text := "x"
+					file := libraryimport.File{Path: path, Mode: "text", SizeBytes: 1, SHA256: knowledge.Sum([]byte(text))}
+					input.Content[path] = text
+					input.Preview.Entry.Files = append(input.Preview.Entry.Files, file)
+					files = append(files, knowledge.TextFile{Path: path, Mode: "text", SizeBytes: 1, SHA256: file.SHA256, Content: text})
+				}
+				input.Preview.Entry.EntryPoint = files[0].Path
+				hash, err := knowledge.ContentHash("rule", "plain-rule-v1", files[0].Path, files)
+				if err != nil {
+					t.Fatal(err)
+				}
+				input.Preview.Entry.ContentHash = hash
+				input.Preview.TotalBytes = 32
+				copies = 8
+			}
+			confirmPrivateImport(t, &input)
+			if scenario != "legacy large status" {
+				if err := input.Verify(); err != nil {
+					t.Fatalf("regression needs otherwise valid imports: %v", err)
+				}
+			}
+			// Seed old accepted records directly; the new import gate rejects these
+			// aggregates before committing the last record.
+			raw, err := json.Marshal(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range copies {
+				objectID := randomID()
+				_, transport := (libraryimport.Payload{Entry: input.Preview.Entry, Content: input.Content}).Transport(objectID)
+				if _, err := h.Queries.CreatePrivateLibraryImport(ctx, db.CreatePrivateLibraryImportParams{ID: parseUUID(objectID), WorkspaceID: parseUUID(testWorkspaceID), OwnerID: parseUUID(testUserID), AttemptID: randomID(), TaskID: parseUUID(input.Preview.Binding.TaskID), RuntimeID: parseUUID(input.Preview.Binding.RuntimeID), ProjectID: parseUUID(input.Preview.Binding.ProjectID), PreviewDigest: input.Consent.PreviewDigest, ContentHash: input.Preview.Entry.ContentHash, TransportHash: transport.Hash, Payload: raw}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			task, err := h.Queries.GetAgentTask(ctx, parseUUID(input.Preview.Binding.TaskID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			runtime, err := h.Queries.GetAgentRuntime(ctx, task.RuntimeID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// No parent context is pinned: rejection must precede selection construction
+			// and payload decoding, which would otherwise fail for a different reason.
+			if _, err := h.pinClaimPrivateLibrary(ctx, &task, runtime, &AgentTaskResponse{WorkspaceID: testWorkspaceID, ProjectID: input.Preview.Binding.ProjectID}); err == nil || err.Error() != "runtime_limit" {
+				t.Fatalf("metadata aggregate loaded or constructed: %v", err)
+			}
+		})
+	}
+}
+
+func TestPrivateLibraryImportRejectsOversizedStatusWithValidHashes(t *testing.T) {
+	h, input := privateImportFixture(t)
+	input.Preview.Entry.Status = strings.Repeat("x", 12<<20)
+	confirmPrivateImport(t, &input)
+	testutil.Call(t, h.ImportPrivateLibrary, newRequest(http.MethodPost, "/api/private-library/imports", input)).Want(422)
+	count, err := h.Queries.CountPrivateLibraryImportsForTask(context.Background(), db.CountPrivateLibraryImportsForTaskParams{WorkspaceID: parseUUID(testWorkspaceID), TaskID: parseUUID(input.Preview.Binding.TaskID)})
+	if err != nil || count != 0 {
+		t.Fatalf("oversized metadata persisted: %d %v", count, err)
+	}
+}

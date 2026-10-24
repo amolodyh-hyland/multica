@@ -176,7 +176,7 @@ func (h *Handler) ImportPrivateLibrary(w http.ResponseWriter, r *http.Request) {
 		privateImportDBError(w, err)
 		return
 	}
-	if budget.TotalBytes > knowledge.MaxBytes || budget.TotalFiles > 1024 {
+	if budget.TotalBytes > knowledge.MaxBytes || budget.TotalFiles > 1024 || budget.SerializedPayloadBytes > libraryimport.MaxTaskPayloadBytes || budget.SelectionBytesUpperBound > libraryimport.MaxSelectionBytes-libraryimport.MaxSelectionHeaderBytes {
 		writeError(w, http.StatusUnprocessableEntity, "runtime_limit")
 		return
 	}

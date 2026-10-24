@@ -78,15 +78,18 @@ WHERE id = sqlc.arg(task_id) AND runtime_id = sqlc.arg(runtime_id) AND knowledge
 RETURNING private_library_manifest;
 
 -- name: GetSessionPrivateLibraryManifest :one
-SELECT private_library_manifest FROM agent_task_queue
-WHERE agent_id = $1 AND session_id = $2 AND knowledge_manifest IS NOT NULL
+SELECT (CASE WHEN octet_length(private_library_manifest::text) > sqlc.arg(max_selection_bytes)::integer THEN '{}'::jsonb ELSE private_library_manifest END)::jsonb AS private_library_manifest FROM agent_task_queue
+WHERE agent_id = @agent_id AND session_id = @session_id AND knowledge_manifest IS NOT NULL
 ORDER BY created_at DESC, id DESC
 LIMIT 1;
 
 -- name: PrivateLibraryTaskBudget :one
 SELECT count(*)::bigint AS import_count,
  COALESCE(sum((payload #>> '{preview,totalBytes}')::bigint),0)::bigint AS total_bytes,
- COALESCE(sum(jsonb_array_length(payload #> '{preview,entry,files}')),0)::bigint AS total_files
+ COALESCE(sum(jsonb_array_length(payload #> '{preview,entry,files}')),0)::bigint AS total_files,
+ COALESCE(sum(octet_length(payload::text)),0)::bigint AS serialized_payload_bytes,
+ -- Go JSON may escape each UTF-8 byte as six ASCII bytes; include each selected envelope.
+ COALESCE(sum(6::bigint * octet_length((payload #> '{preview,entry}')::text) + 1024),0)::bigint AS selection_bytes_upper_bound
 FROM private_library_import WHERE workspace_id = $1 AND task_id = $2 AND removed_at IS NULL;
 
 -- name: RemovePrivateLibraryImportForOwner :one

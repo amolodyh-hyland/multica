@@ -16,9 +16,21 @@ import (
 )
 
 func (h *Handler) pinClaimPrivateLibrary(ctx context.Context, task *db.AgentTaskQueue, runtime db.AgentRuntime, resp *AgentTaskResponse) (*libraryimport.Selection, error) {
+	budget, err := h.Queries.PrivateLibraryTaskBudget(ctx, db.PrivateLibraryTaskBudgetParams{WorkspaceID: runtime.WorkspaceID, TaskID: task.ID})
+	if err != nil {
+		return nil, err
+	}
+
+	if budget.TotalBytes > knowledge.MaxBytes || budget.TotalFiles > 1024 || budget.ImportCount > knowledge.MaxBindings || budget.SerializedPayloadBytes > libraryimport.MaxTaskPayloadBytes || budget.SelectionBytesUpperBound > libraryimport.MaxSelectionBytes-libraryimport.MaxSelectionHeaderBytes {
+		return nil, errors.New("runtime_limit")
+	}
+	count := budget.ImportCount
 	raw := task.PrivateLibraryManifest
+	if len(raw) > libraryimport.MaxSelectionBytes {
+		return nil, errors.New("runtime_limit")
+	}
 	if len(raw) == 0 && resp.PriorSessionID != "" {
-		retained, err := h.Queries.GetSessionPrivateLibraryManifest(ctx, db.GetSessionPrivateLibraryManifestParams{AgentID: task.AgentID, SessionID: pgtype.Text{String: resp.PriorSessionID, Valid: true}})
+		retained, err := h.Queries.GetSessionPrivateLibraryManifest(ctx, db.GetSessionPrivateLibraryManifestParams{AgentID: task.AgentID, SessionID: pgtype.Text{String: resp.PriorSessionID, Valid: true}, MaxSelectionBytes: libraryimport.MaxSelectionBytes})
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, err
 		}
@@ -35,15 +47,6 @@ func (h *Handler) pinClaimPrivateLibrary(ctx context.Context, task *db.AgentTask
 			}
 		}
 	}
-	budget, err := h.Queries.PrivateLibraryTaskBudget(ctx, db.PrivateLibraryTaskBudgetParams{WorkspaceID: runtime.WorkspaceID, TaskID: task.ID})
-	if err != nil {
-		return nil, err
-	}
-
-	if budget.TotalBytes > knowledge.MaxBytes || budget.TotalFiles > 1024 || budget.ImportCount > knowledge.MaxBindings {
-		return nil, errors.New("runtime_limit")
-	}
-	count := budget.ImportCount
 
 	if len(raw) == 0 && count == 0 {
 		sourceID := task.RetryOfTaskID
@@ -54,6 +57,9 @@ func (h *Handler) pinClaimPrivateLibrary(ctx context.Context, task *db.AgentTask
 			source, err := h.Queries.GetAgentTask(ctx, sourceID)
 			if err != nil {
 				return nil, err
+			}
+			if len(source.PrivateLibraryManifest) > libraryimport.MaxSelectionBytes {
+				return nil, errors.New("runtime_limit")
 			}
 			if len(source.PrivateLibraryManifest) > 0 {
 				var retained libraryimport.Selection
@@ -129,6 +135,9 @@ func (h *Handler) pinClaimPrivateLibrary(ctx context.Context, task *db.AgentTask
 		return nil, err
 	}
 	var selection libraryimport.Selection
+	if len(pinned) > libraryimport.MaxSelectionBytes {
+		return nil, errors.New("runtime_limit")
+	}
 	if err := json.Unmarshal(pinned, &selection); err != nil || selection.Validate() != nil {
 		return nil, errors.New("private_selection_invalid")
 	}

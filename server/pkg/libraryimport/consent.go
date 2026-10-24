@@ -82,7 +82,7 @@ type Receipt struct {
 
 func (d Destination) Validate() error {
 	u, err := url.Parse(d.Origin)
-	if err != nil || u == nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || u.Opaque != "" || d.Origin != u.Scheme+"://"+u.Host || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1"))) || !knowledge.ValidID(d.ServerID) || !knowledge.ValidID(d.WorkspaceID) || !knowledge.ValidID(d.OwnerID) || d.Audience != "owner_and_explicit_task" {
+	if len(d.Origin) > 2048 || err != nil || u == nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || u.Opaque != "" || d.Origin != u.Scheme+"://"+u.Host || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1"))) || !knowledge.ValidID(d.ServerID) || !knowledge.ValidID(d.WorkspaceID) || !knowledge.ValidID(d.OwnerID) || d.Audience != "owner_and_explicit_task" {
 		return errors.New("invalid_destination")
 	}
 	return nil
@@ -93,6 +93,11 @@ func (p Preview) Digest() (string, error) { return RecordDigest("shared-library-
 func (p Preview) Validate() error {
 	if p.SchemaVersion != 1 || !knowledge.ValidID(p.AttemptID) || p.Operation != "private_import" || p.SourceResolverID != p.Entry.Provenance.ResolverID || !knowledge.ValidID(p.SourceResolverID) || !knowledge.ValidID(p.Binding.ProjectID) || !knowledge.ValidID(p.Binding.TaskID) || !knowledge.ValidID(p.Binding.RuntimeID) || p.TotalBytes < 0 || p.TotalBytes > knowledge.MaxBytes || len(p.Excluded) > 256 {
 		return errors.New("invalid_preview")
+	}
+	for _, excluded := range p.Excluded {
+		if len(excluded) > MaxMetadataTextBytes {
+			return errors.New("metadata_limit")
+		}
 	}
 	if err := p.Destination.Validate(); err != nil {
 		return err

@@ -35,13 +35,61 @@ type Selection struct {
 }
 
 func (s Selection) Seal() (Selection, error) {
+	if err := s.validateSerializedSize(); err != nil {
+		return s, err
+	}
 	s.Digest = ""
 	digest, err := RecordDigest("shared-library-task-selection-v1", s)
 	s.Digest = digest
 	return s, err
 }
 
+// Bound entry serialization before hashing or building the complete JSON object.
+func (s Selection) validateSerializedSize() error {
+	if len(s.Imports) > knowledge.MaxBindings || s.Destination.Validate() != nil {
+		return errors.New("runtime_limit")
+	}
+	for _, value := range []string{s.SnapshotID, s.TaskID, s.PersonaID, s.Provider, s.AdapterVersion, s.ContextDigest, s.ProjectContextDigest, s.Digest, s.Binding.ProjectID, s.Binding.TaskID, s.Binding.RuntimeID} {
+		if len(value) > MaxMetadataTokenBytes {
+			return errors.New("runtime_limit")
+		}
+	}
+	if ref := s.Binding.PersonaRef; ref != nil && (len(ref.PersonaID) > MaxMetadataTokenBytes || len(ref.ServerID) > MaxMetadataTokenBytes || len(ref.WorkspaceID) > MaxMetadataTokenBytes) {
+		return errors.New("runtime_limit")
+	}
+	header := s
+	header.Imports = nil
+	raw, err := json.Marshal(header)
+	if err != nil {
+		return err
+	}
+	if len(raw) > MaxSelectionHeaderBytes {
+		return errors.New("runtime_limit")
+	}
+	total := len(raw)
+	for _, item := range s.Imports {
+		if !knowledge.ValidID(item.ObjectID) || !digestPattern.MatchString(item.PreviewDigest) || !digestPattern.MatchString(item.TransportHash) {
+			return errors.New("invalid_private_import")
+		}
+		if err := item.Entry.ValidateMetadata(); err != nil {
+			return err
+		}
+		raw, err := json.Marshal(item)
+		if err != nil {
+			return err
+		}
+		total += len(raw) + 1
+		if total > MaxSelectionBytes {
+			return errors.New("runtime_limit")
+		}
+	}
+	return nil
+}
+
 func (s Selection) Validate() error {
+	if err := s.validateSerializedSize(); err != nil {
+		return err
+	}
 	if s.SchemaVersion != 1 || !knowledge.ValidID(s.SnapshotID) || !knowledge.ValidID(s.TaskID) || s.Binding.TaskID != s.TaskID || !knowledge.ValidID(s.Binding.RuntimeID) || !knowledge.ValidID(s.PersonaID) || !knowledge.ValidID(s.Provider) || s.AdapterVersion != TaskAdapterVersion || !digestPattern.MatchString(s.ContextDigest) || !digestPattern.MatchString(s.ProjectContextDigest) || len(s.Imports) > knowledge.MaxBindings {
 		return errors.New("invalid_private_selection")
 	}
