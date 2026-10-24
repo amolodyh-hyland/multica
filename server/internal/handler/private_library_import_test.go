@@ -27,9 +27,9 @@ func privateImportFixture(t *testing.T) (*Handler, libraryimport.Request) {
 		t.Skip("database not available")
 	}
 	runtimeID := createClaimReclaimRuntime(t, context.Background(), "private library runtime")
-	agentID, issueID := createClaimReclaimAgentAndIssue(t, context.Background(), runtimeID, "private library persona")
+	agentID, issueID := createClaimReclaimAgentAndIssue(t, context.Background(), runtimeID, "private library persona "+runtimeID)
 	projectID := dbfx.Project(t, "Private library project")
-	dbfx.Exec(t, `UPDATE agent_runtime SET owner_id=$2,daemon_id='private-library-daemon',status='offline' WHERE id=$1`, runtimeID, testUserID)
+	dbfx.Exec(t, `UPDATE agent_runtime SET owner_id=$2,daemon_id=$3,status='offline' WHERE id=$1`, runtimeID, testUserID, "private-library-"+runtimeID)
 	dbfx.Exec(t, `UPDATE agent SET owner_id=$2 WHERE id=$1`, agentID, testUserID)
 	dbfx.Exec(t, `UPDATE issue SET project_id=$2 WHERE id=$1`, issueID, projectID)
 	taskID := dbfx.Task(t, agentID, testutil.Cols{"runtime_id": runtimeID, "issue_id": issueID, "status": "queued", "originator_user_id": testUserID, "accountable_user_id": testUserID, "originator_source": "direct_human"})
@@ -109,7 +109,7 @@ func TestPrivateLibraryImportOwnerTaskIsolationAndImmutableRetry(t *testing.T) {
 	testutil.Call(t, h.GetTaskPrivateLibraryImport, taskGet(testWorkspaceID, binding.PersonaRef.PersonaID, otherTask, otherTask)).Want(404)
 	foreignWorkspace, _ := foreignWorkspaceWithProject(t, "private-library-foreign-"+randomID()[:8], "PRI")
 	testutil.Call(t, h.GetTaskPrivateLibraryImport, taskGet(foreignWorkspace, binding.PersonaRef.PersonaID, binding.TaskID, binding.TaskID)).Want(404)
-	daemonReq := newDaemonTokenRequest(http.MethodGet, "/api/private-library/tasks/"+binding.TaskID+"/imports/"+first.ObjectID, nil, testWorkspaceID, "private-library-daemon")
+	daemonReq := newDaemonTokenRequest(http.MethodGet, "/api/private-library/tasks/"+binding.TaskID+"/imports/"+first.ObjectID, nil, testWorkspaceID, "private-library-"+binding.RuntimeID)
 	testutil.Call(t, h.GetTaskPrivateLibraryImport, withURLParams(daemonReq, "id", first.ObjectID, "taskId", binding.TaskID)).Want(403)
 	testutil.Call(t, h.ImportPrivateLibrary, newRequest(http.MethodPost, "/api/private-library/imports", input)).Want(200).JSON(&replay)
 	if replay != first {
