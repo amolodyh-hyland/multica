@@ -988,15 +988,8 @@ func TestCleanupSidecarsSwallowsMissingAndNonEmptyDirs(t *testing.T) {
 	}
 }
 
-// TestCleanupSidecarsSurfacesEACCESOnEmptyRecordedDir is the directed
-// integration test for the should-fix branch: rmdir fails (here with
-// EACCES because the parent is read-only), the directory is verifiably
-// empty, and CleanupSidecars must surface the original rmdir error
-// instead of silently skipping it.
-//
-// Skipped when running as root because chmod is bypassed for uid 0 —
-// the EACCES we want to trigger never materialises. CI's daemon runner
-// is unprivileged, so the branch is exercised in CI.
+// A read-only parent blocks quarantine creation before removal. Cleanup must
+// surface that permission error and retain the original entry and manifest.
 func TestCleanupSidecarsSurfacesEACCESOnEmptyRecordedDir(t *testing.T) {
 	t.Parallel()
 	if os.Geteuid() == 0 {
@@ -1037,8 +1030,14 @@ func TestCleanupSidecarsSurfacesEACCESOnEmptyRecordedDir(t *testing.T) {
 	if !strings.Contains(err.Error(), "empty-dir") {
 		t.Errorf("expected surfaced error to reference recorded path, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "rmdir") {
-		t.Errorf("expected surfaced error to come from rmdir branch, got: %v", err)
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("expected surfaced permission error, got: %v", err)
+	}
+	if _, err := os.Stat(recorded); err != nil {
+		t.Fatalf("blocked cleanup moved entry: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(envRoot, sidecarManifestFile)); err != nil {
+		t.Fatalf("blocked cleanup lost manifest: %v", err)
 	}
 }
 

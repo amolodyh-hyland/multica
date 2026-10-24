@@ -421,6 +421,13 @@ func rollBackManifest(m sidecarManifest, manifestPath string) error {
 	var conflicts []error
 	remove := func(path string, directory bool) {
 		if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
+			if owned, ok := m.Owned[path]; ok && m.Version == 2 && owned.Generation == m.Generation {
+				if retained, err := retainedSidecarCapture(path, owned); err != nil {
+					conflicts = append(conflicts, fmt.Errorf("retain %s: %w", path, err))
+				} else if retained != "" {
+					conflicts = append(conflicts, fmt.Errorf("captured entry retained at %s", retained))
+				}
+			}
 			return
 		}
 		owned, ok := m.Owned[path]
@@ -449,7 +456,49 @@ func rollBackManifest(m sidecarManifest, manifestPath string) error {
 	return nil
 }
 
+// A retained capture remains a conflict even after the public path disappears.
+// Inspect names in bounded batches; never adopt or delete quarantine contents.
+func retainedSidecarCapture(path string, owned sidecarOwnership) (string, error) {
+	root, _, _, err := sidecarParent(path, owned.Parents)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	dir, err := root.Open(".")
+	if err != nil {
+		return "", err
+	}
+	defer dir.Close()
+	for {
+		names, err := dir.Readdirnames(128)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return "", err
+		}
+		for _, name := range names {
+			if !strings.HasPrefix(name, ".multica-cleanup-") {
+				continue
+			}
+			candidate := filepath.Join(name, filepath.Base(path))
+			if _, statErr := root.Lstat(candidate); statErr == nil {
+				return filepath.Join(root.Name(), candidate), nil
+			} else if !errors.Is(statErr, fs.ErrNotExist) {
+				return "", statErr
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			return "", nil
+		}
+	}
+}
+
 func removeOwnedSidecar(path string, owned sidecarOwnership, directory bool) error {
+	return removeOwnedSidecarWithCaptureHooks(path, owned, directory, nil, nil)
+}
+
+func removeOwnedSidecarWithCaptureHooks(path string, owned sidecarOwnership, directory bool, beforeCapture, afterCapture func()) error {
 	root, canonical, _, err := sidecarParent(path, owned.Parents)
 	if err != nil {
 		return err
@@ -507,8 +556,105 @@ func removeOwnedSidecar(path string, owned sidecarOwnership, directory bool) err
 	if err != nil || !os.SameFile(info, current) {
 		return errors.New("entry replaced during verification")
 	}
-	if err := root.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("rmdir/remove: %w", err)
+	if directory {
+		entries, err := f.ReadDir(1)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return fmt.Errorf("read owned directory: %w", err)
+		}
+		if len(entries) != 0 {
+			return errors.New("owned directory is not empty")
+		}
+	}
+	if beforeCapture != nil {
+		beforeCapture()
+	}
+	return captureAndRemoveOwnedSidecar(root, name, info, owned, directory, afterCapture)
+}
+
+// Rename captures the leaf atomically through the pinned parent. Verification
+// and deletion below address only this private candidate, never the public name.
+func captureAndRemoveOwnedSidecar(root *os.Root, name string, expected os.FileInfo, owned sidecarOwnership, directory bool, afterCapture func()) error {
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return err
+	}
+	quarantine := ".multica-cleanup-" + hex.EncodeToString(nonce[:])
+	if err := root.Mkdir(quarantine, 0700); err != nil {
+		return err
+	}
+	captured, err := root.OpenRoot(quarantine)
+	if err != nil {
+		root.Remove(quarantine)
+		return err
+	}
+	defer captured.Close()
+	leaf := name
+	if err := root.Rename(name, filepath.Join(quarantine, leaf)); err != nil {
+		root.Remove(quarantine)
+		return err
+	}
+	if afterCapture != nil {
+		afterCapture()
+	}
+	retainedPath := filepath.Join(root.Name(), quarantine, leaf)
+	retain := func(cause error) error {
+		// Link refuses to overwrite an editor's newly created public name. If the
+		// captured leaf cannot be restored, retain it with its recovery location.
+		if !directory {
+			if err := root.Link(filepath.Join(quarantine, leaf), name); err == nil {
+				if err := captured.Remove(leaf); err != nil {
+					return fmt.Errorf("%w; restored entry, extra captured link retained at %s: %v", cause, retainedPath, err)
+				}
+				root.Remove(quarantine)
+				return fmt.Errorf("%w; captured entry restored", cause)
+			}
+		}
+		return fmt.Errorf("%w; captured entry retained at %s", cause, retainedPath)
+	}
+	info, err := captured.Lstat(leaf)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || info.IsDir() != directory || !os.SameFile(expected, info) {
+		return retain(errors.New("entry replaced during capture"))
+	}
+	f, err := captured.OpenFile(leaf, sidecarReadFlags(), 0)
+	if err != nil {
+		return retain(err)
+	}
+	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil || !os.SameFile(expected, opened) {
+		return retain(errors.New("captured entry ownership changed"))
+	}
+	// A rename can change ctime. Compare stable file identity to the original
+	// handle and compare the captured revision before/after reading its bytes.
+	revision, err := sidecarFileIdentity(f)
+	if err != nil {
+		return retain(err)
+	}
+	if !directory {
+		if opened.Size() != owned.Size || uint32(opened.Mode()) != owned.Mode || opened.ModTime().UnixNano() != owned.Modified {
+			return retain(errors.New("captured baseline changed"))
+		}
+		digest := sha256.New()
+		n, err := io.Copy(digest, io.LimitReader(f, owned.Size+1))
+		if err != nil {
+			return retain(err)
+		}
+		if n != owned.Size || hex.EncodeToString(digest.Sum(nil)) != owned.Hash {
+			return retain(errors.New("captured baseline hash changed"))
+		}
+	}
+	finalRevision, err := sidecarFileIdentity(f)
+	if err != nil || finalRevision != revision {
+		return retain(errors.New("captured entry changed during verification"))
+	}
+	if err := captured.Remove(leaf); err != nil {
+		return retain(err)
+	}
+	if err := root.Remove(quarantine); err != nil {
+		return err
+	}
+	if _, err := root.Lstat(name); !errors.Is(err, fs.ErrNotExist) {
+		return errors.New("entry recreated during cleanup; replacement retained")
 	}
 	return nil
 }

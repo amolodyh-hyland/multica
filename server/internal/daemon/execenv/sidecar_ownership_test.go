@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -164,5 +165,126 @@ func TestSidecarManifestRestrictsPrivatePathMetadata(t *testing.T) {
 	info, err := os.Stat(path)
 	if err != nil || info.Mode().Perm() != 0600 {
 		t.Fatalf("private sidecar paths are readable by others: %v, %v", info, err)
+	}
+}
+
+func TestSidecarCleanupCapturesFinalReplacementWindow(t *testing.T) {
+	for _, scenario := range []string{"replace before capture", "edit before capture", "replace after capture", "open writer after capture"} {
+		t.Run(scenario, func(t *testing.T) {
+			workDir, envRoot := t.TempDir(), t.TempDir()
+			path := filepath.Join(workDir, "owned")
+			m := &sidecarManifest{}
+			if err := recordWriteFile(path, []byte("baseline"), 0600, m); err != nil {
+				t.Fatal(err)
+			}
+			path = m.Files[0]
+			if err := writeSidecarManifest(envRoot, m); err != nil {
+				t.Fatal(err)
+			}
+			var writer *os.File
+			if scenario == "open writer after capture" {
+				var err error
+				writer, err = os.OpenFile(path, os.O_WRONLY, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer writer.Close()
+			}
+			edit := func() {
+				if scenario == "edit before capture" {
+					if err := os.WriteFile(path, []byte("useredit"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
+				if scenario == "open writer after capture" {
+					if _, err := writer.WriteAt([]byte("useredit"), 0); err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
+				temp := filepath.Join(workDir, "editor-save")
+				if err := os.WriteFile(temp, []byte("useredit"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(temp, path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var before, after func()
+			if scenario == "replace before capture" || scenario == "edit before capture" {
+				before = edit
+			} else {
+				after = edit
+			}
+			if err := removeOwnedSidecarWithCaptureHooks(path, m.Owned[path], false, before, after); err == nil {
+				t.Fatal("final-window change did not return a conflict")
+			}
+			data, err := os.ReadFile(path)
+			if err != nil || string(data) != "useredit" {
+				t.Fatalf("user edit was deleted or not restored: %q %v", data, err)
+			}
+			if _, err := os.Stat(filepath.Join(envRoot, sidecarManifestFile)); err != nil {
+				t.Fatal("conflict manifest lost")
+			}
+			if err := CleanupSidecars(envRoot); err == nil {
+				t.Fatal("repeated cleanup adopted the replacement")
+			}
+			data, err = os.ReadFile(path)
+			if err != nil || string(data) != "useredit" {
+				t.Fatal("repeated cleanup lost user edit")
+			}
+		})
+	}
+}
+
+func TestSidecarCleanupLeavesCapturedConflictWhenPublicNameReappears(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "owned")
+	m := &sidecarManifest{}
+	if err := recordWriteFile(path, []byte("baseline"), 0600, m); err != nil {
+		t.Fatal(err)
+	}
+	path = m.Files[0]
+	root = filepath.Dir(path)
+	err := removeOwnedSidecarWithCaptureHooks(path, m.Owned[path], false, func() {
+		if err := os.WriteFile(path, []byte("captured user edit"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}, func() {
+		if err := os.WriteFile(path, []byte("new public edit"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if err == nil {
+		t.Fatal("captured conflict not reported")
+	}
+	data, readErr := os.ReadFile(path)
+	if readErr != nil || string(data) != "new public edit" {
+		t.Fatal("restoration overwrote public replacement")
+	}
+	matches, globErr := filepath.Glob(filepath.Join(root, ".multica-cleanup-*", filepath.Base(path)))
+	if globErr != nil || len(matches) != 1 {
+		t.Fatalf("captured edit not retained: %v %v", matches, globErr)
+	}
+	data, readErr = os.ReadFile(matches[0])
+	if readErr != nil || string(data) != "captured user edit" {
+		t.Fatal("captured user edit lost")
+	}
+	if !strings.Contains(err.Error(), matches[0]) {
+		t.Fatalf("recovery location absent from conflict: %v", err)
+	}
+	envRoot := t.TempDir()
+	if err := writeSidecarManifest(envRoot, m); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := CleanupSidecars(envRoot); err == nil {
+		t.Fatal("missing public path concealed retained capture")
+	}
+	if _, err := os.Stat(filepath.Join(envRoot, sidecarManifestFile)); err != nil {
+		t.Fatal("retained capture lost its manifest")
 	}
 }
