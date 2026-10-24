@@ -1,9 +1,21 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+
+	"github.com/multica-ai/multica/server/pkg/agent"
 )
+
+func (d *Daemon) resolveBundleAwareModelSelection(ctx context.Context, provider string, command agent.Command, selection taskModelSelection, logger *slog.Logger) taskModelSelection {
+	if d.cfg.BundleReadOnly {
+		// Catalog probes bypass the private task home and pre-launch policy audit.
+		return selection
+	}
+	return resolveTaskModelSelection(ctx, provider, command, selection, logger)
+}
 
 func bundleProviderSupported(provider string) bool {
 	return provider == "claude" || provider == "codex"

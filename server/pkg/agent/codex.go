@@ -375,7 +375,8 @@ func (o *codexFirstItemWaitObservation) snapshot() (time.Duration, string, strin
 // codexBackend implements Backend by spawning `codex app-server --listen stdio://`
 // and communicating via JSON-RPC 2.0 over stdin/stdout.
 type codexBackend struct {
-	cfg Config
+	cfg               Config
+	readOnlyHostAudit func(context.Context, string, string) error
 }
 
 func buildCodexArgs(opts ExecOptions, logger *slog.Logger) []string {
@@ -962,6 +963,14 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		if err := validateReadOnlyExecution(b.cfg, opts); err != nil {
 			return nil, err
 		}
+		audit := b.readOnlyHostAudit
+		if audit == nil {
+			audit = auditReadOnlyCodexHost
+		}
+		if err := audit(ctx, b.cfg.Env["CODEX_HOME"], opts.Cwd); err != nil {
+			return nil, err
+		}
+		b.cfg.Logger.Warn(ReadOnlyCodexCloudRiskWarning)
 		opts.EnableTaskSupplement = false
 		opts.McpConfig = json.RawMessage(`{"mcpServers":{}}`)
 	}

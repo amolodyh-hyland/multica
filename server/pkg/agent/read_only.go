@@ -2,14 +2,17 @@ package agent
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"regexp"
 	"runtime"
+	"strings"
 )
 
 const MinReadOnlyClaudeVersion = "2.1.259"
-const AuditedReadOnlyCodexVersion = "0.144.6"
-const SupportedReadOnlyCodexVersion = "0.144.6-wi-fac-02.1"
+const MinReadOnlyCodexVersion = "0.144.6"
+
+var readOnlyStockCodexVersion = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
+
+const ReadOnlyCodexCloudRiskWarning = "Stock Codex: cloud-delivered managed configuration for a company (enterprise or business) account cannot be detected before launch; plugin warmups might start before effective-config attestation refuses. This bundle accepts that residual risk. No thread or task starts until attestation passes."
 
 // Audited against Codex rust-v0.144.6. Keep startup, thread config and
 // attestation aligned: config/read does not materialize native defaults.
@@ -31,23 +34,9 @@ func validateReadOnlyExecution(cfg Config, opts ExecOptions) error {
 	if len(cfg.LaunchPrefix) != 0 || len(opts.ExtraArgs) != 0 || len(opts.CustomArgs) != 0 || opts.ResumeSessionID != "" || opts.ResumeExpected {
 		return fmt.Errorf("read-only bundle does not support launch overrides or conversation continuation")
 	}
-	if cfg.provider == "codex" {
-		home, err := filepath.EvalSymlinks(cfg.Env["CODEX_HOME"])
-		if err != nil {
-			return fmt.Errorf("resolve isolated Codex home: %w", err)
-		}
-		cwd, err := filepath.EvalSymlinks(opts.Cwd)
-		if err != nil {
-			return fmt.Errorf("resolve isolated Codex working directory: %w", err)
-		}
-		if err := auditReadOnlyCodexConfig(home, cwd, os.ReadFile); err != nil {
-			return err
-		}
-	}
 	if !SupportsNativeReadOnly(cfg.provider, cfg.CLIVersion, runtime.GOOS) {
 		return fmt.Errorf("unsupported read-only native harness/version/platform: %s %s %s", cfg.provider, cfg.CLIVersion, runtime.GOOS)
 	}
-
 	return nil
 }
 
@@ -62,9 +51,9 @@ func readOnlyCodexConfig() map[string]any {
 	return config
 }
 
-// ReadOnlyCodexArgs requires the source-pinned native startup guard.
+// ReadOnlyCodexArgs disables tool features before stock app-server startup.
 func ReadOnlyCodexArgs() []string {
-	args := []string{"app-server", "--wi-fac-02-read-only", "--strict-config", "--listen", "stdio://", "-c", `sandbox_mode="read-only"`, "-c", `approval_policy="never"`,
+	args := []string{"app-server", "--strict-config", "--listen", "stdio://", "-c", `sandbox_mode="read-only"`, "-c", `approval_policy="never"`,
 		"-c", `web_search="disabled"`, "-c", "mcp_servers={}"}
 	for _, feature := range readOnlyCodexDisabledFeatures {
 		args = append(args, "-c", "features."+feature+"=false")
@@ -87,9 +76,9 @@ func SupportsNativeReadOnly(provider, version, goos string) bool {
 	case "claude":
 		return codexVersionAtLeast(version, MinReadOnlyClaudeVersion)
 	case "codex":
-		// Stock releases lack the pre-warmup managed-feature refusal.
-		return (goos == "darwin" || goos == "linux") &&
-			(version == SupportedReadOnlyCodexVersion || version == "codex-cli "+SupportedReadOnlyCodexVersion)
+		version = strings.TrimPrefix(strings.TrimSpace(version), "codex-cli ")
+		return (goos == "darwin" || goos == "linux") && readOnlyStockCodexVersion.MatchString(version) &&
+			codexVersionAtLeast(version, MinReadOnlyCodexVersion)
 	default:
 		return false
 	}

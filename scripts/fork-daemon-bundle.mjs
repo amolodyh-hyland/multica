@@ -53,14 +53,17 @@ export const nativeRestrictions = () => ({
   mode: 'read_only', automaticApproval: false, localDirectoryMode: 'none',
   supported: {
     claude: { minimumVersion: '2.1.259', mode: 'restricted', tools: [] },
-    codex: { exactVersion: '0.144.6-wi-fac-02.1', upstreamVersion: '0.144.6', nativeRecipe: 'scripts/fork-codex-bundle.mjs',
-      startupGuard: 'normalized-features-refused-before-plugin-manager', startupFeatures: 'explicitly-disabled-in-config-and-argv-before-spawn',
+    codex: { minimumVersion: '0.144.6', stockVersions: 'stable >=0.144.6', testedVersionRange: ['0.144.6', '0.144.6'], testedScope: 'source-and-protocol-fixtures; live-native-execution-not-run',
+      localManaged: { action: 'presence-refusal-before-spawn', unixFiles: ['/etc/codex/config.toml', '/etc/codex/managed_config.toml', '/etc/codex/requirements.toml'],
+        macOS: { domain: 'com.openai.codex', keys: ['config_toml_base64', 'requirements_toml_base64'], api: 'CFPreferencesCopyAppValue', probe: '/usr/bin/python3 -I -S', unavailable: 'refuse' } },
+      startupFeatures: 'explicitly-disabled-in-config-and-argv-before-spawn',
       sandbox: 'read-only', approvals: 'denied', platforms: ['darwin', 'linux'], inheritedMcp: 'effective-config-refusal-before-thread-start',
       configAttestation: { methods: ['config/read', 'configRequirements/read'], includeLayers: true, sources: ['local', 'managed', 'mdm', 'cloud'], missingOrUnknownLayers: 'refuse' },
-      managedConfiguration: 'never-overridden', stockVersions: 'unsupported' },
+      managedConfiguration: 'never-overridden',
+      cloudResidualRisk: { preLaunchDetection: 'unavailable', pluginWarmupsBeforeAttestation: 'possible', accepted: true, startupWarning: true } },
   },
   unsupported: { codex: { platforms: ['windows'], reason: 'Windows native sandbox is not verified' } },
-  otherHarnesses: 'unsupported', customCommands: 'unsupported',
+  otherHarnesses: 'unsupported', customCommands: 'unsupported', liveModelDiscovery: 'unsupported-use-explicit-selection',
   verification: 'disposable-native-protocol-and-config-fixtures', liveVerification: 'not-run', activation: 'requires-human-approval',
 });
 

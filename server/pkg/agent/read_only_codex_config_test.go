@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -75,6 +76,9 @@ func TestReadOnlyCodexInheritedConfigLayers(t *testing.T) {
 }
 
 func TestReadOnlyCodexRefusesBeforeStartingProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("stock Codex bundle execution is unsupported on Windows")
+	}
 	home, cwd := t.TempDir(), t.TempDir()
 	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte("[mcp_servers]\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -91,6 +95,14 @@ func TestReadOnlyCodexRefusesBeforeStartingProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := &codexBackend{cfg: Config{provider: "codex", NativeReadOnly: true, CLIVersion: "0.144.6", ExecutablePath: executable, Env: map[string]string{"CODEX_HOME": home}}}
+	b.readOnlyHostAudit = func(_ context.Context, home, cwd string) error {
+		return auditReadOnlyCodexConfig(home, cwd, func(path string) ([]byte, error) {
+			if strings.HasPrefix(path, home+string(os.PathSeparator)) || strings.HasPrefix(path, cwd+string(os.PathSeparator)) {
+				return os.ReadFile(path)
+			}
+			return nil, os.ErrNotExist
+		})
+	}
 	if _, err := b.Execute(context.Background(), "fixture", ExecOptions{Cwd: cwd}); err == nil || !strings.Contains(err.Error(), "inherited MCP") {
 		t.Fatal("unsafe launch accepted")
 	}

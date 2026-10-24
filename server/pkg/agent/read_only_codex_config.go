@@ -80,8 +80,8 @@ func codexConfigHasMCP(config map[string]any) bool {
 }
 
 // config/read uses the app-server's config manager: its response includes cloud
-// fragments, macOS managed preferences and exact managed requirements. Inspect
-// it before thread/start, which is the boundary that starts MCP connections.
+// fragments and managed requirements. Inspect before thread/start; stock
+// plugin warmups may already have started under cloud-delivered requirements.
 func (c *codexClient) attestReadOnlyCodexConfig(ctx context.Context, cwd string) error {
 	result, err := c.request(ctx, "config/read", map[string]any{"includeLayers": true, "cwd": cwd})
 	if err != nil {

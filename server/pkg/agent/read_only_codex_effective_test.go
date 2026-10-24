@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -155,13 +154,18 @@ case "$line" in
 esac
 done
 `)
-				backend, err := New("codex", Config{NativeReadOnly: true, CLIVersion: SupportedReadOnlyCodexVersion, ExecutablePath: fake, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Env: map[string]string{"CODEX_HOME": home, "TRANSCRIPT": transcript}})
+				logs := &syncBuffer{}
+				backend, err := New("codex", Config{NativeReadOnly: true, CLIVersion: MinReadOnlyCodexVersion, ExecutablePath: fake, Logger: slog.New(slog.NewTextHandler(logs, nil)), Env: map[string]string{"CODEX_HOME": home, "TRANSCRIPT": transcript}})
 				if err != nil {
 					t.Fatal(err)
 				}
+				backend.(*codexBackend).readOnlyHostAudit = func(context.Context, string, string) error { return nil }
 				session, err := backend.Execute(context.Background(), "fixture", ExecOptions{NativeReadOnly: true, Cwd: cwd, Timeout: 5 * time.Second, HandshakeTimeout: time.Second})
 				if err != nil {
 					t.Fatal(err)
+				}
+				if !strings.Contains(logs.String(), ReadOnlyCodexCloudRiskWarning) {
+					t.Fatal("stock startup omitted accepted cloud warmup risk")
 				}
 				go func() {
 					for range session.Messages {
@@ -228,36 +232,20 @@ func TestReadOnlyCodexEffectiveConfigRequiresExplicitStartupFlags(t *testing.T) 
 	}
 }
 
-func TestReadOnlyCodexStockUnsupportedBeforeNativeStartup(t *testing.T) {
-	home, cwd := t.TempDir(), t.TempDir()
-	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte("[mcp_servers]\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for _, platform := range []string{"darwin", "linux", "windows"} {
-		if SupportsNativeReadOnly("codex", AuditedReadOnlyCodexVersion, platform) {
-			t.Fatalf("advertised unsafe managed startup on %s", platform)
-		}
-	}
-	b := &codexBackend{cfg: Config{provider: "codex", NativeReadOnly: true, CLIVersion: AuditedReadOnlyCodexVersion, ExecutablePath: "/missing/native-codex-must-not-be-looked-up", Env: map[string]string{"CODEX_HOME": home}}}
-	if _, err := b.Execute(context.Background(), "fixture", ExecOptions{Cwd: cwd}); err == nil || !strings.Contains(err.Error(), "unsupported read-only") {
-		t.Fatalf("unsupported harness reached launch: %v", err)
-	}
-}
-
 func TestReadOnlyCodexSupportedNativeVersions(t *testing.T) {
 	for _, platform := range []string{"darwin", "linux"} {
-		for _, version := range []string{SupportedReadOnlyCodexVersion, "codex-cli " + SupportedReadOnlyCodexVersion} {
+		for _, version := range []string{MinReadOnlyCodexVersion, "codex-cli " + MinReadOnlyCodexVersion, "0.144.7", "0.145.0", "1.0.0"} {
 			if !SupportsNativeReadOnly("codex", version, platform) {
 				t.Fatalf("refused compatible native build %s %s", version, platform)
 			}
 		}
 	}
-	for _, version := range []string{"0.144.6", "0.144.7", "0.145.0", SupportedReadOnlyCodexVersion + "-dirty", "unknown"} {
+	for _, version := range []string{"0.144.5", "0.143.99", MinReadOnlyCodexVersion + "-custom", "0.145.0-alpha.1", "unknown"} {
 		if SupportsNativeReadOnly("codex", version, "darwin") {
 			t.Fatalf("accepted unverified native build %s", version)
 		}
 	}
-	if SupportsNativeReadOnly("codex", SupportedReadOnlyCodexVersion, "windows") {
+	if SupportsNativeReadOnly("codex", MinReadOnlyCodexVersion, "windows") {
 		t.Fatal("Windows is unsupported")
 	}
 }

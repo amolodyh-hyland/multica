@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -20,6 +21,42 @@ func bundleTestTask() Task {
 	return Task{ID: "task", RuntimeID: "runtime", WorkspaceID: "workspace", DelegationID: "delegation", Agent: &AgentData{
 		RuntimeConfig: json.RawMessage(`{"local_directory_mode":"none","permission_mode":"read_only"}`),
 	}}
+}
+
+func TestBundleNoNativeCatalogBeforePreflight(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX executable fixture")
+	}
+	marker := filepath.Join(t.TempDir(), "catalog-started")
+	fake := filepath.Join(t.TempDir(), "native-fixture")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho started > '"+marker+"'\necho 'codex-cli 0.144.6'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	d := New(Config{BundleReadOnly: true, WorkspacesRoot: t.TempDir(), Agents: map[string]AgentEntry{"codex": {Path: fake}, "claude": {Path: fake}}}, slog.Default())
+	d.client = NewClient("https://fixture.invalid")
+	reported := false
+	d.client.client.Transport = startTaskTransport(func(r *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil || !strings.Contains(string(body), "Live model discovery is unavailable") || !strings.Contains(string(body), "failed") {
+			t.Fatalf("unexpected model-list report: %v %s", err, body)
+		}
+		reported = true
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("{}")), Header: http.Header{}}, nil
+	})
+	for _, provider := range []string{"codex", "claude"} {
+		selection := taskModelSelection{Model: "explicit-model", ThinkingLevel: "high", ServiceTier: "fast"}
+		if got := d.resolveBundleAwareModelSelection(context.Background(), provider, agent.NewCommand(fake, nil), selection, d.logger); got != selection {
+			t.Fatalf("changed explicit bundle selection: %+v", got)
+		}
+		reported = false
+		d.handleModelList(context.Background(), Runtime{ID: "runtime", Provider: provider}, "request")
+		if !reported {
+			t.Fatal("model-list refusal was not reported")
+		}
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("catalog spawned a native executable outside task preflight")
+	}
 }
 
 func TestBundleReadOnlyTaskPolicy(t *testing.T) {
@@ -138,7 +175,7 @@ func TestBundleReadOnlyRunTaskNative(t *testing.T) {
 	}
 }
 
-func TestBundleCodexStockUnsupportedNoRegistration(t *testing.T) {
+func TestBundleCodexOutdatedNoRegistration(t *testing.T) {
 	d := New(Config{BundleReadOnly: true, BundleWorkspaceID: "workspace", WorkspacesRoot: t.TempDir()}, slog.Default())
 	d.client = NewClient("https://fixture.invalid")
 	d.client.client.Transport = startTaskTransport(func(r *http.Request) (*http.Response, error) {
@@ -151,7 +188,7 @@ func TestBundleCodexStockUnsupportedNoRegistration(t *testing.T) {
 	if err := d.validateBundleTask(bundleTestTask(), "codex"); err != nil {
 		t.Fatal(err)
 	}
-	response, _, err := d.registerRuntimesForWorkspaceBatchLocked(context.Background(), "workspace", []map[string]string{{"type": "codex", "version": "0.144.6", "name": "native-fixture"}})
+	response, _, err := d.registerRuntimesForWorkspaceBatchLocked(context.Background(), "workspace", []map[string]string{{"type": "codex", "version": "0.144.5", "name": "native-fixture"}})
 	if !errors.Is(err, ErrNoRuntimesToRegister) || response != nil {
 		t.Fatalf("unsupported registration=%+v err=%v", response, err)
 	}
@@ -167,7 +204,7 @@ func TestBundleRegistersBothRestrictedHarnesses(t *testing.T) {
 	d.cfg.BundleWorkspaceID = "workspace"
 	response, _, err := d.registerRuntimesForWorkspaceBatchLocked(context.Background(), "workspace", []map[string]string{
 		{"type": "claude", "version": agent.MinReadOnlyClaudeVersion, "name": "restricted Claude"},
-		{"type": "codex", "version": "codex-cli " + agent.SupportedReadOnlyCodexVersion, "name": "restricted Codex"},
+		{"type": "codex", "version": "codex-cli " + agent.MinReadOnlyCodexVersion, "name": "restricted Codex"},
 	})
 	if err != nil || response == nil || len(response.Runtimes) != 2 {
 		t.Fatalf("compatible native registration failed: %+v %v", response, err)

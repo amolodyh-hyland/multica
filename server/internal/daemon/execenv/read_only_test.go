@@ -102,7 +102,7 @@ done
 		t.Fatal(err)
 	}
 	// Execute only the synthetic native fixture with the actual emitted argv.
-	// The pinned native startup guard is verified separately against upstream fixtures.
+	// This verifies local startup flags; cloud policy can still re-enable warmups.
 	cmd := exec.Command(fake, agent.ReadOnlyCodexArgs()...)
 	cmd.Dir = t.TempDir()
 	cmd.Env = append(os.Environ(), "CODEX_HOME="+home, "STARTUP_MARKER="+marker)

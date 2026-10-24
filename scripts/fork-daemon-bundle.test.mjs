@@ -108,7 +108,16 @@ test('both generated profiles require read-only native execution without overrid
   assert.equal(nativeRestrictions().supported.codex.managedConfiguration, 'never-overridden');
   assert.deepEqual(nativeRestrictions().supported.codex.configAttestation.methods, ['config/read', 'configRequirements/read']);
   assert.equal(nativeRestrictions().supported.codex.configAttestation.includeLayers, true);
-  assert.equal(nativeRestrictions().supported.codex.exactVersion, '0.144.6-wi-fac-02.1');
+  assert.equal(nativeRestrictions().supported.codex.minimumVersion, '0.144.6');
+  assert.equal(nativeRestrictions().supported.codex.exactVersion, undefined);
+  assert.equal(nativeRestrictions().supported.codex.nativeRecipe, undefined);
+  assert.equal(nativeRestrictions().supported.codex.startupGuard, undefined);
+  assert.deepEqual(nativeRestrictions().supported.codex.testedVersionRange, ['0.144.6', '0.144.6']);
   assert.equal(nativeRestrictions().supported.codex.startupFeatures, 'explicitly-disabled-in-config-and-argv-before-spawn');
-  assert.equal(nativeRestrictions().supported.codex.stockVersions, 'unsupported');
+  assert.equal(nativeRestrictions().supported.codex.stockVersions, 'stable >=0.144.6');
+  assert.equal(nativeRestrictions().supported.codex.localManaged.action, 'presence-refusal-before-spawn');
+  assert.deepEqual(nativeRestrictions().supported.codex.localManaged.macOS.keys, ['config_toml_base64', 'requirements_toml_base64']);
+  assert.equal(nativeRestrictions().supported.codex.cloudResidualRisk.accepted, true);
+  assert.equal(nativeRestrictions().supported.codex.cloudResidualRisk.startupWarning, true);
+  assert.equal(nativeRestrictions().supported.codex.cloudResidualRisk.pluginWarmupsBeforeAttestation, 'possible');
 });

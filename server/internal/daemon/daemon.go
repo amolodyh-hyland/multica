@@ -2084,6 +2084,9 @@ func (d *Daemon) run(ctx context.Context, healthLn net.Listener) error {
 		logFields = append(logFields, "profile", d.cfg.Profile)
 	}
 	d.logger.Info("starting daemon", logFields...)
+	if d.cfg.BundleReadOnly {
+		d.logger.Warn(agent.ReadOnlyCodexCloudRiskWarning)
+	}
 	d.logger.Debug("daemon config resolved",
 		"daemon_id", d.cfg.DaemonID,
 		"device_name", d.cfg.DeviceName,
@@ -4695,6 +4698,12 @@ func (d *Daemon) handlePendingWorkHint(runtimeID, kind string) {
 // usable; only the second one tells the user why it is empty.
 func (d *Daemon) handleModelList(ctx context.Context, rt Runtime, requestID string) {
 	d.logger.Info("model list requested", "runtime_id", rt.ID, "request_id", requestID, "provider", rt.Provider)
+	if d.cfg.BundleReadOnly {
+		d.reportModelListResult(ctx, rt, requestID, map[string]any{
+			"status": "failed", "error": "Live model discovery is unavailable for this standalone profile; specify a model explicitly.",
+		})
+		return
+	}
 
 	// Discovery must enumerate the binary this runtime will actually execute,
 	// otherwise the picker advertises a catalog the launched CLI never agreed
@@ -8764,7 +8773,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		thinkingLevel = task.Agent.ThinkingLevel
 		serviceTier = task.Agent.ServiceTier
 	}
-	selection := resolveTaskModelSelection(ctx, provider, agent.NewCommand(entry.Path, profileFixedArgs),
+	selection := d.resolveBundleAwareModelSelection(ctx, provider, agent.NewCommand(entry.Path, profileFixedArgs),
 		taskModelSelection{Model: model, ThinkingLevel: thinkingLevel, ServiceTier: serviceTier}, taskLog)
 	model, thinkingLevel, serviceTier = selection.Model, selection.ThinkingLevel, selection.ServiceTier
 

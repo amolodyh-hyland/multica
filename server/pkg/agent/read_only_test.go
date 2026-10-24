@@ -34,7 +34,7 @@ func TestReadOnlyNativeLaunchConfiguration(t *testing.T) {
 	if strings.Contains(codexArgs, "danger-full-access") || !strings.Contains(codexArgs, `sandbox_mode="read-only"`) || !strings.Contains(codexArgs, `approval_policy="never"`) {
 		t.Fatal(codexArgs)
 	}
-	if !strings.Contains(codexArgs, "--wi-fac-02-read-only") || !strings.Contains(codexArgs, "--strict-config") || !strings.Contains(codexArgs, "mcp_servers={}") || !strings.Contains(codexArgs, "features.shell_tool=false") {
+	if strings.Contains(codexArgs, "--wi-fac") || !strings.Contains(codexArgs, "--strict-config") || !strings.Contains(codexArgs, "mcp_servers={}") || !strings.Contains(codexArgs, "features.shell_tool=false") {
 		t.Fatal(codexArgs)
 	}
 	for _, feature := range []string{"apps", "plugins", "remote_plugin", "plugin_sharing", "skill_mcp_dependency_install", "tool_suggest", "in_app_browser", "browser_use", "browser_use_full_cdp_access", "browser_use_external", "computer_use", "image_generation", "hooks", "multi_agent", "code_mode_host", "shell_snapshot", "mentions_v2", "guardian_approval", "goals", "tool_call_mcp_elicitation", "auth_elicitation", "workspace_dependencies", "remote_compaction_v2"} {
@@ -54,7 +54,7 @@ func TestReadOnlyNativeRejectsOverridesAndUnsupportedPeers(t *testing.T) {
 			t.Fatalf("accepted override %+v", opts)
 		}
 	}
-	for _, tc := range []struct{ provider, version, goos string }{{"claude", "2.1.258", "darwin"}, {"claude", "unknown", "darwin"}, {"codex", "0.144.6", "windows"}, {"codex", "unknown", "linux"}, {"codex", "0.144.5", "darwin"}, {"codex", "0.144.7", "darwin"}, {"codex", "0.145.0", "linux"}, {"other", "99.0.0", "darwin"}} {
+	for _, tc := range []struct{ provider, version, goos string }{{"claude", "2.1.258", "darwin"}, {"claude", "unknown", "darwin"}, {"codex", "0.144.6", "windows"}, {"codex", "unknown", "linux"}, {"codex", "0.144.5", "darwin"}, {"codex", "0.144.6-custom", "darwin"}, {"codex", "0.145.0-dirty", "linux"}, {"other", "99.0.0", "darwin"}} {
 		if SupportsNativeReadOnly(tc.provider, tc.version, tc.goos) {
 			t.Fatalf("accepted unsupported peer: %+v", tc)
 		}
