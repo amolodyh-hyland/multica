@@ -60,3 +60,9 @@ SELECT private_library_manifest FROM agent_task_queue
 WHERE agent_id = $1 AND session_id = $2 AND knowledge_manifest IS NOT NULL
 ORDER BY created_at DESC, id DESC
 LIMIT 1;
+
+-- name: PrivateLibraryTaskBudget :one
+SELECT count(*)::bigint AS import_count,
+ COALESCE(sum((payload #>> '{preview,totalBytes}')::bigint),0)::bigint AS total_bytes,
+ COALESCE(sum(jsonb_array_length(payload #> '{preview,entry,files}')),0)::bigint AS total_files
+FROM private_library_import WHERE workspace_id = $1 AND task_id = $2;

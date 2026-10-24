@@ -20,17 +20,18 @@ type SelectedImport struct {
 }
 
 type Selection struct {
-	SchemaVersion  int              `json:"schemaVersion"`
-	SnapshotID     string           `json:"snapshotId"`
-	TaskID         string           `json:"taskId"`
-	Destination    Destination      `json:"destination"`
-	Binding        Binding          `json:"binding"`
-	PersonaID      string           `json:"personaId"`
-	ContextDigest  string           `json:"contextDigest"`
-	Provider       string           `json:"provider"`
-	AdapterVersion string           `json:"adapterVersion"`
-	Imports        []SelectedImport `json:"imports"`
-	Digest         string           `json:"digest"`
+	SchemaVersion        int              `json:"schemaVersion"`
+	SnapshotID           string           `json:"snapshotId"`
+	TaskID               string           `json:"taskId"`
+	Destination          Destination      `json:"destination"`
+	Binding              Binding          `json:"binding"`
+	PersonaID            string           `json:"personaId"`
+	ProjectContextDigest string           `json:"projectContextDigest"`
+	ContextDigest        string           `json:"contextDigest"`
+	Provider             string           `json:"provider"`
+	AdapterVersion       string           `json:"adapterVersion"`
+	Imports              []SelectedImport `json:"imports"`
+	Digest               string           `json:"digest"`
 }
 
 func (s Selection) Seal() (Selection, error) {
@@ -41,7 +42,7 @@ func (s Selection) Seal() (Selection, error) {
 }
 
 func (s Selection) Validate() error {
-	if s.SchemaVersion != 1 || !knowledge.ValidID(s.SnapshotID) || !knowledge.ValidID(s.TaskID) || s.Binding.TaskID != s.TaskID || !knowledge.ValidID(s.Binding.RuntimeID) || !knowledge.ValidID(s.PersonaID) || !knowledge.ValidID(s.Provider) || s.AdapterVersion != TaskAdapterVersion || !digestPattern.MatchString(s.ContextDigest) || len(s.Imports) > knowledge.MaxBindings {
+	if s.SchemaVersion != 1 || !knowledge.ValidID(s.SnapshotID) || !knowledge.ValidID(s.TaskID) || s.Binding.TaskID != s.TaskID || !knowledge.ValidID(s.Binding.RuntimeID) || !knowledge.ValidID(s.PersonaID) || !knowledge.ValidID(s.Provider) || s.AdapterVersion != TaskAdapterVersion || !digestPattern.MatchString(s.ContextDigest) || !digestPattern.MatchString(s.ProjectContextDigest) || len(s.Imports) > knowledge.MaxBindings {
 		return errors.New("invalid_private_selection")
 	}
 	if err := s.Destination.Validate(); err != nil {

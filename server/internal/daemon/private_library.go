@@ -85,6 +85,10 @@ func resolvePrivateLibrary(ctx context.Context, client *Client, cache *SkillBund
 	if selection.Validate() != nil || selection.Provider != provider || selection.TaskID != task.ID || selection.Destination.WorkspaceID != task.WorkspaceID || selection.Binding.ProjectID != task.ProjectID || selection.Binding.RuntimeID != task.RuntimeID || selection.PersonaID != task.AgentID || task.KnowledgeManifest == nil || task.KnowledgeManifest.Validate() != nil || task.KnowledgeManifest.Digest != selection.ContextDigest || task.KnowledgeManifest.OwnerID != selection.Destination.OwnerID || strings.TrimRight(client.baseURL, "/") != selection.Destination.Origin {
 		return nil, errors.New("private_selection_identity_mismatch")
 	}
+	projectDigest, err := libraryimport.ProjectContextDigest(task.ProjectID, task.ProjectTitle, task.ProjectDescription, task.ProjectInstructions, task.KnowledgeManifest.Digest, task.ProjectResources)
+	if err != nil || projectDigest != selection.ProjectContextDigest {
+		return nil, errors.New("private_project_context_changed")
+	}
 	namespace, err := libraryimport.RecordDigest("private-library-cache-v1", struct{ Selection, ProviderVersion string }{selection.Digest, providerVersion})
 	if err != nil {
 		return nil, err

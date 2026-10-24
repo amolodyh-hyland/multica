@@ -153,11 +153,16 @@ func (h *Handler) ImportPrivateLibrary(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "persona_binding_changed")
 		return
 	}
-	count, err := q.CountPrivateLibraryImportsForTask(ctx, db.CountPrivateLibraryImportsForTaskParams{WorkspaceID: member.WorkspaceID, TaskID: taskID})
+	budget, err := q.PrivateLibraryTaskBudget(ctx, db.PrivateLibraryTaskBudgetParams{WorkspaceID: member.WorkspaceID, TaskID: taskID})
 	if err != nil {
 		privateImportDBError(w, err)
 		return
 	}
+	if budget.TotalBytes > knowledge.MaxBytes || budget.TotalFiles > 1024 {
+		writeError(w, http.StatusUnprocessableEntity, "runtime_limit")
+		return
+	}
+	count := budget.ImportCount
 	resources, err := q.ListProjectResourcesInWorkspace(ctx, db.ListProjectResourcesInWorkspaceParams{ProjectID: projectID, WorkspaceID: member.WorkspaceID})
 	if err != nil {
 		privateImportDBError(w, err)

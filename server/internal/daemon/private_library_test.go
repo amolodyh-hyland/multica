@@ -42,7 +42,11 @@ func privateDaemonFixture(t *testing.T, origin string) (Task, libraryimport.Obje
 	bundle := (libraryimport.Payload{Entry: entry, Content: request.Content}).Bundle("object1")
 	parent := (knowledge.Selection{SchemaVersion: 1, SnapshotID: "snapshot1", WorkspaceID: "workspace1", ProjectID: "project1", OwnerID: "owner1", DaemonID: "daemon1", Bindings: []knowledge.Binding{}}).Seal()
 	item := libraryimport.SelectedImport{ObjectID: bundle.ID, PreviewDigest: digest, TransportHash: bundle.Hash, Entry: entry}
-	selected, err := (libraryimport.Selection{SchemaVersion: 1, SnapshotID: "snapshot1", TaskID: "task1", Destination: destination, Binding: binding, PersonaID: "persona1", ContextDigest: parent.Digest, Provider: "claude", AdapterVersion: libraryimport.TaskAdapterVersion, Imports: []libraryimport.SelectedImport{item}}).Seal()
+	projectDigest, err := libraryimport.ProjectContextDigest("project1", "", "", "", parent.Digest, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := (libraryimport.Selection{SchemaVersion: 1, SnapshotID: "snapshot1", TaskID: "task1", Destination: destination, Binding: binding, PersonaID: "persona1", ContextDigest: parent.Digest, ProjectContextDigest: projectDigest, Provider: "claude", AdapterVersion: libraryimport.TaskAdapterVersion, Imports: []libraryimport.SelectedImport{item}}).Seal()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +121,7 @@ func TestPrivateLibraryRejectsIdentityChangesBeforeFetch(t *testing.T) {
 	calls := 0
 	client := NewClient("https://example.test")
 	client.client.Transport = startTaskTransport(func(r *http.Request) (*http.Response, error) { calls++; return nil, errors.New("unexpected request") })
-	for _, change := range []func(*Task){func(task *Task) { task.WorkspaceID = "other" }, func(task *Task) { task.AgentID = "other" }, func(task *Task) { task.RuntimeID = "other" }, func(task *Task) { task.ProjectID = "other" }, func(task *Task) { task.ID = "other" }, func(task *Task) { task.AuthToken = "pat_no_task" }, func(task *Task) { task.KnowledgeManifest.Digest = knowledge.Sum([]byte("other")) }} {
+	for _, change := range []func(*Task){func(task *Task) { task.WorkspaceID = "other" }, func(task *Task) { task.AgentID = "other" }, func(task *Task) { task.RuntimeID = "other" }, func(task *Task) { task.ProjectID = "other" }, func(task *Task) { task.ProjectInstructions = "changed context" }, func(task *Task) { task.ID = "other" }, func(task *Task) { task.AuthToken = "pat_no_task" }, func(task *Task) { task.KnowledgeManifest.Digest = knowledge.Sum([]byte("other")) }} {
 		task, _ := privateDaemonFixture(t, "https://example.test")
 		change(&task)
 		if _, err := resolvePrivateLibrary(context.Background(), client, NewPrivateSkillBundleCache(t.TempDir()), task, "claude", "version1"); err == nil {

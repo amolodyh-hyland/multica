@@ -385,3 +385,28 @@ func (q *Queries) PinTaskPrivateLibraryManifest(ctx context.Context, arg PinTask
 	err := row.Scan(&private_library_manifest)
 	return private_library_manifest, err
 }
+
+const privateLibraryTaskBudget = `-- name: PrivateLibraryTaskBudget :one
+SELECT count(*)::bigint AS import_count,
+ COALESCE(sum((payload #>> '{preview,totalBytes}')::bigint),0)::bigint AS total_bytes,
+ COALESCE(sum(jsonb_array_length(payload #> '{preview,entry,files}')),0)::bigint AS total_files
+FROM private_library_import WHERE workspace_id = $1 AND task_id = $2
+`
+
+type PrivateLibraryTaskBudgetParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	TaskID      pgtype.UUID `json:"task_id"`
+}
+
+type PrivateLibraryTaskBudgetRow struct {
+	ImportCount int64 `json:"import_count"`
+	TotalBytes  int64 `json:"total_bytes"`
+	TotalFiles  int64 `json:"total_files"`
+}
+
+func (q *Queries) PrivateLibraryTaskBudget(ctx context.Context, arg PrivateLibraryTaskBudgetParams) (PrivateLibraryTaskBudgetRow, error) {
+	row := q.db.QueryRow(ctx, privateLibraryTaskBudget, arg.WorkspaceID, arg.TaskID)
+	var i PrivateLibraryTaskBudgetRow
+	err := row.Scan(&i.ImportCount, &i.TotalBytes, &i.TotalFiles)
+	return i, err
+}

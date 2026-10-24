@@ -35,10 +35,15 @@ func (h *Handler) pinClaimPrivateLibrary(ctx context.Context, task *db.AgentTask
 			}
 		}
 	}
-	count, err := h.Queries.CountPrivateLibraryImportsForTask(ctx, db.CountPrivateLibraryImportsForTaskParams{WorkspaceID: runtime.WorkspaceID, TaskID: task.ID})
+	budget, err := h.Queries.PrivateLibraryTaskBudget(ctx, db.PrivateLibraryTaskBudgetParams{WorkspaceID: runtime.WorkspaceID, TaskID: task.ID})
 	if err != nil {
 		return nil, err
 	}
+
+	if budget.TotalBytes > knowledge.MaxBytes || budget.TotalFiles > 1024 || budget.ImportCount > knowledge.MaxBindings {
+		return nil, errors.New("runtime_limit")
+	}
+	count := budget.ImportCount
 
 	if len(raw) == 0 && count == 0 {
 		sourceID := task.RetryOfTaskID
@@ -64,17 +69,27 @@ func (h *Handler) pinClaimPrivateLibrary(ctx context.Context, task *db.AgentTask
 	if len(raw) == 0 && count == 0 && (h.cfg.PrivateImportAuthorityID == "" || !runtime.OwnerID.Valid || !runtime.DaemonID.Valid) {
 		return nil, nil
 	}
+	if len(raw) == 0 && count == 0 {
+		destination := libraryimport.Destination{ServerID: h.cfg.PrivateImportAuthorityID, Origin: h.cfg.PublicURL, WorkspaceID: uuidToString(runtime.WorkspaceID), OwnerID: uuidToString(runtime.OwnerID), Audience: "owner_and_explicit_task"}
+		if destination.Validate() != nil || !knowledge.ValidID(runtime.Provider) {
+			return nil, nil
+		}
+	}
 	var candidate libraryimport.Selection
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &candidate); err != nil {
-			return nil, err
+			return nil, errors.New("private_selection_invalid")
 		}
 	} else {
 		var parent knowledge.Selection
 		if err := json.Unmarshal(task.KnowledgeManifest, &parent); err != nil || parent.Validate() != nil {
 			return nil, errors.New("private_context_unavailable")
 		}
-		candidate = libraryimport.Selection{SchemaVersion: 1, SnapshotID: uuidToString(task.ID), TaskID: uuidToString(task.ID), Destination: libraryimport.Destination{ServerID: h.cfg.PrivateImportAuthorityID, Origin: h.cfg.PublicURL, WorkspaceID: uuidToString(runtime.WorkspaceID), OwnerID: uuidToString(runtime.OwnerID), Audience: "owner_and_explicit_task"}, Binding: libraryimport.Binding{ProjectID: resp.ProjectID, TaskID: uuidToString(task.ID), RuntimeID: uuidToString(runtime.ID)}, PersonaID: uuidToString(task.AgentID), ContextDigest: parent.Digest, Provider: runtime.Provider, AdapterVersion: libraryimport.TaskAdapterVersion, Imports: []libraryimport.SelectedImport{}}
+		projectDigest, err := libraryimport.ProjectContextDigest(resp.ProjectID, resp.ProjectTitle, resp.ProjectDescription, resp.ProjectInstructions, parent.Digest, resp.ProjectResources)
+		if err != nil {
+			return nil, errors.New("private_context_unavailable")
+		}
+		candidate = libraryimport.Selection{SchemaVersion: 1, SnapshotID: uuidToString(task.ID), TaskID: uuidToString(task.ID), Destination: libraryimport.Destination{ServerID: h.cfg.PrivateImportAuthorityID, Origin: h.cfg.PublicURL, WorkspaceID: uuidToString(runtime.WorkspaceID), OwnerID: uuidToString(runtime.OwnerID), Audience: "owner_and_explicit_task"}, Binding: libraryimport.Binding{ProjectID: resp.ProjectID, TaskID: uuidToString(task.ID), RuntimeID: uuidToString(runtime.ID)}, PersonaID: uuidToString(task.AgentID), ContextDigest: parent.Digest, ProjectContextDigest: projectDigest, Provider: runtime.Provider, AdapterVersion: libraryimport.TaskAdapterVersion, Imports: []libraryimport.SelectedImport{}}
 		records, err := h.Queries.ListPrivateLibraryImportsForTask(ctx, db.ListPrivateLibraryImportsForTaskParams{WorkspaceID: runtime.WorkspaceID, TaskID: task.ID, OwnerID: runtime.OwnerID})
 		if err != nil {
 			return nil, err
@@ -103,7 +118,7 @@ func (h *Handler) pinClaimPrivateLibrary(ctx context.Context, task *db.AgentTask
 		}
 	}
 	if err := candidate.Validate(); err != nil {
-		return nil, err
+		return nil, errors.New("private_selection_invalid")
 	}
 	encoded, err := json.Marshal(candidate)
 	if err != nil {
@@ -130,6 +145,8 @@ func (h *Handler) prepareClaimPrivateLibrary(r *http.Request, task *db.AgentTask
 		switch err.Error() {
 		case "private_selection_invalid", "private_resume_requires_explicit_task_approval", "private_retry_requires_explicit_task_approval", "private_import_owner_unavailable", "private_import_integrity_failure", "runtime_limit", "private_context_unavailable":
 			reason = err.Error()
+		default:
+			return h.rejectClaimSourceLoad(r.Context(), task, err, "private library", uuidToString(task.ID))
 		}
 	} else {
 		var parent knowledge.Selection
@@ -137,7 +154,8 @@ func (h *Handler) prepareClaimPrivateLibrary(r *http.Request, task *db.AgentTask
 		if len(selection.Imports) == 0 {
 			return nil
 		}
-		if selection.TaskID != uuidToString(task.ID) || selection.Destination.WorkspaceID != uuidToString(runtime.WorkspaceID) || selection.Destination.OwnerID != uuidToString(runtime.OwnerID) || selection.Destination.ServerID != h.cfg.PrivateImportAuthorityID || selection.Destination.Origin != h.cfg.PublicURL || selection.Binding.RuntimeID != uuidToString(runtime.ID) || selection.PersonaID != uuidToString(task.AgentID) || selection.Binding.ProjectID != resp.ProjectID || selection.ContextDigest != parent.Digest || selection.Provider != runtime.Provider {
+		projectDigest, digestErr := libraryimport.ProjectContextDigest(resp.ProjectID, resp.ProjectTitle, resp.ProjectDescription, resp.ProjectInstructions, parent.Digest, resp.ProjectResources)
+		if digestErr != nil || selection.ProjectContextDigest != projectDigest || selection.TaskID != uuidToString(task.ID) || selection.Destination.WorkspaceID != uuidToString(runtime.WorkspaceID) || selection.Destination.OwnerID != uuidToString(runtime.OwnerID) || selection.Destination.ServerID != h.cfg.PrivateImportAuthorityID || selection.Destination.Origin != h.cfg.PublicURL || selection.Binding.RuntimeID != uuidToString(runtime.ID) || selection.PersonaID != uuidToString(task.AgentID) || selection.Binding.ProjectID != resp.ProjectID || selection.ContextDigest != parent.Digest || selection.Provider != runtime.Provider {
 			reason = "private_selection_identity_mismatch"
 		} else if !requestHasClientCapability(r, protocol.DaemonCapabilityPrivateLibraryV1) {
 			reason = "private_import_unsupported_daemon"
