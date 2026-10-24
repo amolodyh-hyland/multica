@@ -34,6 +34,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/awakeclock"
+	"github.com/multica-ai/multica/server/pkg/libraryimport"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
 	"github.com/multica-ai/multica/server/pkg/skillbundle"
@@ -432,11 +433,12 @@ type repoCacheBackend interface {
 
 // Daemon is the local agent runtime that polls for and executes tasks.
 type Daemon struct {
-	cfg        Config
-	client     *Client
-	repoCache  repoCacheBackend
-	skillCache *SkillBundleCache
-	logger     *slog.Logger
+	cfg                 Config
+	client              *Client
+	repoCache           repoCacheBackend
+	skillCache          *SkillBundleCache
+	privateLibraryCache *SkillBundleCache
+	logger              *slog.Logger
 
 	knowledgeResolutions knowledgeResolutionLimiter
 
@@ -765,6 +767,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		client:                      client,
 		repoCache:                   repocache.New(cacheRoot, logger),
 		skillCache:                  NewSkillBundleCache(skillCacheRoot),
+		privateLibraryCache:         NewPrivateSkillBundleCache(filepath.Join(cfg.WorkspacesRoot, ".private-library-cache", "v1")),
 		logger:                      logger,
 		terminalReports:             newTerminalReportStore(cfg),
 		terminalReportWakeup:        make(chan struct{}, 1),
@@ -7821,6 +7824,25 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{}, knowledgeErr
 	}
 
+	var privateSnapshot *libraryimport.TaskSnapshot
+	if task.PrivateLibraryManifest != nil {
+		if err := libraryimport.RequireTaskProvider(provider, resolvedVersion); err != nil {
+			return TaskResult{}, fmt.Errorf("private_library_unsupported_provider: %w", err)
+		}
+		privatePayloads, err := resolvePrivateLibrary(prepareCtx, d.client, d.privateLibraryCache, task, provider, resolvedVersion)
+		if err != nil {
+			return TaskResult{}, err
+		}
+		if err := privateLibraryByteLimit(task, knowledgeSnapshot, privatePayloads); err != nil {
+			return TaskResult{}, err
+		}
+		snapshot := libraryimport.TaskSnapshot{Selection: *task.PrivateLibraryManifest, Payloads: privatePayloads}
+		if err := snapshot.Validate(); err != nil {
+			return TaskResult{}, err
+		}
+		privateSnapshot = &snapshot
+	}
+
 	agentName := "agent"
 	var skills []SkillData
 	var instructions string
@@ -7832,14 +7854,16 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Repos are passed as metadata only — the agent checks them out on demand
 	// via `multica repo checkout <url>`.
 	taskCtx := execenv.TaskContextForEnv{
-		DelegationID:        task.DelegationID,
-		IssueID:             task.IssueID,
-		TriggerCommentID:    task.TriggerCommentID,
-		TriggerThreadID:     task.TriggerThreadID,
-		CommentReplyTargets: commentReplyThreads(task),
-		NewCommentCount:     task.NewCommentCount,
-		NewCommentsSince:    task.NewCommentsSince,
-		PriorSessionResumed: task.PriorSessionID != "",
+		PrivateLibrary:         privateSnapshot,
+		PrivateProviderVersion: resolvedVersion,
+		DelegationID:           task.DelegationID,
+		IssueID:                task.IssueID,
+		TriggerCommentID:       task.TriggerCommentID,
+		TriggerThreadID:        task.TriggerThreadID,
+		CommentReplyTargets:    commentReplyThreads(task),
+		NewCommentCount:        task.NewCommentCount,
+		NewCommentsSince:       task.NewCommentsSince,
+		PriorSessionResumed:    task.PriorSessionID != "",
 		// MUL-5305: the server sets this when a more recent Codex session was
 		// withheld (rollout missing) and PriorSessionID is an older fallback (or
 		// absent). Seed the brief's continuity disclosure from it; the local
@@ -8546,6 +8570,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 
 	// Inject runtime-specific config (meta skill) so the agent discovers .agent_context/.
+
+	if privateSnapshot != nil {
+		if err := privateSnapshot.VerifyBindings(env.PrivateLibraryBindings); err != nil {
+			return TaskResult{}, err
+		}
+		taskCtx.PrivateLibraryBindings = env.PrivateLibraryBindings
+	}
 	runtimeBrief, err := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx)
 	if err != nil {
 		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)

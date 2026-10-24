@@ -4533,8 +4533,17 @@ func (h *Handler) deleteIssuesAndCollectAttachmentURLs(ctx context.Context, issu
 		} else if !errors.Is(contextErr, pgx.ErrNoRows) {
 			return issueDeleteResult{}, fmt.Errorf("load issue source context for delete: %w", contextErr)
 		}
+		// Capture IDs under the issue deletion fence, then sweep after the cascade.
+		// A concurrent import may commit while DELETE waits on its task row.
+		privateTaskIDs, err := qtx.ListPrivateLibraryImportTaskIDsForIssue(ctx, issue.ID)
+		if err != nil {
+			return issueDeleteResult{}, fmt.Errorf("list private import task owners: %w", err)
+		}
 		if err := qtx.DeleteIssue(ctx, db.DeleteIssueParams{ID: issue.ID, WorkspaceID: issue.WorkspaceID}); err != nil {
 			return issueDeleteResult{}, fmt.Errorf("delete issue: %w", err)
+		}
+		if _, err := qtx.DeleteUnreferencedPrivateLibraryImportsForTasks(ctx, db.DeleteUnreferencedPrivateLibraryImportsForTasksParams{WorkspaceID: issue.WorkspaceID, TaskIds: privateTaskIDs}); err != nil {
+			return issueDeleteResult{}, fmt.Errorf("delete unreferenced private imports: %w", err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {

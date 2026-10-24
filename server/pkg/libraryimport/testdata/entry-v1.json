@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "entryId": "ent_review",
+  "sourceId": "src_personal",
+  "kind": "rule",
+  "displayName": "Review guidance",
+  "format": "plain-rule-v1",
+  "entryPoint": "rules/review.md",
+  "files": [
+    {
+      "path": "rules/review.md",
+      "sha256": "sha256:79d3fb15c47be570843e0a9247645a4c43c3600cbd29023985d73802ffecb849",
+      "sizeBytes": 25,
+      "mode": "text"
+    }
+  ],
+  "requirements": [],
+  "contentHash": "sha256:26eb5fd1696af1e0c83b85a2933f699fb93c286ba0ca4e0056f528e174cbb94d",
+  "provenance": {
+    "originAuthorityId": "ao_local",
+    "originSourceId": "src_personal",
+    "originEntryId": "ent_review",
+    "originKind": "machine_local",
+    "resolverId": "resolver1",
+    "sourceRevision": 1,
+    "adapterVersion": "1",
+    "verification": "observed"
+  },
+  "status": "",
+  "reasonCode": ""
+}

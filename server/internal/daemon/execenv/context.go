@@ -12,6 +12,7 @@ import (
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/knowledge"
+	"github.com/multica-ai/multica/server/pkg/libraryimport"
 	"gopkg.in/yaml.v3"
 )
 
@@ -159,6 +160,12 @@ func writeWorkspacesRootMarkerAtomic(path string, data []byte) error {
 // cloud-mode tasks whose envRoot is wiped wholesale by the GC loop — may
 // pass nil to skip the bookkeeping entirely.
 func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest *sidecarManifest) error {
+	if manifest != nil {
+		if err := manifest.bindRoot(workDir); err != nil {
+			return err
+		}
+	}
+
 	if err := writeTaskContextMarker(workDir, ctx, manifest); err != nil {
 		return err
 	}
@@ -223,11 +230,8 @@ func writeTaskContextMarker(workDir string, ctx TaskContextForEnv, manifest *sid
 			if json.Unmarshal(existing, &marker) != nil || marker.ManagedBy != TaskContextMarkerManagedBy {
 				return fmt.Errorf("write task context marker: %w", err)
 			}
-			if writeErr := os.WriteFile(path, data, 0o644); writeErr != nil {
-				return fmt.Errorf("refresh task context marker: %w", writeErr)
-			}
-			if manifest != nil {
-				manifest.Files = append(manifest.Files, path)
+			if string(existing) != string(data) {
+				return fmt.Errorf("refresh task context marker: %w", errPathPreExists)
 			}
 			return nil
 		}
@@ -240,12 +244,13 @@ func writeTaskContextMarker(workDir string, ctx TaskContextForEnv, manifest *sid
 // directory. Schema is intentionally a thin pass-through of the API response
 // so consumers (skills, future tooling) don't need a separate parser.
 type projectResourceFile struct {
-	ProjectID           string                  `json:"project_id,omitempty"`
-	ProjectTitle        string                  `json:"project_title,omitempty"`
-	ProjectDescription  string                  `json:"project_description,omitempty"`
-	ProjectInstructions string                  `json:"project_instructions,omitempty"`
-	Knowledge           *knowledge.Snapshot     `json:"knowledge,omitempty"`
-	Resources           []ProjectResourceForEnv `json:"resources"`
+	ProjectID           string                      `json:"project_id,omitempty"`
+	ProjectTitle        string                      `json:"project_title,omitempty"`
+	ProjectDescription  string                      `json:"project_description,omitempty"`
+	ProjectInstructions string                      `json:"project_instructions,omitempty"`
+	PrivateLibrary      *libraryimport.TaskSnapshot `json:"private_library,omitempty"`
+	Knowledge           *knowledge.Snapshot         `json:"knowledge,omitempty"`
+	Resources           []ProjectResourceForEnv     `json:"resources"`
 }
 
 // MarshalJSON renders the resource_ref field as raw JSON instead of a base64
@@ -278,7 +283,7 @@ func (p ProjectResourceForEnv) MarshalJSON() ([]byte, error) {
 // of created directories and the resources.json file so CleanupSidecars
 // can undo them on local_directory teardown.
 func writeProjectResources(workDir string, ctx TaskContextForEnv, manifest *sidecarManifest) error {
-	if ctx.ProjectID == "" && len(ctx.ProjectResources) == 0 && ctx.KnowledgeSnapshot == nil {
+	if ctx.ProjectID == "" && len(ctx.ProjectResources) == 0 && ctx.KnowledgeSnapshot == nil && ctx.PrivateLibrary == nil {
 		return nil
 	}
 	resources := ctx.ProjectResources
@@ -291,13 +296,14 @@ func writeProjectResources(workDir string, ctx TaskContextForEnv, manifest *side
 		ProjectDescription:  ctx.ProjectDescription,
 		ProjectInstructions: ctx.ProjectInstructions,
 		Knowledge:           ctx.KnowledgeSnapshot,
+		PrivateLibrary:      ctx.PrivateLibrary,
 		Resources:           resources,
 	}
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return err
 	}
-	if ctx.KnowledgeSnapshot != nil {
+	if ctx.KnowledgeSnapshot != nil || ctx.PrivateLibrary != nil {
 		return writeKnowledgeProjectContext(workDir, data, manifest)
 	}
 	dir := filepath.Join(workDir, ".multica", "project")
@@ -332,9 +338,7 @@ func resolveSkillsDir(workDir, provider string, manifest *sidecarManifest) (stri
 
 // skillsDirPath returns the provider-native skills parent directory under
 // workDir WITHOUT creating it or recording anything. resolveSkillsDir wraps
-// this with the MkdirAll/manifest bookkeeping; the reuse-path skill rollback
-// (removeReusedManagedSkillDirs) needs the bare path with no side effects so
-// it can match the managed skill roots the prior manifest recorded.
+// this with the MkdirAll/manifest bookkeeping.
 func skillsDirPath(workDir, provider string) string {
 	// Built-in runtime identities (e.g. "omp") declare their skills dir in
 	// the descriptor; resolve generically before the protocol-family switch.

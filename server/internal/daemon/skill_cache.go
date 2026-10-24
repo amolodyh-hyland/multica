@@ -15,6 +15,7 @@ import (
 )
 
 type SkillBundleCache struct {
+	private   bool
 	root      string
 	rename    func(string, string) error
 	removeAll func(string) error
@@ -35,6 +36,9 @@ func (c *SkillBundleCache) Load(workspaceID string, ref SkillRefData) (SkillData
 	if c == nil || c.root == "" {
 		return SkillData{}, false
 	}
+	if c.private {
+		return c.loadPrivate(workspaceID, ref)
+	}
 	keyPath := c.bundlePath(workspaceID, ref)
 	data, err := os.ReadFile(keyPath)
 	if err != nil {
@@ -51,6 +55,9 @@ func (c *SkillBundleCache) Load(workspaceID string, ref SkillRefData) (SkillData
 func (c *SkillBundleCache) Store(workspaceID string, bundle SkillData) error {
 	if c == nil || c.root == "" {
 		return nil
+	}
+	if c.private {
+		return c.storePrivate(workspaceID, bundle)
 	}
 	ref := SkillRefData{ID: bundle.ID, Source: bundle.Source, Hash: bundle.Hash}
 	dir := filepath.Dir(c.bundlePath(workspaceID, ref))
@@ -113,6 +120,9 @@ func (c *SkillBundleCache) lockForKey(key string) *sync.Mutex {
 }
 
 func (c *SkillBundleCache) bundlePath(workspaceID string, ref SkillRefData) string {
+	if c.private {
+		return filepath.Join(c.root, c.privateCacheName(workspaceID, ref))
+	}
 	return filepath.Join(
 		c.root,
 		safeCacheSegment(workspaceID),

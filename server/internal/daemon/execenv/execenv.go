@@ -15,6 +15,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	"github.com/multica-ai/multica/server/pkg/knowledge"
+	"github.com/multica-ai/multica/server/pkg/libraryimport"
 )
 
 // RepoContextForEnv describes a workspace repo available for checkout.
@@ -163,6 +164,9 @@ type TaskContextForEnv struct {
 	ProjectID                     string              // active project for this task, when present
 	ProjectTitle                  string              // human-readable project title
 	ProjectDescription            string              // durable project-level context, rendered into the brief's Project Context section
+	PrivateLibrary                *libraryimport.TaskSnapshot
+	PrivateProviderVersion        string
+	PrivateLibraryBindings        []libraryimport.RuntimeBinding
 	KnowledgeSnapshot             *knowledge.Snapshot
 	ProjectInstructions           string
 	ProjectResources              []ProjectResourceForEnv // resources attached to the project
@@ -269,7 +273,8 @@ type SkillFileContextForEnv struct {
 // Environment represents a prepared, isolated execution environment.
 type Environment struct {
 	// RootDir is the top-level env directory ({workspacesRoot}/{task_id_short}/).
-	RootDir string
+	PrivateLibraryBindings []libraryimport.RuntimeBinding
+	RootDir                string
 	// WorkDir is the directory to pass as Cwd to the agent. Normally
 	// ({RootDir}/workdir/); when the task is bound to a local_directory
 	// project_resource, it is the user's path instead. See LocalDirectory.
@@ -412,6 +417,12 @@ func readablePathSegment(label, fallback, id string) string {
 // The workdir starts empty (no repo checkouts). The agent checks out repos
 // on demand via `multica repo checkout <url>`.
 func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
+	if params.Task.PrivateLibrary != nil {
+		if err := libraryimport.RequireTaskProvider(params.Provider, params.Task.PrivateProviderVersion); err != nil {
+			return nil, err
+		}
+	}
+
 	if params.WorkspacesRoot == "" {
 		return nil, fmt.Errorf("execenv: workspaces root is required")
 	}
@@ -588,12 +599,8 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	// registered. Without this rollback the files stay on disk with no record
 	// of what to remove (MUL-6132).
 	//
-	// In place only. Worktree mode discards the whole worktree on failure just
-	// above, and a cloud envRoot is wiped wholesale by the GC — only the
-	// local_directory flow writes into a directory that outlives the task and
-	// belongs to the user, where a leftover marker disables every multica
-	// command in that directory tree until someone removes it by hand.
-	if params.LocalWorkDir != "" {
+	// Private projections also retain ownership checks on failed preparation.
+	if params.LocalWorkDir != "" || params.Task.PrivateLibrary != nil {
 		defer func() {
 			if prepareSucceeded {
 				return
@@ -607,6 +614,14 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	if err := writeContextFiles(workDir, params.Provider, params.Task, manifest); err != nil {
 		return nil, fmt.Errorf("execenv: write context files: %w", err)
 	}
+	if params.Task.PrivateLibrary != nil {
+		bindings, err := stagePrivateLibrary(workDir, params.Provider, *params.Task.PrivateLibrary, manifest)
+		if err != nil {
+			return nil, err
+		}
+		env.PrivateLibraryBindings = bindings
+	}
+
 	if err := prepareOmpMcpConfig(workDir, params.Provider, params.McpConfig, manifest); err != nil {
 		return nil, fmt.Errorf("execenv: prepare omp mcp config: %w", err)
 	}
@@ -713,7 +728,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		// tree now, while we still hold the in-memory manifest. Elsewhere the
 		// manifest is a convenience the GC can do without, so a warning stays
 		// the right response.
-		if params.LocalWorkDir != "" {
+		if params.LocalWorkDir != "" || params.Task.PrivateLibrary != nil {
 			return nil, fmt.Errorf("execenv: write sidecar manifest: %w", err)
 		}
 		logger.Warn("execenv: write sidecar manifest failed (non-fatal)", "error", err)
@@ -810,6 +825,13 @@ type ReuseParams struct {
 // Returns nil if the workdir does not exist or required provider setup fails
 // (caller should fall back to Prepare).
 func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
+	if params.Task.PrivateLibrary != nil {
+		if err := libraryimport.RequireTaskProvider(params.Provider, params.Task.PrivateProviderVersion); err != nil {
+			logger.Warn("execenv: private provider unavailable", "error", err)
+			return nil
+		}
+	}
+
 	if _, err := os.Stat(params.WorkDir); err != nil {
 		return nil
 	}
@@ -856,40 +878,11 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 		}
 	}
 
-	// Roll back the previous dispatch's sidecar writes before refreshing.
-	// On reuse the workdir still holds the prior run's skill directories (and,
-	// for a workdir prepared before MUL-6984, its issue_context.md); without
-	// clearing them first, writeSkillFiles sees
-	// its own earlier output occupying the canonical slug and falls back to
-	// a collision-free sibling (issue-review, issue-review-multica,
-	// issue-review-multica-2, …), accumulating a fresh duplicate on every
-	// re-dispatch to the same issue. allocateCollisionFreeSkillDir exists to
-	// dodge *user*-owned skill dirs (the local_directory flow), not our own
-	// prior writes, so we undo them via the prior manifest first and let the
-	// refresh below re-create each skill at its natural slug. This also brings
-	// the standard providers in line with the Codex path, where
-	// hydrateCodexSkills already wipes its skills dir before re-hydrating.
-	//
-	// Two steps, in order:
-	//   1. removeReusedManagedSkillDirs reclaims the platform's own skill
-	//      directories even when a prior-run agent left a file inside one.
-	//      CleanupSidecars alone can't do this — it preserves any recorded dir
-	//      the agent populated (correct on the local_directory teardown path),
-	//      which would otherwise keep the canonical slug occupied and push the
-	//      refresh back to issue-review-multica.
-	//   2. CleanupSidecars rolls back the remaining sidecar files (project
-	//      resources today, plus any issue_context.md recorded by a manifest
-	//      an older build wrote — legacy upgrade cleanup, not a live writer)
-	//      and the manifest itself.
-	//
-	// No-op when RootDir is empty (legacy local_directory reuse, which the
-	// daemon skips anyway) or when no prior manifest exists (older build).
+	// A retained sidecar conflict prevents reuse of the prior environment.
 	if env.RootDir != "" {
-		if err := removeReusedManagedSkillDirs(env.RootDir, skillsDirPath(params.WorkDir, params.Provider)); err != nil {
-			logger.Warn("execenv: reclaim managed skill dirs on reuse failed", "error", err)
-		}
 		if err := CleanupSidecars(env.RootDir); err != nil {
-			logger.Warn("execenv: roll back prior sidecars on reuse failed", "error", err)
+			logger.Warn("execenv: retained sidecar conflicts; forcing fresh prepare", "error", err)
+			return nil
 		}
 	}
 
@@ -904,12 +897,29 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	// legacy local_directory Reuse fallback — skip the persist in that
 	// case to avoid creating a stray manifest at the filesystem root.
 	manifest := &sidecarManifest{}
+	privateSucceeded := false
+	defer func() {
+		if params.Task.PrivateLibrary != nil && !privateSucceeded {
+			if err := rollBackPreparedSidecars(*manifest); err != nil {
+				logger.Warn("execenv: retained private rollback conflicts", "error", err)
+			}
+		}
+	}()
 	if err := writeContextFiles(params.WorkDir, params.Provider, params.Task, manifest); err != nil {
-		if params.Task.KnowledgeSnapshot != nil {
+		if params.Task.KnowledgeSnapshot != nil || params.Task.PrivateLibrary != nil {
 			logger.Warn("execenv: refresh knowledge context failed; forcing fresh prepare", "error", err)
 			return nil
 		}
 		logger.Warn("execenv: refresh context files failed", "error", err)
+	}
+
+	if params.Task.PrivateLibrary != nil {
+		bindings, err := stagePrivateLibrary(params.WorkDir, params.Provider, *params.Task.PrivateLibrary, manifest)
+		if err != nil {
+			logger.Warn("execenv: private materialization failed", "error", err)
+			return nil
+		}
+		env.PrivateLibraryBindings = bindings
 	}
 	if err := prepareOmpMcpConfig(params.WorkDir, params.Provider, params.McpConfig, manifest); err != nil {
 		logger.Warn("execenv: refresh omp mcp config failed; forcing fresh prepare", "error", err)
@@ -1018,6 +1028,9 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	if env.RootDir != "" {
 		if err := writeSidecarManifest(env.RootDir, manifest); err != nil {
 			logger.Warn("execenv: refresh sidecar manifest failed", "error", err)
+			if params.Task.PrivateLibrary != nil {
+				return nil
+			}
 		}
 	}
 
@@ -1044,6 +1057,7 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	}
 
 	logger.Info("execenv: reusing env", "workdir", params.WorkDir)
+	privateSucceeded = true
 	return env
 }
 

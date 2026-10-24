@@ -205,6 +205,7 @@ func daemonHTTPClientCapabilities() string {
 func daemonCommonCapabilities() []string {
 	return []string{
 		protocol.DaemonCapabilitySkillBundlesV1,
+		protocol.DaemonCapabilityPrivateLibraryV1,
 		protocol.DaemonCapabilityCoalescedCommentsV1,
 		protocol.DaemonCapabilityExecutionManifestV1,
 		protocol.DaemonCapabilityAgentSkillV1,

@@ -180,6 +180,7 @@ type AgentTaskQueue struct {
 	IssueSnapshot             []byte      `json:"issue_snapshot"`
 	WorkflowStep              pgtype.Text `json:"workflow_step"`
 	KnowledgeManifest         []byte      `json:"knowledge_manifest"`
+	PrivateLibraryManifest    []byte      `json:"private_library_manifest"`
 }
 
 type AgentToLabel struct {
@@ -1333,6 +1334,23 @@ type PluginStorage struct {
 	Value          string             `json:"value"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PrivateLibraryImport struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	OwnerID       pgtype.UUID        `json:"owner_id"`
+	AttemptID     string             `json:"attempt_id"`
+	TaskID        pgtype.UUID        `json:"task_id"`
+	RuntimeID     pgtype.UUID        `json:"runtime_id"`
+	AgentID       pgtype.UUID        `json:"agent_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	PreviewDigest string             `json:"preview_digest"`
+	ContentHash   string             `json:"content_hash"`
+	TransportHash string             `json:"transport_hash"`
+	Payload       []byte             `json:"payload"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	RemovedAt     pgtype.Timestamptz `json:"removed_at"`
 }
 
 type Project struct {

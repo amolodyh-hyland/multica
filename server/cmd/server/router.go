@@ -457,6 +457,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	origins := allowedOrigins()
 
 	signupConfig := handler.Config{
+		PrivateImportAuthorityID: strings.TrimSpace(os.Getenv("MULTICA_PRIVATE_IMPORT_AUTHORITY_ID")),
 		AllowSignup:              os.Getenv("ALLOW_SIGNUP") != "false",
 		AllowedEmails:            splitAndTrim(os.Getenv("ALLOWED_EMAILS")),
 		AllowedEmailDomains:      splitAndTrim(os.Getenv("ALLOWED_EMAIL_DOMAINS")),
@@ -2182,6 +2183,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/", h.DeleteIssueWorkflow)
 					r.Put("/handoffs/{status}", h.SetIssueWorkflowHandoff)
 					r.Post("/brief", h.PreviewIssueWorkflowBrief)
+				})
+			})
+
+			r.Route("/api/private-library", func(r chi.Router) {
+				r.Get("/tasks/{taskId}/imports/{id}", h.GetTaskPrivateLibraryImport)
+				r.Head("/tasks/{taskId}/imports/{id}", h.GetTaskPrivateLibraryImport)
+				r.Group(func(r chi.Router) {
+					r.Use(handler.RequireHumanActor)
+					r.Get("/capabilities", h.PrivateLibraryCapabilities)
+					r.Post("/imports", h.ImportPrivateLibrary)
+					r.Get("/imports/{id}", h.GetPrivateLibraryImport)
+					r.Delete("/imports/{id}", h.RemovePrivateLibraryImport)
 				})
 			})
 

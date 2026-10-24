@@ -6,6 +6,7 @@ import (
 )
 
 const (
+	DaemonCapabilityPrivateLibraryV1    = "private-library-v1"
 	DaemonCapabilityKnowledgeStatusV1   = "knowledge-status-v1"
 	DaemonCapabilityKnowledgeV1         = "knowledge-context-v1"
 	DaemonCapabilityPublicDelegationV1  = "public-delegation-v1"

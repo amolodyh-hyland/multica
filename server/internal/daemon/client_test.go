@@ -37,6 +37,7 @@ func TestClient_IdentityHeaders_PostJSON(t *testing.T) {
 		}
 		for _, want := range []string{
 			protocol.DaemonCapabilitySkillBundlesV1,
+			protocol.DaemonCapabilityPrivateLibraryV1,
 			protocol.DaemonCapabilityCoalescedCommentsV1,
 			// The worktree gate is decided entirely from this header: if the
 			// daemon stops advertising it, every worktree task on this machine

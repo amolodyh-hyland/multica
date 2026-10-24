@@ -441,10 +441,11 @@ func TestCleanupSidecarsLeavesUserContentInTrackedDirIntact(t *testing.T) {
 	managedDir := filepath.Join(workDir, ".multica")
 	managedProject := filepath.Join(managedDir, "project")
 	managedFile := filepath.Join(managedProject, "resources.json")
-	if err := os.MkdirAll(managedProject, 0o755); err != nil {
+	manifest := &sidecarManifest{}
+	if err := recordMkdirAll(managedProject, 0o755, manifest); err != nil {
 		t.Fatalf("seed dirs: %v", err)
 	}
-	if err := os.WriteFile(managedFile, []byte("{}"), 0o644); err != nil {
+	if err := recordWriteFile(managedFile, []byte("{}"), 0o644, manifest); err != nil {
 		t.Fatalf("seed managed file: %v", err)
 	}
 	userFile := filepath.Join(managedDir, "user-notes.txt")
@@ -452,16 +453,12 @@ func TestCleanupSidecarsLeavesUserContentInTrackedDirIntact(t *testing.T) {
 		t.Fatalf("seed user file: %v", err)
 	}
 
-	manifest := &sidecarManifest{
-		Files: []string{managedFile},
-		Dirs:  []string{managedDir, managedProject},
-	}
 	if err := writeSidecarManifest(envRoot, manifest); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 
-	if err := CleanupSidecars(envRoot); err != nil {
-		t.Errorf("CleanupSidecars: %v", err)
+	if err := CleanupSidecars(envRoot); err == nil {
+		t.Error("expected retained nonempty directory conflict")
 	}
 
 	if _, err := os.Stat(managedFile); !os.IsNotExist(err) {
@@ -979,8 +976,8 @@ func TestCleanupSidecarsSwallowsMissingAndNonEmptyDirs(t *testing.T) {
 	if err := writeSidecarManifest(envRoot2, &sidecarManifest{Dirs: []string{recordedDir}}); err != nil {
 		t.Fatalf("write non-empty-dir manifest: %v", err)
 	}
-	if err := CleanupSidecars(envRoot2); err != nil {
-		t.Errorf("CleanupSidecars(non-empty dir) should swallow ENOTEMPTY silently, got: %v", err)
+	if err := CleanupSidecars(envRoot2); err == nil {
+		t.Error("legacy directory must report unverifiable ownership")
 	}
 	got, err := os.ReadFile(userFile)
 	if err != nil {
@@ -991,15 +988,8 @@ func TestCleanupSidecarsSwallowsMissingAndNonEmptyDirs(t *testing.T) {
 	}
 }
 
-// TestCleanupSidecarsSurfacesEACCESOnEmptyRecordedDir is the directed
-// integration test for the should-fix branch: rmdir fails (here with
-// EACCES because the parent is read-only), the directory is verifiably
-// empty, and CleanupSidecars must surface the original rmdir error
-// instead of silently skipping it.
-//
-// Skipped when running as root because chmod is bypassed for uid 0 —
-// the EACCES we want to trigger never materialises. CI's daemon runner
-// is unprivileged, so the branch is exercised in CI.
+// A read-only parent blocks quarantine creation before removal. Cleanup must
+// surface that permission error and retain the original entry and manifest.
 func TestCleanupSidecarsSurfacesEACCESOnEmptyRecordedDir(t *testing.T) {
 	t.Parallel()
 	if os.Geteuid() == 0 {
@@ -1011,10 +1001,14 @@ func TestCleanupSidecarsSurfacesEACCESOnEmptyRecordedDir(t *testing.T) {
 
 	parent := filepath.Join(workDir, "parent")
 	recorded := filepath.Join(parent, "empty-dir")
-	if err := os.MkdirAll(recorded, 0o755); err != nil {
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := &sidecarManifest{}
+	if err := recordMkdirAll(recorded, 0o755, manifest); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if err := writeSidecarManifest(envRoot, &sidecarManifest{Dirs: []string{recorded}}); err != nil {
+	if err := writeSidecarManifest(envRoot, manifest); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 
@@ -1036,8 +1030,14 @@ func TestCleanupSidecarsSurfacesEACCESOnEmptyRecordedDir(t *testing.T) {
 	if !strings.Contains(err.Error(), "empty-dir") {
 		t.Errorf("expected surfaced error to reference recorded path, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "rmdir") {
-		t.Errorf("expected surfaced error to come from rmdir branch, got: %v", err)
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("expected surfaced permission error, got: %v", err)
+	}
+	if _, err := os.Stat(recorded); err != nil {
+		t.Fatalf("blocked cleanup moved entry: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(envRoot, sidecarManifestFile)); err != nil {
+		t.Fatalf("blocked cleanup lost manifest: %v", err)
 	}
 }
 
@@ -1062,10 +1062,14 @@ func TestCleanupSidecarsSurfacesEACCESWhenReadDirFailsToo(t *testing.T) {
 
 	parent := filepath.Join(workDir, "parent")
 	recorded := filepath.Join(parent, "locked-dir")
-	if err := os.MkdirAll(recorded, 0o755); err != nil {
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := &sidecarManifest{}
+	if err := recordMkdirAll(recorded, 0o755, manifest); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if err := writeSidecarManifest(envRoot, &sidecarManifest{Dirs: []string{recorded}}); err != nil {
+	if err := writeSidecarManifest(envRoot, manifest); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 
@@ -1092,58 +1096,7 @@ func TestCleanupSidecarsSurfacesEACCESWhenReadDirFailsToo(t *testing.T) {
 	if !strings.Contains(err.Error(), "locked-dir") {
 		t.Errorf("expected surfaced error to reference recorded path, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "rmdir") {
-		t.Errorf("expected surfaced error to be the ORIGINAL rmdir error, not the ReadDir failure, got: %v", err)
-	}
-}
-
-// TestDirHasEntries is the directed unit test for the helper Cleanup
-// uses to tell ENOTEMPTY (silently skip) apart from genuine rmdir
-// errors (surface). The helper returns (hasEntries, ok); CleanupSidecars
-// surfaces the original rmdir error whenever ok=false so a ReadDir
-// failure on a chmod'd / not-a-directory / faulted path doesn't get
-// laundered into a phantom "non-empty directory" skip.
-func TestDirHasEntries(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-
-	empty := filepath.Join(root, "empty")
-	if err := os.Mkdir(empty, 0o755); err != nil {
-		t.Fatalf("seed empty: %v", err)
-	}
-	if has, ok := dirHasEntries(empty); !ok || has {
-		t.Errorf("dirHasEntries(empty dir) = (%v, %v), want (false, true)", has, ok)
-	}
-
-	full := filepath.Join(root, "full")
-	if err := os.Mkdir(full, 0o755); err != nil {
-		t.Fatalf("seed full: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(full, "file"), []byte(""), 0o644); err != nil {
-		t.Fatalf("seed full content: %v", err)
-	}
-	if has, ok := dirHasEntries(full); !ok || !has {
-		t.Errorf("dirHasEntries(non-empty dir) = (%v, %v), want (true, true)", has, ok)
-	}
-
-	missing := filepath.Join(root, "missing")
-	if has, ok := dirHasEntries(missing); !ok || has {
-		t.Errorf("dirHasEntries(missing dir) = (%v, %v), want (false, true) — ENOENT collapses to empty so the rmdir-race resolves cleanly", has, ok)
-	}
-
-	// ReadDir failure path: pass a regular file. ReadDir returns
-	// ENOTDIR, which is NOT ENOENT, so the helper must report
-	// (false, false) — "couldn't tell" — and let CleanupSidecars
-	// surface the underlying rmdir error rather than silently
-	// skipping. This is the must-fix branch PR #3444 review caught:
-	// the v1 helper returned (true) here, which made every ReadDir
-	// failure look like ENOTEMPTY.
-	regular := filepath.Join(root, "regular.txt")
-	if err := os.WriteFile(regular, []byte("not a dir"), 0o644); err != nil {
-		t.Fatalf("seed regular: %v", err)
-	}
-	if has, ok := dirHasEntries(regular); ok || has {
-		t.Errorf("dirHasEntries(regular file) = (%v, %v), want (false, false) — ENOTDIR must NOT be laundered as ENOTEMPTY", has, ok)
+	if !strings.Contains(err.Error(), "permission denied") {
+		t.Errorf("expected ownership verification failure: %v", err)
 	}
 }

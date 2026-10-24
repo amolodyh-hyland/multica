@@ -1068,151 +1068,51 @@ func TestReuseRefreshesSkillsWithoutDuplicating(t *testing.T) {
 	}
 }
 
-// TestReuseReclaimsManagedSkillDirWithStrayAgentFile covers the edge case the
-// #3716 review surfaced: a prior-dispatch agent writes a file into the
-// platform's managed skill directory. CleanupSidecars on its own would keep
-// that now-non-empty directory, leaving the canonical slug occupied so the
-// next refresh dodges to issue-review-multica. Reuse must reclaim the
-// platform-owned skill directory so the refreshed skill stays at its natural
-// slug.
-func TestReuseReclaimsManagedSkillDirWithStrayAgentFile(t *testing.T) {
+func TestReusePreservesAddedSkillFiles(t *testing.T) {
 	t.Parallel()
-
-	workspacesRoot := t.TempDir()
-	task := TaskContextForEnv{
-		IssueID: "reuse-stray-file",
-		AgentSkills: []SkillContextForEnv{
-			{Name: "Issue Review", Content: "Review the issue."},
-		},
-	}
-
-	env, err := Prepare(PrepareParams{
-		WorkspacesRoot: workspacesRoot,
-		WorkspaceID:    "ws-reuse-stray",
-		TaskID:         "aaaabbbb-cccc-dddd-eeee-ffff00001111",
-		Provider:       "claude",
-		Task:           task,
-	}, testLogger())
+	task := TaskContextForEnv{IssueID: "reuse-stray-file", AgentSkills: []SkillContextForEnv{{Name: "Issue Review", Content: "Review the issue."}}}
+	env, err := Prepare(PrepareParams{WorkspacesRoot: t.TempDir(), WorkspaceID: "ws-reuse-stray", TaskID: "aaaabbbb-cccc-dddd-eeee-ffff00001111", Provider: "claude", Task: task}, testLogger())
 	if err != nil {
-		t.Fatalf("Prepare failed: %v", err)
+		t.Fatal(err)
 	}
 	defer env.Cleanup(true)
-
-	skillsDir := filepath.Join(env.WorkDir, ".claude", "skills")
-
-	// Prior-run agent drops scratch inside the managed skill directory.
-	stray := filepath.Join(skillsDir, "issue-review", "agent-notes.md")
-	if err := os.WriteFile(stray, []byte("agent scratch"), 0o644); err != nil {
-		t.Fatalf("seed stray agent file: %v", err)
+	stray := filepath.Join(env.WorkDir, ".claude", "skills", "issue-review", "agent-notes.md")
+	if err := os.WriteFile(stray, []byte("scratch"), 0600); err != nil {
+		t.Fatal(err)
 	}
-
-	if reused := Reuse(ReuseParams{
-		WorkDir:  env.WorkDir,
-		Provider: "claude",
-		Task:     task,
-	}, testLogger()); reused == nil {
-		t.Fatal("Reuse returned nil")
+	if Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "claude", Task: task}, testLogger()) != nil {
+		t.Fatal("conflicted environment was reused")
 	}
-
-	entries, err := os.ReadDir(skillsDir)
-	if err != nil {
-		t.Fatalf("read skills dir: %v", err)
-	}
-	var names []string
-	for _, e := range entries {
-		names = append(names, e.Name())
-	}
-	if len(names) != 1 || names[0] != "issue-review" {
-		t.Fatalf("after reuse with a stray agent file the skills dir = %v, want exactly [issue-review] with no -multica duplicate", names)
-	}
-
-	// The managed skill dir is platform-owned: reclaiming it drops the agent's
-	// stray scratch (matching the Codex path) and re-creates a clean SKILL.md.
-	if _, err := os.Stat(stray); !os.IsNotExist(err) {
-		t.Errorf("expected stray file under the managed skill dir to be reclaimed; stat err = %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(skillsDir, "issue-review", "SKILL.md")); err != nil {
-		t.Errorf("expected a refreshed SKILL.md at the canonical slug: %v", err)
+	if data, err := os.ReadFile(stray); err != nil || string(data) != "scratch" {
+		t.Fatalf("added file changed: %q, %v", data, err)
 	}
 }
 
-// TestReuseSkillRefreshIsCanonicalAcrossProviders exercises the reuse skill
-// rollback (removeReusedManagedSkillDirs + CleanupSidecars + writeContextFiles
-// — the exact sequence Reuse runs) directly across the file-based providers,
-// including the stray-agent-file boundary. Driving the sequence rather than
-// full Reuse avoids the per-provider config setup (codex-home, openclaw
-// binary) while still covering each provider's skills-dir layout.
-func TestReuseSkillRefreshIsCanonicalAcrossProviders(t *testing.T) {
-	t.Parallel()
-
+func TestReuseSkillCleanupPreservesAdditionsAcrossProviders(t *testing.T) {
 	for _, provider := range []string{"claude", "codebuddy", "openclaw", "copilot", "qwen", ""} {
-		provider := provider
-		name := provider
-		if name == "" {
-			name = "default"
-		}
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			workDir := t.TempDir()
-			envRoot := t.TempDir()
-			task := TaskContextForEnv{
-				IssueID: "reuse-table",
-				AgentSkills: []SkillContextForEnv{
-					{Name: "Issue Review", Content: "v1"},
-				},
+		t.Run(provider, func(t *testing.T) {
+			workDir, envRoot := t.TempDir(), t.TempDir()
+			task := TaskContextForEnv{IssueID: "reuse-table", AgentSkills: []SkillContextForEnv{{Name: "Issue Review", Content: "v1"}}}
+			manifest := &sidecarManifest{}
+			if err := writeContextFiles(workDir, provider, task, manifest); err != nil {
+				t.Fatal(err)
 			}
-
-			// First dispatch: write context + persist the manifest.
-			m1 := &sidecarManifest{}
-			if err := writeContextFiles(workDir, provider, task, m1); err != nil {
-				t.Fatalf("first writeContextFiles: %v", err)
+			if err := writeSidecarManifest(envRoot, manifest); err != nil {
+				t.Fatal(err)
 			}
-			if err := writeSidecarManifest(envRoot, m1); err != nil {
-				t.Fatalf("persist manifest: %v", err)
+			skillDir := filepath.Join(skillsDirPath(workDir, provider), "issue-review")
+			stray := filepath.Join(skillDir, "agent-notes.md")
+			if err := os.WriteFile(stray, []byte("scratch"), 0600); err != nil {
+				t.Fatal(err)
 			}
-
-			skillsDir := skillsDirPath(workDir, provider)
-			stray := filepath.Join(skillsDir, "issue-review", "agent-notes.md")
-			if err := os.WriteFile(stray, []byte("scratch"), 0o644); err != nil {
-				t.Fatalf("seed stray file: %v", err)
+			if err := CleanupSidecars(envRoot); err == nil {
+				t.Fatal("missing retained directory conflict")
 			}
-
-			// Second dispatch: same rollback + refresh sequence Reuse runs.
-			task.AgentSkills[0].Content = "v2"
-			if err := removeReusedManagedSkillDirs(envRoot, skillsDirPath(workDir, provider)); err != nil {
-				t.Fatalf("removeReusedManagedSkillDirs: %v", err)
+			if data, err := os.ReadFile(stray); err != nil || string(data) != "scratch" {
+				t.Fatalf("added file changed: %q, %v", data, err)
 			}
-			if err := CleanupSidecars(envRoot); err != nil {
-				t.Fatalf("CleanupSidecars: %v", err)
-			}
-			m2 := &sidecarManifest{}
-			if err := writeContextFiles(workDir, provider, task, m2); err != nil {
-				t.Fatalf("second writeContextFiles: %v", err)
-			}
-			if err := writeSidecarManifest(envRoot, m2); err != nil {
-				t.Fatalf("persist manifest #2: %v", err)
-			}
-
-			entries, err := os.ReadDir(skillsDir)
-			if err != nil {
-				t.Fatalf("read skills dir: %v", err)
-			}
-			var names []string
-			for _, e := range entries {
-				names = append(names, e.Name())
-			}
-			if len(names) != 1 || names[0] != "issue-review" {
-				t.Fatalf("skills dir = %v, want exactly [issue-review]", names)
-			}
-			if _, err := os.Stat(stray); !os.IsNotExist(err) {
-				t.Errorf("stray agent file should be reclaimed; stat err = %v", err)
-			}
-			body, err := os.ReadFile(filepath.Join(skillsDir, "issue-review", "SKILL.md"))
-			if err != nil {
-				t.Fatalf("read refreshed SKILL.md: %v", err)
-			}
-			if !strings.Contains(string(body), "v2") {
-				t.Errorf("SKILL.md should carry refreshed content v2; got:\n%s", body)
+			if _, err := os.Stat(filepath.Join(skillDir, "SKILL.md")); !os.IsNotExist(err) {
+				t.Fatalf("unchanged file was not reclaimed: %v", err)
 			}
 		})
 	}

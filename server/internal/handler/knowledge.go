@@ -91,6 +91,7 @@ func (h *Handler) pinClaimKnowledge(ctx context.Context, task *db.AgentTaskQueue
 	if err != nil {
 		return nil, err
 	}
+	task.KnowledgeManifest = pinned
 	var selection knowledge.Selection
 	if err := json.Unmarshal(pinned, &selection); err != nil {
 		return nil, err

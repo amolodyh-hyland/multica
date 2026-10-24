@@ -3716,6 +3716,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	if failure := h.prepareClaimKnowledge(r, task, runtime, &resp); failure != nil {
 		return resp, deliveredCommentIDs, issueSnapshot, agentSkillCount, builtinSkillCount, failure
 	}
+	if failure := h.prepareClaimPrivateLibrary(r, task, runtime, &resp); failure != nil {
+		return resp, deliveredCommentIDs, issueSnapshot, agentSkillCount, builtinSkillCount, failure
+	}
 
 	// Last gate before dispatch: refuse to hand a worktree-mode local_directory
 	// task to a daemon that cannot implement the mode.

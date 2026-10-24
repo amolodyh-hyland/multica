@@ -144,6 +144,9 @@ var pgBigmOperatorClass = extensionOperatorClass{
 // 592_task_knowledge_manifest adds a JSONB column with no index to clean up.
 var concurrentIndexCleanups = map[string]string{
 	"595_public_delegation_result_index":                        "public_delegation_result_identity_idx",
+	"597_private_library_import_id_index":                       "private_library_import_id_idx",
+	"598_private_library_import_attempt_index":                  "private_library_import_attempt_idx",
+	"599_private_library_import_task_index":                     "private_library_import_task_idx",
 	"593_task_knowledge_session_index":                          "idx_task_knowledge_session",
 	"589_public_delegation_identity_index":                      "public_delegation_identity_idx",
 	"588_public_delegation_id_index":                            "public_delegation_id_idx",
