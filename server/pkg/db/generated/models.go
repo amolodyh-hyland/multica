@@ -180,6 +180,7 @@ type AgentTaskQueue struct {
 	IssueSnapshot             []byte      `json:"issue_snapshot"`
 	WorkflowStep              pgtype.Text `json:"workflow_step"`
 	KnowledgeManifest         []byte      `json:"knowledge_manifest"`
+	PrivateLibraryManifest    []byte      `json:"private_library_manifest"`
 }
 
 type AgentToLabel struct {

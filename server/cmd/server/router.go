@@ -2188,6 +2188,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			r.Route("/api/private-library", func(r chi.Router) {
 				r.Get("/tasks/{taskId}/imports/{id}", h.GetTaskPrivateLibraryImport)
+				r.Head("/tasks/{taskId}/imports/{id}", h.GetTaskPrivateLibraryImport)
 				r.Group(func(r chi.Router) {
 					r.Use(handler.RequireHumanActor)
 					r.Get("/capabilities", h.PrivateLibraryCapabilities)

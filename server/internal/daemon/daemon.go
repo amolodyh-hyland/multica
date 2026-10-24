@@ -432,11 +432,12 @@ type repoCacheBackend interface {
 
 // Daemon is the local agent runtime that polls for and executes tasks.
 type Daemon struct {
-	cfg        Config
-	client     *Client
-	repoCache  repoCacheBackend
-	skillCache *SkillBundleCache
-	logger     *slog.Logger
+	cfg                 Config
+	client              *Client
+	repoCache           repoCacheBackend
+	skillCache          *SkillBundleCache
+	privateLibraryCache *SkillBundleCache
+	logger              *slog.Logger
 
 	knowledgeResolutions knowledgeResolutionLimiter
 
@@ -765,6 +766,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		client:                      client,
 		repoCache:                   repocache.New(cacheRoot, logger),
 		skillCache:                  NewSkillBundleCache(skillCacheRoot),
+		privateLibraryCache:         NewPrivateSkillBundleCache(filepath.Join(cfg.WorkspacesRoot, ".private-library-cache", "v1")),
 		logger:                      logger,
 		terminalReports:             newTerminalReportStore(cfg),
 		terminalReportWakeup:        make(chan struct{}, 1),
@@ -7821,6 +7823,18 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{}, knowledgeErr
 	}
 
+	if task.PrivateLibraryManifest != nil {
+		privatePayloads, err := resolvePrivateLibrary(prepareCtx, d.client, d.privateLibraryCache, task, provider, resolvedVersion)
+		if err != nil {
+			return TaskResult{}, err
+		}
+		if err := privateLibraryByteLimit(task, knowledgeSnapshot, privatePayloads); err != nil {
+			return TaskResult{}, err
+		}
+		// Storage approval and verified cache bytes do not establish native loading.
+		return TaskResult{}, errors.New("private_library_unsupported_provider: native_conformance_missing")
+	}
+
 	agentName := "agent"
 	var skills []SkillData
 	var instructions string
@@ -8546,6 +8560,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 
 	// Inject runtime-specific config (meta skill) so the agent discovers .agent_context/.
+
 	runtimeBrief, err := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx)
 	if err != nil {
 		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)

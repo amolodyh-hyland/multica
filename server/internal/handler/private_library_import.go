@@ -39,7 +39,7 @@ func (h *Handler) privateImportDestination(r *http.Request, member db.Member) (l
 	err := h.DB.QueryRow(r.Context(), `SELECT to_regclass('private_library_import') IS NOT NULL AND
  (SELECT count(*) FROM pg_index WHERE indexrelid IN (
  to_regclass('private_library_import_id_idx'), to_regclass('private_library_import_attempt_idx'),
- to_regclass('private_library_import_task_idx')) AND indrelid = to_regclass('private_library_import') AND indisvalid AND indisready) = 3`).Scan(&ready)
+ to_regclass('private_library_import_task_idx')) AND indrelid = to_regclass('private_library_import') AND indisvalid AND indisready) = 3 AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('agent_task_queue') AND attname='private_library_manifest' AND NOT attisdropped)`).Scan(&ready)
 	return d, err == nil && ready
 }
 
@@ -249,7 +249,7 @@ func (h *Handler) GetTaskPrivateLibraryImport(w http.ResponseWriter, r *http.Req
 
 func (h *Handler) writePrivateLibraryObject(w http.ResponseWriter, record db.PrivateLibraryImport) {
 	input, err := libraryimport.DecodeRequest(record.Payload)
-	if err != nil || input.Preview.Validate() != nil || input.Verify() != nil || input.Preview.Destination.WorkspaceID != uuidToString(record.WorkspaceID) || input.Preview.Destination.OwnerID != uuidToString(record.OwnerID) || input.Preview.Binding.TaskID != uuidToString(record.TaskID) || input.Preview.Binding.RuntimeID != uuidToString(record.RuntimeID) || input.Preview.Binding.ProjectID != uuidToString(record.ProjectID) || input.Consent.ActorID != uuidToString(record.OwnerID) || input.Consent.PreviewDigest != record.PreviewDigest || input.Preview.Entry.ContentHash != record.ContentHash || input.Preview.Destination.ServerID != h.cfg.PrivateImportAuthorityID {
+	if err != nil || input.Preview.Validate() != nil || input.Verify() != nil || input.Preview.Destination.WorkspaceID != uuidToString(record.WorkspaceID) || input.Preview.Destination.OwnerID != uuidToString(record.OwnerID) || input.Preview.Binding.TaskID != uuidToString(record.TaskID) || input.Preview.Binding.RuntimeID != uuidToString(record.RuntimeID) || input.Preview.Binding.ProjectID != uuidToString(record.ProjectID) || input.Consent.ActorID != uuidToString(record.OwnerID) || input.Consent.PreviewDigest != record.PreviewDigest || input.Preview.Entry.ContentHash != record.ContentHash || input.Preview.Destination.ServerID != h.cfg.PrivateImportAuthorityID || input.Preview.Destination.Origin != h.cfg.PublicURL {
 		writeError(w, http.StatusConflict, "private_import_integrity_failure")
 		return
 	}
@@ -260,6 +260,10 @@ func (h *Handler) writePrivateLibraryObject(w http.ResponseWriter, record db.Pri
 		writeError(w, http.StatusConflict, "private_import_integrity_failure")
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Private-Import-Preview-Digest", record.PreviewDigest)
+	w.Header().Set("X-Private-Import-Content-Hash", record.ContentHash)
+	w.Header().Set("X-Private-Import-Transport-Hash", record.TransportHash)
 	writeJSON(w, http.StatusOK, struct {
 		Receipt   libraryimport.Receipt `json:"receipt"`
 		Selection json.RawMessage       `json:"selection"`

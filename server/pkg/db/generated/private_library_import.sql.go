@@ -156,7 +156,7 @@ const getPrivateLibraryImportForTask = `-- name: GetPrivateLibraryImportForTask 
 SELECT b.id, b.workspace_id, b.owner_id, b.attempt_id, b.task_id, b.runtime_id, b.agent_id, b.project_id, b.preview_digest, b.content_hash, b.transport_hash, b.payload, b.created_at FROM private_library_import b
 JOIN agent_task_queue t ON t.id = b.task_id AND t.agent_id = b.agent_id AND t.runtime_id = b.runtime_id
 JOIN agent_runtime r ON r.id = b.runtime_id AND r.workspace_id = b.workspace_id AND r.owner_id = b.owner_id
-JOIN agent a ON a.id = b.agent_id AND a.workspace_id = b.workspace_id AND a.owner_id = b.owner_id
+JOIN agent a ON a.id = b.agent_id AND a.workspace_id = b.workspace_id AND a.owner_id = b.owner_id AND a.runtime_id = r.id AND a.archived_at IS NULL AND a.kind = 'user'
 JOIN member m ON m.workspace_id = b.workspace_id AND m.user_id = b.owner_id
 WHERE b.id = $1 AND b.workspace_id = $2 AND b.task_id = $3 AND b.agent_id = $4 AND b.owner_id = $5
  AND t.status IN ('dispatched', 'waiting_local_directory', 'running')
@@ -197,8 +197,78 @@ func (q *Queries) GetPrivateLibraryImportForTask(ctx context.Context, arg GetPri
 	return i, err
 }
 
+const getSessionPrivateLibraryManifest = `-- name: GetSessionPrivateLibraryManifest :one
+SELECT private_library_manifest FROM agent_task_queue
+WHERE agent_id = $1 AND session_id = $2 AND knowledge_manifest IS NOT NULL
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+`
+
+type GetSessionPrivateLibraryManifestParams struct {
+	AgentID   pgtype.UUID `json:"agent_id"`
+	SessionID pgtype.Text `json:"session_id"`
+}
+
+func (q *Queries) GetSessionPrivateLibraryManifest(ctx context.Context, arg GetSessionPrivateLibraryManifestParams) ([]byte, error) {
+	row := q.db.QueryRow(ctx, getSessionPrivateLibraryManifest, arg.AgentID, arg.SessionID)
+	var private_library_manifest []byte
+	err := row.Scan(&private_library_manifest)
+	return private_library_manifest, err
+}
+
+const listPrivateLibraryImportsForTask = `-- name: ListPrivateLibraryImportsForTask :many
+SELECT b.id, b.workspace_id, b.owner_id, b.attempt_id, b.task_id, b.runtime_id, b.agent_id, b.project_id, b.preview_digest, b.content_hash, b.transport_hash, b.payload, b.created_at FROM private_library_import b
+JOIN agent_task_queue t ON t.id = b.task_id AND t.agent_id = b.agent_id AND t.runtime_id = b.runtime_id
+JOIN agent_runtime r ON r.id = b.runtime_id AND r.workspace_id = b.workspace_id AND r.owner_id = b.owner_id
+JOIN agent a ON a.id = b.agent_id AND a.workspace_id = b.workspace_id AND a.owner_id = b.owner_id AND a.runtime_id = r.id AND a.archived_at IS NULL AND a.kind = 'user'
+JOIN member m ON m.workspace_id = b.workspace_id AND m.user_id = b.owner_id
+WHERE b.workspace_id = $1 AND b.task_id = $2 AND b.owner_id = $3
+ORDER BY b.created_at, b.id
+LIMIT 65
+`
+
+type ListPrivateLibraryImportsForTaskParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	TaskID      pgtype.UUID `json:"task_id"`
+	OwnerID     pgtype.UUID `json:"owner_id"`
+}
+
+func (q *Queries) ListPrivateLibraryImportsForTask(ctx context.Context, arg ListPrivateLibraryImportsForTaskParams) ([]PrivateLibraryImport, error) {
+	rows, err := q.db.Query(ctx, listPrivateLibraryImportsForTask, arg.WorkspaceID, arg.TaskID, arg.OwnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PrivateLibraryImport{}
+	for rows.Next() {
+		var i PrivateLibraryImport
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.OwnerID,
+			&i.AttemptID,
+			&i.TaskID,
+			&i.RuntimeID,
+			&i.AgentID,
+			&i.ProjectID,
+			&i.PreviewDigest,
+			&i.ContentHash,
+			&i.TransportHash,
+			&i.Payload,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockPrivateLibraryImportTask = `-- name: LockPrivateLibraryImportTask :one
-SELECT t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id, t.runtime_mcp_overlay, t.escalation_for_task_id, t.fire_at, t.originator_user_id, t.runtime_connected_apps, t.coalesced_comment_ids, t.delivered_comment_ids, t.chat_input_task_id, t.chat_finalize_deferred_at, t.originator_source, t.delegated_from_task_id, t.retry_of_task_id, t.rerun_of_task_id, t.rule_version_id, t.trigger_evidence_kind, t.trigger_evidence_ref_id, t.accountable_user_id, t.session_rollout_missing, t.retired_session_id, t.quick_actions_disabled, t.regenerate_quick_actions_for, t.branch_name, t.durable_work_dir, t.channel_context_revision, t.comment_thread_id, t.cancelled_by_type, t.cancelled_by_id, t.cancelled_by_name, t.issue_snapshot, t.workflow_step, t.knowledge_manifest FROM agent_task_queue t
+SELECT t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id, t.runtime_mcp_overlay, t.escalation_for_task_id, t.fire_at, t.originator_user_id, t.runtime_connected_apps, t.coalesced_comment_ids, t.delivered_comment_ids, t.chat_input_task_id, t.chat_finalize_deferred_at, t.originator_source, t.delegated_from_task_id, t.retry_of_task_id, t.rerun_of_task_id, t.rule_version_id, t.trigger_evidence_kind, t.trigger_evidence_ref_id, t.accountable_user_id, t.session_rollout_missing, t.retired_session_id, t.quick_actions_disabled, t.regenerate_quick_actions_for, t.branch_name, t.durable_work_dir, t.channel_context_revision, t.comment_thread_id, t.cancelled_by_type, t.cancelled_by_id, t.cancelled_by_name, t.issue_snapshot, t.workflow_step, t.knowledge_manifest, t.private_library_manifest FROM agent_task_queue t
 JOIN agent_runtime r ON r.id = t.runtime_id AND r.workspace_id = $1 AND r.owner_id = $2
 JOIN agent a ON a.id = t.agent_id AND a.workspace_id = $1 AND a.owner_id = $2 AND a.archived_at IS NULL AND a.kind = 'user' AND a.runtime_id = t.runtime_id
 JOIN project p ON p.id = $3 AND p.workspace_id = $1
@@ -207,7 +277,7 @@ LEFT JOIN chat_session c ON c.id = t.chat_session_id AND c.workspace_id = $1
 WHERE t.id = $4 AND t.runtime_id = $5
  AND (t.originator_user_id = $2 OR t.accountable_user_id = $2)
  AND (CASE WHEN t.issue_id IS NOT NULL THEN i.project_id ELSE c.project_id END) = p.id
- AND t.status = 'queued' AND t.session_id IS NULL AND t.knowledge_manifest IS NULL
+ AND t.status = 'queued' AND t.session_id IS NULL AND t.knowledge_manifest IS NULL AND t.private_library_manifest IS NULL
 FOR UPDATE OF t
 FOR SHARE OF r, a, p
 `
@@ -291,6 +361,27 @@ func (q *Queries) LockPrivateLibraryImportTask(ctx context.Context, arg LockPriv
 		&i.IssueSnapshot,
 		&i.WorkflowStep,
 		&i.KnowledgeManifest,
+		&i.PrivateLibraryManifest,
 	)
 	return i, err
+}
+
+const pinTaskPrivateLibraryManifest = `-- name: PinTaskPrivateLibraryManifest :one
+UPDATE agent_task_queue
+SET private_library_manifest = COALESCE(private_library_manifest, $1::jsonb)
+WHERE id = $2 AND runtime_id = $3 AND knowledge_manifest IS NOT NULL
+RETURNING private_library_manifest
+`
+
+type PinTaskPrivateLibraryManifestParams struct {
+	Manifest  []byte      `json:"manifest"`
+	TaskID    pgtype.UUID `json:"task_id"`
+	RuntimeID pgtype.UUID `json:"runtime_id"`
+}
+
+func (q *Queries) PinTaskPrivateLibraryManifest(ctx context.Context, arg PinTaskPrivateLibraryManifestParams) ([]byte, error) {
+	row := q.db.QueryRow(ctx, pinTaskPrivateLibraryManifest, arg.Manifest, arg.TaskID, arg.RuntimeID)
+	var private_library_manifest []byte
+	err := row.Scan(&private_library_manifest)
+	return private_library_manifest, err
 }
