@@ -856,40 +856,11 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 		}
 	}
 
-	// Roll back the previous dispatch's sidecar writes before refreshing.
-	// On reuse the workdir still holds the prior run's skill directories (and,
-	// for a workdir prepared before MUL-6984, its issue_context.md); without
-	// clearing them first, writeSkillFiles sees
-	// its own earlier output occupying the canonical slug and falls back to
-	// a collision-free sibling (issue-review, issue-review-multica,
-	// issue-review-multica-2, …), accumulating a fresh duplicate on every
-	// re-dispatch to the same issue. allocateCollisionFreeSkillDir exists to
-	// dodge *user*-owned skill dirs (the local_directory flow), not our own
-	// prior writes, so we undo them via the prior manifest first and let the
-	// refresh below re-create each skill at its natural slug. This also brings
-	// the standard providers in line with the Codex path, where
-	// hydrateCodexSkills already wipes its skills dir before re-hydrating.
-	//
-	// Two steps, in order:
-	//   1. removeReusedManagedSkillDirs reclaims the platform's own skill
-	//      directories even when a prior-run agent left a file inside one.
-	//      CleanupSidecars alone can't do this — it preserves any recorded dir
-	//      the agent populated (correct on the local_directory teardown path),
-	//      which would otherwise keep the canonical slug occupied and push the
-	//      refresh back to issue-review-multica.
-	//   2. CleanupSidecars rolls back the remaining sidecar files (project
-	//      resources today, plus any issue_context.md recorded by a manifest
-	//      an older build wrote — legacy upgrade cleanup, not a live writer)
-	//      and the manifest itself.
-	//
-	// No-op when RootDir is empty (legacy local_directory reuse, which the
-	// daemon skips anyway) or when no prior manifest exists (older build).
+	// A retained sidecar conflict prevents reuse of the prior environment.
 	if env.RootDir != "" {
-		if err := removeReusedManagedSkillDirs(env.RootDir, skillsDirPath(params.WorkDir, params.Provider)); err != nil {
-			logger.Warn("execenv: reclaim managed skill dirs on reuse failed", "error", err)
-		}
 		if err := CleanupSidecars(env.RootDir); err != nil {
-			logger.Warn("execenv: roll back prior sidecars on reuse failed", "error", err)
+			logger.Warn("execenv: retained sidecar conflicts; forcing fresh prepare", "error", err)
+			return nil
 		}
 	}
 

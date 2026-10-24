@@ -159,6 +159,12 @@ func writeWorkspacesRootMarkerAtomic(path string, data []byte) error {
 // cloud-mode tasks whose envRoot is wiped wholesale by the GC loop — may
 // pass nil to skip the bookkeeping entirely.
 func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest *sidecarManifest) error {
+	if manifest != nil {
+		if err := manifest.bindRoot(workDir); err != nil {
+			return err
+		}
+	}
+
 	if err := writeTaskContextMarker(workDir, ctx, manifest); err != nil {
 		return err
 	}
@@ -223,11 +229,8 @@ func writeTaskContextMarker(workDir string, ctx TaskContextForEnv, manifest *sid
 			if json.Unmarshal(existing, &marker) != nil || marker.ManagedBy != TaskContextMarkerManagedBy {
 				return fmt.Errorf("write task context marker: %w", err)
 			}
-			if writeErr := os.WriteFile(path, data, 0o644); writeErr != nil {
-				return fmt.Errorf("refresh task context marker: %w", writeErr)
-			}
-			if manifest != nil {
-				manifest.Files = append(manifest.Files, path)
+			if string(existing) != string(data) {
+				return fmt.Errorf("refresh task context marker: %w", errPathPreExists)
 			}
 			return nil
 		}
@@ -332,9 +335,7 @@ func resolveSkillsDir(workDir, provider string, manifest *sidecarManifest) (stri
 
 // skillsDirPath returns the provider-native skills parent directory under
 // workDir WITHOUT creating it or recording anything. resolveSkillsDir wraps
-// this with the MkdirAll/manifest bookkeeping; the reuse-path skill rollback
-// (removeReusedManagedSkillDirs) needs the bare path with no side effects so
-// it can match the managed skill roots the prior manifest recorded.
+// this with the MkdirAll/manifest bookkeeping.
 func skillsDirPath(workDir, provider string) string {
 	// Built-in runtime identities (e.g. "omp") declare their skills dir in
 	// the descriptor; resolve generically before the protocol-family switch.

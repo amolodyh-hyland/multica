@@ -7,6 +7,17 @@ import (
 )
 
 func writeKnowledgeProjectContext(workDir string, data []byte, manifest *sidecarManifest) error {
+	if manifest != nil {
+		if err := manifest.bindRoot(workDir); err != nil {
+			return err
+		}
+		dir := filepath.Join(workDir, ".multica", "project")
+		if err := recordMkdirAll(dir, 0700, manifest); err != nil {
+			return err
+		}
+		return recordWriteFile(filepath.Join(dir, "resources.json"), data, 0600, manifest)
+	}
+
 	root, err := os.OpenRoot(workDir)
 	if err != nil {
 		return err
@@ -19,9 +30,6 @@ func writeKnowledgeProjectContext(workDir string, data []byte, manifest *sidecar
 		if errors.Is(err, os.ErrNotExist) {
 			if err := root.Mkdir(part, 0700); err != nil {
 				return err
-			}
-			if manifest != nil {
-				manifest.Dirs = append(manifest.Dirs, filepath.Join(workDir, relative))
 			}
 			before, err = root.Lstat(part)
 		}
@@ -70,9 +78,6 @@ func writeKnowledgeProjectContext(workDir string, data []byte, manifest *sidecar
 	}
 	if !opened.Mode().IsRegular() || (before != nil && !os.SameFile(before, opened)) {
 		return errors.New("knowledge context target changed")
-	}
-	if manifest != nil {
-		manifest.Files = append(manifest.Files, filepath.Join(workDir, ".multica", "project", name))
 	}
 	if err := f.Chmod(0600); err != nil {
 		return err

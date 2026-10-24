@@ -1,12 +1,17 @@
 package execenv
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // sidecarManifestFile is the on-disk JSON Prepare writes into envRoot to
@@ -37,120 +42,244 @@ const sidecarManifestFile = ".multica_sidecar_manifest.json"
 //     with pinned knowledge fail preparation because they need those bytes.
 var errPathPreExists = errors.New("execenv: refuse to overwrite pre-existing path")
 
-// sidecarManifest records the filesystem mutations writeContextFiles and
-// its callees make inside the agent's WorkDir for a single task. The
-// manifest is the second half of the contract that makes local_directory
-// runs byte-exactly reversible:
-//
-//   - Files lists absolute paths of regular files we created. Files are
-//     recorded only after recordWriteFile has verified the target did
-//     NOT pre-exist; recordWriteFile refuses to overwrite a pre-existing
-//     path, so the manifest's existence rule and the write side's
-//     refuse-to-clobber rule are the same invariant viewed from two
-//     sides.
-//   - Dirs lists absolute paths of directories we created, in root-first
-//     creation order. Cleanup walks the list in reverse so deepest dirs
-//     get tried first; rmdir of a directory the user has populated since
-//     (e.g. .claude/skills/my-own-skill alongside our .claude/skills/
-//     issue-review) fails ENOTEMPTY and is skipped silently — the
-//     user's content is preserved without any per-dir bookkeeping. A
-//     directory is recorded only when it did NOT pre-exist for the same
-//     reason files are conditional.
-//
-// The manifest is intentionally minimal: it carries the paths needed to
-// reverse our writes and nothing else. It is not a log of every operation
-// and is not a substitute for the runtime config marker block, which has
-// its own dedicated round-trip mechanism in runtime_config.go (the brief
-// is appended to user-owned content rather than written into a new sidecar
-// directory).
+// Path-only records remain readable but cannot establish ownership.
 type sidecarManifest struct {
-	Files []string `json:"files,omitempty"`
-	Dirs  []string `json:"dirs,omitempty"`
+	Version      int                         `json:"version,omitempty"`
+	Generation   string                      `json:"generation,omitempty"`
+	Files        []string                    `json:"files,omitempty"`
+	Dirs         []string                    `json:"dirs,omitempty"`
+	Owned        map[string]sidecarOwnership `json:"owned,omitempty"`
+	Root         string                      `json:"root,omitempty"`
+	RootIdentity string                      `json:"rootIdentity,omitempty"`
+	inputRoot    string
 }
 
-// recordMkdirAll behaves like os.MkdirAll(path, perm) but additionally
-// records every parent directory it had to create (skipping any that
-// already existed) into m so CleanupSidecars can rmdir them later. The
-// recorded paths are appended in root-first order; Cleanup iterates in
-// reverse so the deepest directory is removed first.
-//
-// When m is nil this is identical to os.MkdirAll — the Reuse path uses
-// the nil mode because Reuse runs on cloud workdirs that the GC loop
-// wipes wholesale, so per-file cleanup is irrelevant and tracking the
-// dirs would just leave stale manifest bytes around.
-func recordMkdirAll(path string, perm os.FileMode, m *sidecarManifest) error {
-	if path == "" {
-		return os.MkdirAll(path, perm)
+type sidecarOwnership struct {
+	Generation string            `json:"generation"`
+	Identity   string            `json:"identity"`
+	Parents    map[string]string `json:"parents"`
+	Hash       string            `json:"sha256,omitempty"`
+	Size       int64             `json:"size,omitempty"`
+	Mode       uint32            `json:"mode,omitempty"`
+	Modified   int64             `json:"modified,omitempty"`
+}
+
+func (m *sidecarManifest) initialize() error {
+	if m.Version == 2 && m.Generation != "" && m.Owned != nil {
+		return nil
 	}
-	if m == nil {
-		return os.MkdirAll(path, perm)
+	if m.Version != 0 || len(m.Files)+len(m.Dirs) != 0 {
+		return errors.New("legacy sidecar ownership is unverifiable")
 	}
-	// Walk leaf-first, collecting ancestors that don't currently exist.
-	// We stop at the first existing ancestor (or the filesystem root) so
-	// pre-existing user directories are never recorded — Cleanup must
-	// not rmdir a path the user owned before this task started.
-	var toCreate []string
-	cur := filepath.Clean(path)
-	for {
-		if _, err := os.Lstat(cur); err == nil {
-			break
-		} else if !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("stat ancestor %s: %w", cur, err)
-		}
-		toCreate = append(toCreate, cur)
-		parent := filepath.Dir(cur)
-		if parent == cur || parent == "." {
-			break
-		}
-		cur = parent
-	}
-	if err := os.MkdirAll(path, perm); err != nil {
+	var generation [32]byte
+	if _, err := rand.Read(generation[:]); err != nil {
 		return err
 	}
-	// Reverse leaf-first → root-first so Cleanup can reverse-iterate
-	// to peel directories from the leaves upward.
-	for i, j := 0, len(toCreate)-1; i < j; i, j = i+1, j-1 {
-		toCreate[i], toCreate[j] = toCreate[j], toCreate[i]
-	}
-	m.Dirs = append(m.Dirs, toCreate...)
+	m.Version, m.Generation, m.Owned = 2, hex.EncodeToString(generation[:]), make(map[string]sidecarOwnership)
 	return nil
 }
 
-// recordWriteFile writes data to path with perm and records the path in
-// m for later cleanup, but ONLY when path does not already exist. When
-// path is occupied — by a regular file, a symlink, a directory, or any
-// other filesystem entry — the function returns errPathPreExists
-// without touching the path. The user's bytes (or pre-existing entry
-// type) are preserved exactly.
-//
-// This is the invariant the manifest design rests on: cleanup is a
-// pure deletion of paths we created, never a restore. Overwriting a
-// pre-existing path and then refusing to delete it on cleanup (the
-// pre-fix behavior) destroys user data twice — once at write time and
-// once by leaving the corrupted bytes in place at exit. Refusing to
-// overwrite removes both halves of that failure mode.
-//
-// When m is nil this collapses to a plain os.WriteFile — the Reuse
-// path uses the nil mode because Reuse runs on cloud workdirs that
-// the GC loop wipes wholesale, so per-file collision avoidance is
-// irrelevant.
+func (m *sidecarManifest) bindRoot(path string) error {
+	if m == nil {
+		return nil
+	}
+	if err := m.initialize(); err != nil {
+		return err
+	}
+	input, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	canonical, err := filepath.EvalSymlinks(input)
+	if err != nil {
+		return err
+	}
+	f, err := os.Open(canonical)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	identity, err := sidecarFileIdentity(f)
+	if err != nil {
+		return err
+	}
+	if m.Root != "" && (m.Root != canonical || m.RootIdentity != identity) {
+		return errors.New("sidecar root changed")
+	}
+	m.Root, m.RootIdentity, m.inputRoot = canonical, identity, input
+	return nil
+}
+
+func (m *sidecarManifest) parent(path string) (*os.Root, string, map[string]string, error) {
+	root, canonical, parents, err := sidecarParent(path, nil)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	if m.Root != "" {
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			root.Close()
+			return nil, "", nil, err
+		}
+		relative, err := filepath.Rel(m.inputRoot, absolute)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || canonical != filepath.Join(m.Root, relative) || parents[m.Root] != m.RootIdentity {
+			root.Close()
+			return nil, "", nil, errors.New("sidecar escaped or replaced its workdir")
+		}
+	}
+	return root, canonical, parents, nil
+}
+
+// Pin each ancestor through directory handles and reject links and replacements.
+func sidecarParent(path string, expected map[string]string) (*os.Root, string, map[string]string, error) {
+	parent := filepath.Dir(path)
+	canonical, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	if expected != nil && canonical != parent {
+		return nil, "", nil, errors.New("sidecar ancestor became a symlink")
+	}
+	canonical, err = filepath.Abs(canonical)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	volume := filepath.VolumeName(canonical) + string(filepath.Separator)
+	root, err := os.OpenRoot(volume)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	parents := make(map[string]string)
+	current := volume
+	parts := strings.Split(strings.TrimPrefix(canonical, volume), string(filepath.Separator))
+	for i := -1; i < len(parts); i++ {
+		if i >= 0 {
+			if parts[i] == "" {
+				continue
+			}
+			before, err := root.Lstat(parts[i])
+			if err != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
+				root.Close()
+				return nil, "", nil, errors.New("unsafe sidecar ancestor")
+			}
+			child, err := root.OpenRoot(parts[i])
+			if err != nil {
+				root.Close()
+				return nil, "", nil, err
+			}
+			opened, err := child.Stat(".")
+			root.Close()
+			if err != nil || !os.SameFile(before, opened) {
+				child.Close()
+				return nil, "", nil, errors.New("sidecar ancestor changed")
+			}
+			root = child
+			current = filepath.Join(current, parts[i])
+		}
+		dir, err := root.Open(".")
+		if err != nil {
+			root.Close()
+			return nil, "", nil, err
+		}
+		identity, err := sidecarFileIdentity(dir)
+		dir.Close()
+		if err != nil {
+			root.Close()
+			return nil, "", nil, err
+		}
+		if expected != nil && expected[current] != identity {
+			root.Close()
+			return nil, "", nil, errors.New("sidecar ancestor ownership changed")
+		}
+		parents[current] = identity
+	}
+	return root, filepath.Join(canonical, filepath.Base(path)), parents, nil
+}
+
+func recordMkdirAll(path string, perm os.FileMode, m *sidecarManifest) error {
+	if m == nil || path == "" {
+		return os.MkdirAll(path, perm)
+	}
+	if err := m.initialize(); err != nil {
+		return err
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	if info, err := os.Lstat(path); err == nil {
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("unsafe sidecar directory")
+		}
+		return nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if err := recordMkdirAll(filepath.Dir(path), perm, m); err != nil {
+		return err
+	}
+	root, canonical, parents, err := m.parent(path)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	if err := root.Mkdir(filepath.Base(canonical), perm); err != nil {
+		return err
+	}
+	dir, err := root.Open(filepath.Base(canonical))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	identity, err := sidecarFileIdentity(dir)
+	if err != nil {
+		return err
+	}
+	m.Dirs = append(m.Dirs, canonical)
+	m.Owned[canonical] = sidecarOwnership{Generation: m.Generation, Identity: identity, Parents: parents}
+	return nil
+}
+
 func recordWriteFile(path string, data []byte, perm os.FileMode, m *sidecarManifest) error {
 	if m == nil {
 		return os.WriteFile(path, data, perm)
 	}
-	_, statErr := os.Lstat(path)
-	if statErr == nil {
-		// Any existing entry — regular file, symlink, directory —
-		// is a collision. Refuse to touch it.
-		return fmt.Errorf("%w: %s", errPathPreExists, path)
-	}
-	if !errors.Is(statErr, fs.ErrNotExist) {
-		return fmt.Errorf("stat target %s: %w", path, statErr)
-	}
-	if err := os.WriteFile(path, data, perm); err != nil {
+	if err := m.initialize(); err != nil {
 		return err
 	}
-	m.Files = append(m.Files, path)
+	root, canonical, parents, err := m.parent(path)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	f, err := root.OpenFile(filepath.Base(canonical), os.O_RDWR|os.O_CREATE|os.O_EXCL, perm)
+	if errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("%w: %s", errPathPreExists, path)
+	}
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	identity, err := sidecarFileIdentity(f)
+	if err != nil {
+		return err
+	}
+	m.Files = append(m.Files, canonical)
+	owned := sidecarOwnership{Generation: m.Generation, Identity: identity, Parents: parents}
+	m.Owned[canonical] = owned
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	digest := sha256.Sum256(data)
+	owned.Hash, owned.Size, owned.Mode, owned.Modified = hex.EncodeToString(digest[:]), info.Size(), uint32(info.Mode()), info.ModTime().UnixNano()
+	m.Owned[canonical] = owned
 	return nil
 }
 
@@ -232,10 +361,8 @@ func writeSidecarManifest(envRoot string, m *sidecarManifest) error {
 }
 
 // CleanupSidecars removes manifest-owned files, then directories deepest first.
-// Missing paths are already clean; nonempty directories belong to the user and
-// remain. Surface real I/O and parse errors while continuing other cleanup.
-// Determine nonempty directories by reading them after a failed rmdir rather
-// than treating every removal failure as nonempty.
+// Missing paths are already clean. Changed or unverifiable entries remain and
+// return conflicts; their manifest is retained for inspection and later cleanup.
 //
 // An empty envRoot or missing manifest is a no-op. Pair with CleanupRuntimeConfig,
 // which restores the runtime brief; this function handles the sidecar tree.
@@ -259,74 +386,96 @@ func CleanupSidecars(envRoot string) error {
 	return rollBackManifest(m, manifestPath)
 }
 
-// rollBackManifest removes everything m records, then removes manifestPath
-// itself when it is non-empty. It is the shared body of CleanupSidecars (which
-// reads m back from disk after the task ran) and rollBackPreparedSidecars
-// (which passes the in-memory manifest of a Prepare that never finished, and
-// has no manifest file to delete because Prepare failed before writing one).
-//
-// Splitting it this way is what lets the failed-Prepare path reuse the exact
-// deletion semantics documented on CleanupSidecars — ENOENT and non-empty
-// directories tolerated, real I/O errors surfaced — instead of growing a second,
-// subtly different rollback that would drift from it.
 func rollBackManifest(m sidecarManifest, manifestPath string) error {
-	var firstErr error
-	captureErr := func(err error) {
-		if firstErr == nil {
-			firstErr = err
+	var conflicts []error
+	remove := func(path string, directory bool) {
+		if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
+			return
+		}
+		owned, ok := m.Owned[path]
+		if m.Version != 2 || m.Generation == "" || !ok || owned.Generation != m.Generation || owned.Identity == "" || len(owned.Parents) == 0 {
+			conflicts = append(conflicts, fmt.Errorf("retain %s: ownership is unverifiable", path))
+			return
+		}
+		if err := removeOwnedSidecar(path, owned, directory); err != nil {
+			conflicts = append(conflicts, fmt.Errorf("retain %s: %w", path, err))
 		}
 	}
-
-	for _, f := range m.Files {
-		if err := os.Remove(f); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			captureErr(fmt.Errorf("remove %s: %w", f, err))
-		}
+	for _, path := range m.Files {
+		remove(path, false)
 	}
-
-	// Reverse iterate so the deepest directory is tried first. When
-	// rmdir fails we re-read the directory to tell ENOTEMPTY (user
-	// content present — skip silently) apart from real I/O errors
-	// (permission denied, busy, etc. — capture and surface).
 	for i := len(m.Dirs) - 1; i >= 0; i-- {
-		d := m.Dirs[i]
-		err := os.Remove(d)
-		if err == nil || errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		hasEntries, ok := dirHasEntries(d)
-		switch {
-		case !ok:
-			// ReadDir also failed — we can't tell ENOTEMPTY apart
-			// from a real I/O error. Surface the ORIGINAL rmdir
-			// error (not the ReadDir failure) so the operator sees
-			// the actual cleanup blocker; the ReadDir branch is
-			// just diagnostic plumbing and would distract from the
-			// root cause. Silently skipping here was the v1 bug:
-			// it hid EACCES on locked directories behind a phantom
-			// "directory non-empty" assumption.
-			captureErr(fmt.Errorf("rmdir %s: %w", d, err))
-		case hasEntries:
-			// User has populated this dir since Prepare ran. Leave
-			// it in place without surfacing the rmdir error — the
-			// whole point of the manifest design is to preserve
-			// user content under directories we created.
-		default:
-			// Empty directory but rmdir still failed → real I/O
-			// error (EACCES, EPERM, EBUSY, EIO, or a directory we
-			// mistakenly recorded that we don't actually own).
-			// Surface it so the caller can log a warning and an
-			// operator can investigate.
-			captureErr(fmt.Errorf("rmdir %s: %w", d, err))
-		}
+		remove(m.Dirs[i], true)
 	}
-
+	if len(conflicts) != 0 {
+		return errors.Join(conflicts...)
+	}
 	if manifestPath != "" {
 		if err := os.Remove(manifestPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			captureErr(fmt.Errorf("remove manifest %s: %w", manifestPath, err))
+			return err
 		}
 	}
+	return nil
+}
 
-	return firstErr
+func removeOwnedSidecar(path string, owned sidecarOwnership, directory bool) error {
+	root, canonical, _, err := sidecarParent(path, owned.Parents)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	name := filepath.Base(canonical)
+	before, err := root.Lstat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if before.Mode()&os.ModeSymlink != 0 || before.IsDir() != directory || (!directory && !before.Mode().IsRegular()) {
+		return errors.New("entry type changed")
+	}
+	f, err := root.OpenFile(name, sidecarReadFlags(), 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	identity, err := sidecarFileIdentity(f)
+	if err != nil {
+		return err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if identity != owned.Identity || !os.SameFile(before, info) {
+		return errors.New("entry ownership changed")
+	}
+	if !directory {
+		if owned.Hash == "" || info.Size() != owned.Size || uint32(info.Mode()) != owned.Mode || info.ModTime().UnixNano() != owned.Modified {
+			return errors.New("baseline changed")
+		}
+		digest := sha256.New()
+		n, err := io.Copy(digest, io.LimitReader(f, owned.Size+1))
+		if err != nil {
+			return err
+		}
+		if n != owned.Size || hex.EncodeToString(digest.Sum(nil)) != owned.Hash {
+			return errors.New("baseline hash changed")
+		}
+		after, err := f.Stat()
+		if err != nil || after.Size() != info.Size() || after.ModTime() != info.ModTime() {
+			return errors.New("entry changed during verification")
+		}
+	}
+	current, err := root.Lstat(name)
+	if err != nil || !os.SameFile(info, current) {
+		return errors.New("entry replaced during verification")
+	}
+	if err := root.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("rmdir/remove: %w", err)
+	}
+	return nil
 }
 
 // rollBackPreparedSidecars undoes the sidecar writes of a Prepare that failed
@@ -345,93 +494,4 @@ func rollBackManifest(m sidecarManifest, manifestPath string) error {
 // There is no manifest file to remove, so manifestPath is empty.
 func rollBackPreparedSidecars(m sidecarManifest) error {
 	return rollBackManifest(m, "")
-}
-
-// removeReusedManagedSkillDirs force-removes the skill directories the prior
-// dispatch recorded under skillsParent in its sidecar manifest at envRoot,
-// even when they are now non-empty. It is the reuse-path companion to
-// CleanupSidecars and runs just before it.
-//
-// CleanupSidecars deliberately preserves a recorded directory once it has
-// become non-empty — the agent may have dropped a file inside a dir we
-// created, and on the local_directory teardown path that content must
-// survive. But that same preservation reopens #3684 on the reuse path: if a
-// prior-run agent wrote into .claude/skills/issue-review/, CleanupSidecars
-// deletes the recorded SKILL.md yet keeps the directory, so the canonical
-// slug stays occupied and the refreshed skill dodges to
-// issue-review-multica. A managed skill directory is platform-owned — the
-// manifest is proof we created it — so on reuse we reclaim the whole
-// directory (dropping any scratch the agent left inside it, exactly as the
-// Codex path's os.RemoveAll(skillsDir) already does) and let the refresh
-// re-create it at its natural slug.
-//
-// Only directories whose immediate parent is skillsParent are removed, so
-// the blast radius is exactly the platform's own skill roots: sibling skills
-// the agent installed under the same parent, checked-out repos, and the rest
-// of the workdir are untouched. The reuse path only ever runs on cloud
-// workdirs (the daemon skips Reuse for local_directory tasks), so there is no
-// user-owned skills tree to protect here in the first place.
-//
-// envRoot or skillsParent empty, a missing manifest, or a parse failure are
-// all no-ops — the refresh simply proceeds. The manifest file is left in
-// place; CleanupSidecars, which runs next, owns deleting it.
-func removeReusedManagedSkillDirs(envRoot, skillsParent string) error {
-	if envRoot == "" || skillsParent == "" {
-		return nil
-	}
-	data, err := os.ReadFile(filepath.Join(envRoot, sidecarManifestFile))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read sidecar manifest for reuse skill rollback: %w", err)
-	}
-	var m sidecarManifest
-	if err := json.Unmarshal(data, &m); err != nil {
-		return fmt.Errorf("parse sidecar manifest for reuse skill rollback: %w", err)
-	}
-
-	cleanParent := filepath.Clean(skillsParent)
-	var firstErr error
-	for _, d := range m.Dirs {
-		if filepath.Dir(filepath.Clean(d)) != cleanParent {
-			continue
-		}
-		if err := os.RemoveAll(d); err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("remove managed skill dir %s: %w", d, err)
-		}
-	}
-	return firstErr
-}
-
-// dirHasEntries inspects dir and reports whether it currently contains
-// any entries. The second return value distinguishes three states
-// CleanupSidecars must handle separately:
-//
-//   - (false, true) — dir exists and is empty, OR dir disappeared
-//     between the failed rmdir and our readdir (the race collapses
-//     into "empty" so cleanup keeps moving). When paired with a
-//     non-ENOENT rmdir failure in CleanupSidecars this is the
-//     "empty + rmdir refused" branch — a real I/O error that gets
-//     surfaced.
-//   - (true, true) — dir has user content. When paired with a rmdir
-//     failure this is the intended ENOTEMPTY branch — skip silently
-//     so the user's content is preserved.
-//   - (_, false) — readdir failed with a real I/O error (EACCES on a
-//     chmod'd dir, ENOTDIR on a recorded path that isn't actually a
-//     dir, EIO on a hardware fault, etc.). The caller cannot tell
-//     ENOTEMPTY from a real failure and MUST surface the original
-//     rmdir error instead of silently skipping. The v1 of this
-//     helper returned `true` here, which made CleanupSidecars treat
-//     every readdir failure as "user content present" and hid the
-//     underlying rmdir error.
-func dirHasEntries(dir string) (hasEntries bool, ok bool) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return false, true
-		}
-		return false, false
-	}
-	return len(entries) > 0, true
 }
