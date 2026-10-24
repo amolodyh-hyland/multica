@@ -238,14 +238,16 @@ func TestPrivateLibraryClaimBoundsSerializedMetadataBeforeSelection(t *testing.T
 			}
 			// Seed old accepted records directly; the new import gate rejects these
 			// aggregates before committing the last record.
-			raw, err := json.Marshal(input)
-			if err != nil {
-				t.Fatal(err)
-			}
 			for range copies {
+				input.Preview.AttemptID = randomID()
+				confirmPrivateImport(t, &input)
+				raw, err := json.Marshal(input)
+				if err != nil {
+					t.Fatal(err)
+				}
 				objectID := randomID()
 				_, transport := (libraryimport.Payload{Entry: input.Preview.Entry, Content: input.Content}).Transport(objectID)
-				if _, err := h.Queries.CreatePrivateLibraryImport(ctx, db.CreatePrivateLibraryImportParams{ID: parseUUID(objectID), WorkspaceID: parseUUID(testWorkspaceID), OwnerID: parseUUID(testUserID), AttemptID: randomID(), TaskID: parseUUID(input.Preview.Binding.TaskID), RuntimeID: parseUUID(input.Preview.Binding.RuntimeID), ProjectID: parseUUID(input.Preview.Binding.ProjectID), PreviewDigest: input.Consent.PreviewDigest, ContentHash: input.Preview.Entry.ContentHash, TransportHash: transport.Hash, Payload: raw}); err != nil {
+				if _, err := h.Queries.CreatePrivateLibraryImport(ctx, db.CreatePrivateLibraryImportParams{ID: parseUUID(objectID), WorkspaceID: parseUUID(testWorkspaceID), OwnerID: parseUUID(testUserID), AttemptID: input.Preview.AttemptID, TaskID: parseUUID(input.Preview.Binding.TaskID), RuntimeID: parseUUID(input.Preview.Binding.RuntimeID), ProjectID: parseUUID(input.Preview.Binding.ProjectID), PreviewDigest: input.Consent.PreviewDigest, ContentHash: input.Preview.Entry.ContentHash, TransportHash: transport.Hash, Payload: raw}); err != nil {
 					t.Fatal(err)
 				}
 			}
