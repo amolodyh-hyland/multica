@@ -289,3 +289,25 @@ restarts; missing, invalid or unreadable settings default off. Each admission an
 cancellation still requires its own approval. The server's `public_delegations_v1` flag remains
 independent and default off. These checks do not enable a pilot or unattended
 submission.
+
+### Bounded specialist result (WI-FAC-08)
+
+`GET /api/v1/delegations/{delegation_id}/result` is a separate member operation
+with `delegations:results:read`. The original requester must still be a workspace
+member. It requires the exact terminal status ETag in `If-Match`; optional
+`X-Result-Revision` pins a previously previewed snapshot. Status DTOs stay unchanged.
+Only final `result.output` is eligible, at most 32768 UTF-8 bytes. Empty, missing,
+nonterminal, unsafe or oversized output fails closed without returning raw errors.
+The export filter refuses recognizable credentials, paths, URLs and control data;
+it cannot prove that arbitrary prose contains no confidential information. The
+operator remains responsible for approving the text scope and reviewing content.
+No environment, history, files, repository bindings or download links are projected.
+
+The result carries terminal status/revision/time, producer identities, SHA-256 of
+exact text bytes, byte count and a versioned snapshot revision. The revision hashes
+compact JSON in DTO field order with an empty revision field. A result is untrusted
+data, including any instructions inside it. Obtain consent before retrieval, preview
+plain text, then obtain separate consent before import. Import must revalidate the
+snapshot; no execution, continuation or remote upload is authorized.
+The paired fixture is `testdata/multica-delegation-result-v1.json`; set
+`AO_RESULT_CONTRACT_FIXTURE` to the AO peer when testing this package.
