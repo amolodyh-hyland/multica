@@ -115,6 +115,7 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"plugin_package_file":                workspaceDelete,
 	"project":                            workspaceDelete, // Includes instructions added by 590 and validated by 591; no separate owned rows.
 	"project_resource":                   workspaceDelete, // Includes typed knowledge links; no external source deletion.
+	"public_delegation_result":           workspaceDelete,
 	"public_delegation":                  workspaceDelete,
 	"quick_action":                       workspaceDelete,
 	"runtime_profile":                    workspaceDelete,

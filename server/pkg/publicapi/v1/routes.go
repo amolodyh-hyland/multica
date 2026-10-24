@@ -18,6 +18,7 @@ const MemberBasePath = "/api/v1"
 const (
 	PathDelegations      = "/delegations"
 	PathDelegation       = "/delegations/{delegation_id}"
+	PathDelegationResult = "/delegations/{delegation_id}/result"
 	PathDelegationCancel = "/delegations/{delegation_id}/cancel"
 	PathContext          = "/context"
 	PathIssue            = "/issues/{issue_ref}"
@@ -69,6 +70,7 @@ var memberCredentials = []CredentialKind{CredentialPersonalAccess}
 var memberRateLimits = []RateLimitProfile{RateLimitUserDefault}
 
 var Operations = []Operation{
+	{Method: http.MethodGet, Path: PathDelegationResult, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: memberCredentials, Scope: "delegations:results:read", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskRead, Audit: AuditPlanned, RateLimits: memberRateLimits}},
 	{Method: http.MethodGet, Path: PathDelegations, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: memberCredentials, Scope: "delegations:read", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskRead, Audit: AuditPlanned, RateLimits: memberRateLimits}},
 	{Method: http.MethodGet, Path: PathDelegation, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: memberCredentials, Scope: "delegations:read", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskRead, Audit: AuditPlanned, RateLimits: memberRateLimits}},
 	{Method: http.MethodPost, Path: PathDelegationCancel, Contract: ContractSharedResource, Policy: OperationPolicy{Credentials: memberCredentials, Scope: "delegations:write", WorkspaceRoles: memberWorkspaceRoles, Risk: RiskHigh, Audit: AuditPlanned, RateLimits: memberRateLimits}},

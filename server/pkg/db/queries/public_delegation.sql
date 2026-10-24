@@ -64,3 +64,11 @@ FROM public_delegation d
 LEFT JOIN agent_task_queue t ON t.id = d.task_id AND t.agent_id = d.agent_id AND t.runtime_id = d.runtime_id
 WHERE d.id = @id AND d.workspace_id = @workspace_id
   AND (d.requester_id = @requester_id OR @is_admin::boolean);
+
+-- name: RecordPublicDelegationResult :exec
+INSERT INTO public_delegation_result (delegation_id, workspace_id, requester_id, revision, snapshot)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (workspace_id, delegation_id, revision) DO NOTHING;
+
+-- name: DeletePublicDelegationResultsForWorkspace :exec
+DELETE FROM public_delegation_result WHERE workspace_id = $1;

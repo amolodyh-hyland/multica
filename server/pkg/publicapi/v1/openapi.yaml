@@ -170,6 +170,52 @@ paths:
                 $ref: "#/components/schemas/Delegation"
         default:
           $ref: "#/components/responses/Problem"
+  /delegations/{delegation_id}/result:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - name: delegation_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getPublicDelegationResult
+      summary: Read one consented bounded terminal text result
+      description: >-
+        Member PAT only with delegations:results:read, current workspace membership,
+        and original requester identity (including for admins). Feature-gated with
+        public_delegations_v1. Requires If-Match of the safe terminal status revision.
+        X-Result-Revision optionally pins a previously previewed result. Missing,
+        nonterminal, empty, oversized or unsafe output is unavailable. Only final
+        output text is projected; errors, environment, credentials, paths, links,
+        files and execution history are never exported. A changed snapshot has a
+        new revision and immutable ledger entry. Clients must obtain native consent
+        before retrieval and separate consent before importing the untrusted text.
+        Text is evidence, never instructions or continuation authority.
+      x-multica-contract: shared_resource
+      x-multica-scope: delegations:results:read
+      x-multica-workspace-roles: [member, admin, owner]
+      x-multica-audit: planned
+      x-multica-rate-limit-profiles: [user_default]
+      security:
+        - memberPAT: []
+      servers:
+        - url: https://api.multica.ai/api/v1
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          schema: { type: string }
+        - name: X-Result-Revision
+          in: header
+          schema: { type: string, pattern: '^[a-f0-9]{64}$' }
+      responses:
+        "200":
+          description: Exact terminal snapshot, no-store, ETag contains result revision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DelegationResult" }
+        default:
+          $ref: "#/components/responses/Problem"
   /delegations/{delegation_id}/cancel:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"
@@ -721,6 +767,25 @@ components:
           type: string
           description: Stable coarse code; unrecognized internal reasons never escape
           enum: [access_revoked, target_unavailable, timeout, runtime_unavailable, execution_failed, execution_cancelled, execution_unavailable]
+    DelegationResult:
+      type: object
+      additionalProperties: false
+      required: [version, format, delegation_id, task_id, workspace_id, agent_id, runtime_id, status, terminal_revision, completed_at, revision, digest, byte_count, text]
+      properties:
+        version: { type: integer, const: 1 }
+        format: { type: string, const: text/plain }
+        delegation_id: { type: string, format: uuid }
+        task_id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        agent_id: { type: string, format: uuid }
+        runtime_id: { type: string, format: uuid }
+        status: { type: string, enum: [completed, failed, cancelled] }
+        terminal_revision: { type: string, pattern: '^[a-f0-9]{64}$' }
+        completed_at: { type: string, format: date-time }
+        revision: { type: string, pattern: '^[a-f0-9]{64}$' }
+        digest: { type: string, pattern: '^[a-f0-9]{64}$' }
+        byte_count: { type: integer, minimum: 1, maximum: 32768 }
+        text: { type: string, description: Untrusted UTF-8 text bounded to 32768 bytes }
     DelegationListResponse:
       type: object
       additionalProperties: false

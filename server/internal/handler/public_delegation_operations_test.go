@@ -36,10 +36,13 @@ func delegationOperationsFixture(t *testing.T) (*Handler, http.Handler, publicap
 	return h, router, input
 }
 
-func delegationOperation(t *testing.T, router http.Handler, method, path, userID, workspaceID string, scopes []string, etag string) *testutil.Response {
+func delegationOperation(t *testing.T, router http.Handler, method, path, userID, workspaceID string, scopes []string, etag string, resultRevision ...string) *testutil.Response {
 	t.Helper()
 	req := httptest.NewRequest(method, path, nil)
 	req.Header.Set("X-Workspace-ID", workspaceID)
+	if len(resultRevision) == 1 {
+		req.Header.Set(publicapiv1.HeaderResultRevision, resultRevision[0])
+	}
 	if etag != "" {
 		req.Header.Set("If-Match", etag)
 	}

@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS public_delegation_result_identity_idx;
