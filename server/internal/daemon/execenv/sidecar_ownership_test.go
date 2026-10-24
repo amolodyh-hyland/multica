@@ -288,3 +288,61 @@ func TestSidecarCleanupLeavesCapturedConflictWhenPublicNameReappears(t *testing.
 		t.Fatal("retained capture lost its manifest")
 	}
 }
+
+func TestSidecarCanonicalRootAliases(t *testing.T) {
+	physicalParent, aliasParent := t.TempDir(), t.TempDir()
+	root := filepath.Join(physicalParent, "workdir")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	aliasBase := filepath.Join(aliasParent, "link")
+	alias := filepath.Join(aliasBase, "workdir")
+	if err := os.Symlink(physicalParent, aliasBase); err != nil {
+		t.Skipf("directory symlinks unavailable: %v", err)
+	}
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &sidecarManifest{}
+	if err := m.bindRoot(alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.bindRoot(canonical); err != nil {
+		t.Fatalf("equivalent root rejected: %v", err)
+	}
+	if err := recordMkdirAll(filepath.Join(alias, "nested"), 0700, m); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(canonical, "nested", "canonical"), filepath.Join(alias, "nested", "alias")} {
+		if err := recordWriteFile(path, []byte("baseline"), 0600, m); err != nil {
+			t.Fatalf("equivalent path rejected: %v", err)
+		}
+	}
+	if !sameSidecarPath(m.Files[1], filepath.Join(alias, "nested", "alias")) {
+		t.Fatal("manifest path did not resolve to its alias")
+	}
+	otherParent := t.TempDir()
+	other := filepath.Join(otherParent, "workdir")
+	if err := os.Mkdir(other, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(aliasBase); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(otherParent, aliasBase); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordWriteFile(filepath.Join(alias, "escape"), []byte("refuse"), 0600, m); err == nil {
+		t.Fatal("retargeted alias escaped root binding")
+	}
+	if _, err := os.Stat(filepath.Join(other, "escape")); !os.IsNotExist(err) {
+		t.Fatalf("retargeted directory changed: %v", err)
+	}
+	if err := rollBackPreparedSidecars(*m); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(canonical, "nested")); !os.IsNotExist(err) {
+		t.Fatalf("canonical cleanup failed: %v", err)
+	}
+}

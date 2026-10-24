@@ -56,7 +56,7 @@ func TestPrivateLibraryClaimPinsImmutableChildAndRefusesSuccessor(t *testing.T) 
 	if response.PrivateLibraryManifest == nil || response.KnowledgeManifest == nil {
 		t.Fatal("claim omitted pinned context association")
 	}
-	dbfx.Exec(t, `UPDATE agent_task_queue SET session_id='private-retained-session' WHERE id=$1`, task.ID)
+	dbfx.Exec(t, `UPDATE agent_task_queue SET session_id='private-retained-session',status='completed',completed_at=now() WHERE id=$1`, task.ID)
 	nextID := dbfx.Task(t, pinned.PersonaID, testutil.Cols{"runtime_id": input.Preview.Binding.RuntimeID, "issue_id": uuidToString(task.IssueID), "status": "dispatched"})
 	next, err := h.Queries.GetAgentTask(ctx, parseUUID(nextID))
 	if err != nil {

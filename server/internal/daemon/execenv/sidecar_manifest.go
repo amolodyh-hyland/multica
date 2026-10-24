@@ -51,7 +51,6 @@ type sidecarManifest struct {
 	Owned        map[string]sidecarOwnership `json:"owned,omitempty"`
 	Root         string                      `json:"root,omitempty"`
 	RootIdentity string                      `json:"rootIdentity,omitempty"`
-	inputRoot    string
 }
 
 type sidecarOwnership struct {
@@ -79,6 +78,23 @@ func (m *sidecarManifest) initialize() error {
 	return nil
 }
 
+func sameSidecarPath(a, b string) bool {
+	canonicalA, err := filepath.EvalSymlinks(a)
+	if err != nil {
+		return false
+	}
+	canonicalB, err := filepath.EvalSymlinks(b)
+	if err != nil {
+		return false
+	}
+	absoluteA, err := filepath.Abs(canonicalA)
+	if err != nil {
+		return false
+	}
+	absoluteB, err := filepath.Abs(canonicalB)
+	return err == nil && absoluteA == absoluteB
+}
+
 func (m *sidecarManifest) bindRoot(path string) error {
 	if m == nil {
 		return nil
@@ -103,10 +119,10 @@ func (m *sidecarManifest) bindRoot(path string) error {
 	if err != nil {
 		return err
 	}
-	if m.Root != "" && (m.Root != canonical || m.RootIdentity != identity) {
+	if m.Root != "" && (!sameSidecarPath(m.Root, canonical) || m.RootIdentity != identity) {
 		return errors.New("sidecar root changed")
 	}
-	m.Root, m.RootIdentity, m.inputRoot = canonical, identity, input
+	m.Root, m.RootIdentity = canonical, identity
 	return nil
 }
 
@@ -116,13 +132,8 @@ func (m *sidecarManifest) parent(path string) (*os.Root, string, map[string]stri
 		return nil, "", nil, err
 	}
 	if m.Root != "" {
-		absolute, err := filepath.Abs(path)
-		if err != nil {
-			root.Close()
-			return nil, "", nil, err
-		}
-		relative, err := filepath.Rel(m.inputRoot, absolute)
-		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || canonical != filepath.Join(m.Root, relative) || parents[m.Root] != m.RootIdentity {
+		relative, err := filepath.Rel(m.Root, canonical)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || parents[m.Root] != m.RootIdentity {
 			root.Close()
 			return nil, "", nil, errors.New("sidecar escaped or replaced its workdir")
 		}

@@ -74,7 +74,7 @@ func TestPrepareOmpMcpConfigCleanupRemovesManagedFiles(t *testing.T) {
 
 func containsPath(paths []string, want string) bool {
 	for _, path := range paths {
-		if path == want {
+		if sameSidecarPath(path, want) {
 			return true
 		}
 	}
