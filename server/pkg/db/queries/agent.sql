@@ -342,7 +342,7 @@ INSERT INTO agent_task_queue (
     workflow_step, id
 )
 SELECT
-    $1, $2, $3, 'queued', $4, sqlc.narg(trigger_comment_id),
+    @agent_id, (SELECT binding.runtime_id FROM agent binding WHERE binding.id = @agent_id FOR SHARE), @issue_id, 'queued', @priority, sqlc.narg(trigger_comment_id),
     COALESCE(sqlc.narg(coalesced_comment_ids)::uuid[], '{}'),
     sqlc.narg(trigger_summary),
     COALESCE(sqlc.narg('force_fresh_session')::boolean, FALSE),
@@ -365,9 +365,9 @@ SELECT
     sqlc.narg(trigger_evidence_kind),
     sqlc.narg(trigger_evidence_ref_id),
     -- The issue's status as this task is queued: the workflow step it works on (MUL-7420).
-    (SELECT i.status FROM issue i WHERE i.id = $3),
+    (SELECT i.status FROM issue i WHERE i.id = @issue_id),
     COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
-WHERE lock_task_owner_rows($1, $3, $2)
+WHERE lock_task_owner_rows(@agent_id, @issue_id, @runtime_id::uuid)
 RETURNING *;
 
 -- name: CreateDeferredChannelIssueTask :one
@@ -387,7 +387,7 @@ INSERT INTO agent_task_queue (
     workflow_step, id
 )
 SELECT
-    $1, $2, $3, 'deferred', $4, sqlc.narg(trigger_comment_id),
+    @agent_id, (SELECT binding.runtime_id FROM agent binding WHERE binding.id = @agent_id FOR SHARE), @issue_id, 'deferred', @priority, sqlc.narg(trigger_comment_id),
     COALESCE(sqlc.narg(coalesced_comment_ids)::uuid[], '{}'),
     sqlc.narg(trigger_summary),
     COALESCE(sqlc.narg('force_fresh_session')::boolean, FALSE),
@@ -410,9 +410,9 @@ SELECT
     sqlc.narg(trigger_evidence_ref_id),
     @fire_at,
     -- The issue's status as this task is queued: the workflow step it works on (MUL-7420).
-    (SELECT i.status FROM issue i WHERE i.id = $3),
+    (SELECT i.status FROM issue i WHERE i.id = @issue_id),
     COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
-WHERE lock_task_owner_rows($1, $3, $2)
+WHERE lock_task_owner_rows(@agent_id, @issue_id, @runtime_id::uuid)
 RETURNING *;
 
 -- name: PromoteDeferredChannelIssueTask :one
@@ -454,7 +454,7 @@ INSERT INTO agent_task_queue (
     id
 )
 SELECT
-    $1, $2, NULL, 'queued', $3, $4,
+    @agent_id, (SELECT binding.runtime_id FROM agent binding WHERE binding.id = @agent_id FOR SHARE), NULL, 'queued', @priority, @context,
     sqlc.narg(originator_user_id),
     sqlc.narg(accountable_user_id),
     sqlc.narg(runtime_mcp_overlay),
@@ -463,7 +463,7 @@ SELECT
     sqlc.narg(trigger_evidence_kind),
     sqlc.narg(trigger_evidence_ref_id),
     COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
-WHERE lock_task_owner_rows($1, NULL, $2)
+WHERE lock_task_owner_rows(@agent_id, NULL, @runtime_id::uuid)
 RETURNING *;
 
 -- name: LinkTaskToIssue :exec
@@ -1607,6 +1607,23 @@ LIMIT @max_per_tick::int;
 -- removing it here alone could exceed max_concurrent_tasks when it resumes.
 SELECT count(*) FROM agent_task_queue
 WHERE agent_id = $1 AND status IN ('dispatched', 'running', 'waiting_local_directory');
+
+-- name: MovePendingAgentTasksToRuntime :many
+UPDATE agent_task_queue
+SET runtime_id = @runtime_id,
+    session_id = NULL,
+    work_dir = NULL,
+    force_fresh_session = TRUE
+WHERE agent_id = @agent_id
+  AND status IN ('queued', 'deferred')
+RETURNING *;
+
+-- name: HasPendingPublicDelegationForAgent :one
+SELECT EXISTS (
+    SELECT 1 FROM public_delegation d
+    JOIN agent_task_queue t ON t.id = d.task_id
+    WHERE t.agent_id = $1 AND t.status IN ('queued', 'deferred')
+);
 
 -- name: GetAgentForClaimUpdate :one
 SELECT * FROM agent

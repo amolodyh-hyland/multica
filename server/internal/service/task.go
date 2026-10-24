@@ -7166,6 +7166,11 @@ func priorityToInt(p string) int32 {
 	}
 }
 
+func (s *TaskService) NotifyTaskRuntimeChanged(ctx context.Context, task db.AgentTaskQueue) {
+	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
+	s.notifyTaskAvailable(task)
+}
+
 // NotifyTaskEnqueued is the cross-package shim for callers outside
 // TaskService (e.g. AutopilotService.dispatchRunOnly) that insert a
 // row into agent_task_queue directly. Invalidates the empty-claim

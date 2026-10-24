@@ -1139,9 +1139,9 @@ INSERT INTO agent_task_queue (
     fire_at, channel_context_revision, id
 )
 SELECT
-    $1, $2, NULL,
+    @agent_id, (SELECT binding.runtime_id FROM agent binding WHERE binding.id = @agent_id FOR SHARE), NULL,
     CASE WHEN sqlc.narg('fire_at')::timestamptz IS NULL THEN 'queued' ELSE 'deferred' END,
-    $3, $4, $5,
+    @priority, @chat_session_id, @initiator_user_id,
     sqlc.narg(originator_user_id),
     sqlc.narg(accountable_user_id),
     COALESCE(sqlc.narg('force_fresh_session')::boolean, FALSE),
@@ -1153,7 +1153,7 @@ SELECT
     sqlc.narg('fire_at')::timestamptz,
     sqlc.narg('channel_context_revision')::bigint,
     COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
-WHERE lock_task_owner_rows($1, NULL, $2)
+WHERE lock_task_owner_rows(@agent_id, NULL, @runtime_id::uuid)
 RETURNING *;
 
 -- name: PromoteChannelChatTasksIfMediaReady :many
