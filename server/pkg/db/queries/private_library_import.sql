@@ -8,7 +8,7 @@ RETURNING *;
 SELECT * FROM private_library_import WHERE workspace_id = $1 AND owner_id = $2 AND attempt_id = $3;
 
 -- name: GetPrivateLibraryImportForOwner :one
-SELECT * FROM private_library_import WHERE id = $1 AND workspace_id = $2 AND owner_id = $3;
+SELECT * FROM private_library_import WHERE id = $1 AND workspace_id = $2 AND owner_id = $3 AND removed_at IS NULL;
 
 -- name: LockPrivateLibraryImportRuntime :one
 SELECT r.id FROM agent_runtime r
@@ -39,7 +39,7 @@ WHERE t.id = @task_id AND t.runtime_id = @runtime_id
 FOR UPDATE OF t;
 
 -- name: CountPrivateLibraryImportsForTask :one
-SELECT count(*) FROM private_library_import WHERE workspace_id = $1 AND task_id = $2;
+SELECT count(*) FROM private_library_import WHERE workspace_id = $1 AND task_id = $2 AND removed_at IS NULL;
 
 -- name: GetPrivateLibraryImportForTask :one
 SELECT b.* FROM private_library_import b
@@ -50,7 +50,7 @@ JOIN member m ON m.workspace_id = b.workspace_id AND m.user_id = b.owner_id
 JOIN project p ON p.id = b.project_id AND p.workspace_id = b.workspace_id
 LEFT JOIN issue i ON i.id = t.issue_id AND i.workspace_id = b.workspace_id
 LEFT JOIN chat_session c ON c.id = t.chat_session_id AND c.workspace_id = b.workspace_id
-WHERE b.id = @id AND b.workspace_id = @workspace_id AND b.task_id = @task_id AND b.agent_id = @agent_id AND b.owner_id = @owner_id
+WHERE b.removed_at IS NULL AND b.id = @id AND b.workspace_id = @workspace_id AND b.task_id = @task_id AND b.agent_id = @agent_id AND b.owner_id = @owner_id
  AND (CASE WHEN t.issue_id IS NOT NULL THEN i.project_id ELSE c.project_id END) = b.project_id
  AND t.status IN ('dispatched', 'waiting_local_directory', 'running');
 
@@ -66,7 +66,7 @@ JOIN member m ON m.workspace_id = b.workspace_id AND m.user_id = b.owner_id
 JOIN project p ON p.id = b.project_id AND p.workspace_id = b.workspace_id
 LEFT JOIN issue i ON i.id = t.issue_id AND i.workspace_id = b.workspace_id
 LEFT JOIN chat_session c ON c.id = t.chat_session_id AND c.workspace_id = b.workspace_id
-WHERE b.workspace_id = @workspace_id AND b.task_id = @task_id AND b.owner_id = @owner_id
+WHERE b.removed_at IS NULL AND b.workspace_id = @workspace_id AND b.task_id = @task_id AND b.owner_id = @owner_id
  AND (CASE WHEN t.issue_id IS NOT NULL THEN i.project_id ELSE c.project_id END) = b.project_id
 ORDER BY b.created_at, b.id
 LIMIT 65;
@@ -87,4 +87,28 @@ LIMIT 1;
 SELECT count(*)::bigint AS import_count,
  COALESCE(sum((payload #>> '{preview,totalBytes}')::bigint),0)::bigint AS total_bytes,
  COALESCE(sum(jsonb_array_length(payload #> '{preview,entry,files}')),0)::bigint AS total_files
-FROM private_library_import WHERE workspace_id = $1 AND task_id = $2;
+FROM private_library_import WHERE workspace_id = $1 AND task_id = $2 AND removed_at IS NULL;
+
+-- name: RemovePrivateLibraryImportForOwner :one
+UPDATE private_library_import b SET payload = '{}'::jsonb, removed_at = now()
+WHERE b.id = @id AND b.workspace_id = @workspace_id AND b.owner_id = @owner_id
+ AND b.preview_digest = @preview_digest AND b.removed_at IS NULL
+ AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = @workspace_id AND m.user_id = @owner_id)
+RETURNING b.id;
+
+-- name: ListPrivateLibraryImportTaskIDsForIssue :many
+SELECT id FROM agent_task_queue WHERE issue_id = $1;
+
+-- name: DeleteUnreferencedPrivateLibraryImportsForTasks :execrows
+DELETE FROM private_library_import b
+WHERE b.workspace_id = @workspace_id AND b.task_id = ANY(@task_ids::uuid[])
+ AND NOT EXISTS (SELECT 1 FROM agent_task_queue t WHERE t.id = b.task_id);
+
+-- name: PruneUnreferencedPrivateLibraryImports :execrows
+WITH batch AS (
+ SELECT b.id FROM private_library_import b
+ WHERE NOT EXISTS (SELECT 1 FROM agent_task_queue t WHERE t.id = b.task_id)
+ ORDER BY b.id LIMIT @batch_size
+ FOR UPDATE OF b SKIP LOCKED
+)
+DELETE FROM private_library_import WHERE id IN (SELECT id FROM batch);

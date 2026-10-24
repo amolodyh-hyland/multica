@@ -1350,6 +1350,7 @@ type PrivateLibraryImport struct {
 	TransportHash string             `json:"transport_hash"`
 	Payload       []byte             `json:"payload"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	RemovedAt     pgtype.Timestamptz `json:"removed_at"`
 }
 
 type Project struct {

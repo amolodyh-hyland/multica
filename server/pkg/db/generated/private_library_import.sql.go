@@ -12,7 +12,7 @@ import (
 )
 
 const countPrivateLibraryImportsForTask = `-- name: CountPrivateLibraryImportsForTask :one
-SELECT count(*) FROM private_library_import WHERE workspace_id = $1 AND task_id = $2
+SELECT count(*) FROM private_library_import WHERE workspace_id = $1 AND task_id = $2 AND removed_at IS NULL
 `
 
 type CountPrivateLibraryImportsForTaskParams struct {
@@ -31,7 +31,7 @@ const createPrivateLibraryImport = `-- name: CreatePrivateLibraryImport :one
 INSERT INTO private_library_import (id, workspace_id, owner_id, attempt_id, task_id, runtime_id, agent_id, project_id, preview_digest, content_hash, transport_hash, payload)
 SELECT $1,$2,$3,$4,t.id,$5,t.agent_id,$6,$7,$8,$9,$10 FROM agent_task_queue t WHERE t.id = $11
 ON CONFLICT (workspace_id, owner_id, attempt_id) DO NOTHING
-RETURNING id, workspace_id, owner_id, attempt_id, task_id, runtime_id, agent_id, project_id, preview_digest, content_hash, transport_hash, payload, created_at
+RETURNING id, workspace_id, owner_id, attempt_id, task_id, runtime_id, agent_id, project_id, preview_digest, content_hash, transport_hash, payload, created_at, removed_at
 `
 
 type CreatePrivateLibraryImportParams struct {
@@ -77,6 +77,7 @@ func (q *Queries) CreatePrivateLibraryImport(ctx context.Context, arg CreatePriv
 		&i.TransportHash,
 		&i.Payload,
 		&i.CreatedAt,
+		&i.RemovedAt,
 	)
 	return i, err
 }
@@ -90,8 +91,27 @@ func (q *Queries) DeletePrivateLibraryImportsForWorkspace(ctx context.Context, w
 	return err
 }
 
+const deleteUnreferencedPrivateLibraryImportsForTasks = `-- name: DeleteUnreferencedPrivateLibraryImportsForTasks :execrows
+DELETE FROM private_library_import b
+WHERE b.workspace_id = $1 AND b.task_id = ANY($2::uuid[])
+ AND NOT EXISTS (SELECT 1 FROM agent_task_queue t WHERE t.id = b.task_id)
+`
+
+type DeleteUnreferencedPrivateLibraryImportsForTasksParams struct {
+	WorkspaceID pgtype.UUID   `json:"workspace_id"`
+	TaskIds     []pgtype.UUID `json:"task_ids"`
+}
+
+func (q *Queries) DeleteUnreferencedPrivateLibraryImportsForTasks(ctx context.Context, arg DeleteUnreferencedPrivateLibraryImportsForTasksParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteUnreferencedPrivateLibraryImportsForTasks, arg.WorkspaceID, arg.TaskIds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getPrivateLibraryImportByAttempt = `-- name: GetPrivateLibraryImportByAttempt :one
-SELECT id, workspace_id, owner_id, attempt_id, task_id, runtime_id, agent_id, project_id, preview_digest, content_hash, transport_hash, payload, created_at FROM private_library_import WHERE workspace_id = $1 AND owner_id = $2 AND attempt_id = $3
+SELECT id, workspace_id, owner_id, attempt_id, task_id, runtime_id, agent_id, project_id, preview_digest, content_hash, transport_hash, payload, created_at, removed_at FROM private_library_import WHERE workspace_id = $1 AND owner_id = $2 AND attempt_id = $3
 `
 
 type GetPrivateLibraryImportByAttemptParams struct {
@@ -117,12 +137,13 @@ func (q *Queries) GetPrivateLibraryImportByAttempt(ctx context.Context, arg GetP
 		&i.TransportHash,
 		&i.Payload,
 		&i.CreatedAt,
+		&i.RemovedAt,
 	)
 	return i, err
 }
 
 const getPrivateLibraryImportForOwner = `-- name: GetPrivateLibraryImportForOwner :one
-SELECT id, workspace_id, owner_id, attempt_id, task_id, runtime_id, agent_id, project_id, preview_digest, content_hash, transport_hash, payload, created_at FROM private_library_import WHERE id = $1 AND workspace_id = $2 AND owner_id = $3
+SELECT id, workspace_id, owner_id, attempt_id, task_id, runtime_id, agent_id, project_id, preview_digest, content_hash, transport_hash, payload, created_at, removed_at FROM private_library_import WHERE id = $1 AND workspace_id = $2 AND owner_id = $3 AND removed_at IS NULL
 `
 
 type GetPrivateLibraryImportForOwnerParams struct {
@@ -148,12 +169,13 @@ func (q *Queries) GetPrivateLibraryImportForOwner(ctx context.Context, arg GetPr
 		&i.TransportHash,
 		&i.Payload,
 		&i.CreatedAt,
+		&i.RemovedAt,
 	)
 	return i, err
 }
 
 const getPrivateLibraryImportForTask = `-- name: GetPrivateLibraryImportForTask :one
-SELECT b.id, b.workspace_id, b.owner_id, b.attempt_id, b.task_id, b.runtime_id, b.agent_id, b.project_id, b.preview_digest, b.content_hash, b.transport_hash, b.payload, b.created_at FROM private_library_import b
+SELECT b.id, b.workspace_id, b.owner_id, b.attempt_id, b.task_id, b.runtime_id, b.agent_id, b.project_id, b.preview_digest, b.content_hash, b.transport_hash, b.payload, b.created_at, b.removed_at FROM private_library_import b
 JOIN agent_task_queue t ON t.id = b.task_id AND t.agent_id = b.agent_id AND t.runtime_id = b.runtime_id
 JOIN agent_runtime r ON r.id = b.runtime_id AND r.workspace_id = b.workspace_id AND r.owner_id = b.owner_id
 JOIN agent a ON a.id = b.agent_id AND a.workspace_id = b.workspace_id AND a.owner_id = b.owner_id AND a.runtime_id = r.id AND a.archived_at IS NULL AND a.kind = 'user'
@@ -161,7 +183,7 @@ JOIN member m ON m.workspace_id = b.workspace_id AND m.user_id = b.owner_id
 JOIN project p ON p.id = b.project_id AND p.workspace_id = b.workspace_id
 LEFT JOIN issue i ON i.id = t.issue_id AND i.workspace_id = b.workspace_id
 LEFT JOIN chat_session c ON c.id = t.chat_session_id AND c.workspace_id = b.workspace_id
-WHERE b.id = $1 AND b.workspace_id = $2 AND b.task_id = $3 AND b.agent_id = $4 AND b.owner_id = $5
+WHERE b.removed_at IS NULL AND b.id = $1 AND b.workspace_id = $2 AND b.task_id = $3 AND b.agent_id = $4 AND b.owner_id = $5
  AND (CASE WHEN t.issue_id IS NOT NULL THEN i.project_id ELSE c.project_id END) = b.project_id
  AND t.status IN ('dispatched', 'waiting_local_directory', 'running')
 `
@@ -197,6 +219,7 @@ func (q *Queries) GetPrivateLibraryImportForTask(ctx context.Context, arg GetPri
 		&i.TransportHash,
 		&i.Payload,
 		&i.CreatedAt,
+		&i.RemovedAt,
 	)
 	return i, err
 }
@@ -220,8 +243,32 @@ func (q *Queries) GetSessionPrivateLibraryManifest(ctx context.Context, arg GetS
 	return private_library_manifest, err
 }
 
+const listPrivateLibraryImportTaskIDsForIssue = `-- name: ListPrivateLibraryImportTaskIDsForIssue :many
+SELECT id FROM agent_task_queue WHERE issue_id = $1
+`
+
+func (q *Queries) ListPrivateLibraryImportTaskIDsForIssue(ctx context.Context, issueID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listPrivateLibraryImportTaskIDsForIssue, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPrivateLibraryImportsForTask = `-- name: ListPrivateLibraryImportsForTask :many
-SELECT b.id, b.workspace_id, b.owner_id, b.attempt_id, b.task_id, b.runtime_id, b.agent_id, b.project_id, b.preview_digest, b.content_hash, b.transport_hash, b.payload, b.created_at FROM private_library_import b
+SELECT b.id, b.workspace_id, b.owner_id, b.attempt_id, b.task_id, b.runtime_id, b.agent_id, b.project_id, b.preview_digest, b.content_hash, b.transport_hash, b.payload, b.created_at, b.removed_at FROM private_library_import b
 JOIN agent_task_queue t ON t.id = b.task_id AND t.agent_id = b.agent_id AND t.runtime_id = b.runtime_id
 JOIN agent_runtime r ON r.id = b.runtime_id AND r.workspace_id = b.workspace_id AND r.owner_id = b.owner_id
 JOIN agent a ON a.id = b.agent_id AND a.workspace_id = b.workspace_id AND a.owner_id = b.owner_id AND a.runtime_id = r.id AND a.archived_at IS NULL AND a.kind = 'user'
@@ -229,7 +276,7 @@ JOIN member m ON m.workspace_id = b.workspace_id AND m.user_id = b.owner_id
 JOIN project p ON p.id = b.project_id AND p.workspace_id = b.workspace_id
 LEFT JOIN issue i ON i.id = t.issue_id AND i.workspace_id = b.workspace_id
 LEFT JOIN chat_session c ON c.id = t.chat_session_id AND c.workspace_id = b.workspace_id
-WHERE b.workspace_id = $1 AND b.task_id = $2 AND b.owner_id = $3
+WHERE b.removed_at IS NULL AND b.workspace_id = $1 AND b.task_id = $2 AND b.owner_id = $3
  AND (CASE WHEN t.issue_id IS NOT NULL THEN i.project_id ELSE c.project_id END) = b.project_id
 ORDER BY b.created_at, b.id
 LIMIT 65
@@ -264,6 +311,7 @@ func (q *Queries) ListPrivateLibraryImportsForTask(ctx context.Context, arg List
 			&i.TransportHash,
 			&i.Payload,
 			&i.CreatedAt,
+			&i.RemovedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -459,7 +507,7 @@ const privateLibraryTaskBudget = `-- name: PrivateLibraryTaskBudget :one
 SELECT count(*)::bigint AS import_count,
  COALESCE(sum((payload #>> '{preview,totalBytes}')::bigint),0)::bigint AS total_bytes,
  COALESCE(sum(jsonb_array_length(payload #> '{preview,entry,files}')),0)::bigint AS total_files
-FROM private_library_import WHERE workspace_id = $1 AND task_id = $2
+FROM private_library_import WHERE workspace_id = $1 AND task_id = $2 AND removed_at IS NULL
 `
 
 type PrivateLibraryTaskBudgetParams struct {
@@ -478,4 +526,49 @@ func (q *Queries) PrivateLibraryTaskBudget(ctx context.Context, arg PrivateLibra
 	var i PrivateLibraryTaskBudgetRow
 	err := row.Scan(&i.ImportCount, &i.TotalBytes, &i.TotalFiles)
 	return i, err
+}
+
+const pruneUnreferencedPrivateLibraryImports = `-- name: PruneUnreferencedPrivateLibraryImports :execrows
+WITH batch AS (
+ SELECT b.id FROM private_library_import b
+ WHERE NOT EXISTS (SELECT 1 FROM agent_task_queue t WHERE t.id = b.task_id)
+ ORDER BY b.id LIMIT $1
+ FOR UPDATE OF b SKIP LOCKED
+)
+DELETE FROM private_library_import WHERE id IN (SELECT id FROM batch)
+`
+
+func (q *Queries) PruneUnreferencedPrivateLibraryImports(ctx context.Context, batchSize int32) (int64, error) {
+	result, err := q.db.Exec(ctx, pruneUnreferencedPrivateLibraryImports, batchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const removePrivateLibraryImportForOwner = `-- name: RemovePrivateLibraryImportForOwner :one
+UPDATE private_library_import b SET payload = '{}'::jsonb, removed_at = now()
+WHERE b.id = $1 AND b.workspace_id = $2 AND b.owner_id = $3
+ AND b.preview_digest = $4 AND b.removed_at IS NULL
+ AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = $2 AND m.user_id = $3)
+RETURNING b.id
+`
+
+type RemovePrivateLibraryImportForOwnerParams struct {
+	ID            pgtype.UUID `json:"id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	OwnerID       pgtype.UUID `json:"owner_id"`
+	PreviewDigest string      `json:"preview_digest"`
+}
+
+func (q *Queries) RemovePrivateLibraryImportForOwner(ctx context.Context, arg RemovePrivateLibraryImportForOwnerParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, removePrivateLibraryImportForOwner,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.OwnerID,
+		arg.PreviewDigest,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }

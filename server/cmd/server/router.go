@@ -2194,6 +2194,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/capabilities", h.PrivateLibraryCapabilities)
 					r.Post("/imports", h.ImportPrivateLibrary)
 					r.Get("/imports/{id}", h.GetPrivateLibraryImport)
+					r.Delete("/imports/{id}", h.RemovePrivateLibraryImport)
 				})
 			})
 

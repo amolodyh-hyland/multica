@@ -39,7 +39,7 @@ func (h *Handler) privateImportDestination(r *http.Request, member db.Member) (l
 	err := h.DB.QueryRow(r.Context(), `SELECT to_regclass('private_library_import') IS NOT NULL AND
  (SELECT count(*) FROM pg_index WHERE indexrelid IN (
  to_regclass('private_library_import_id_idx'), to_regclass('private_library_import_attempt_idx'),
- to_regclass('private_library_import_task_idx')) AND indrelid = to_regclass('private_library_import') AND indisvalid AND indisready) = 3 AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('agent_task_queue') AND attname='private_library_manifest' AND NOT attisdropped)`).Scan(&ready)
+ to_regclass('private_library_import_task_idx')) AND indrelid = to_regclass('private_library_import') AND indisvalid AND indisready) = 3 AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('agent_task_queue') AND attname='private_library_manifest' AND NOT attisdropped) AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('private_library_import') AND attname='removed_at' AND NOT attisdropped)`).Scan(&ready)
 	return d, err == nil && ready
 }
 
@@ -135,6 +135,10 @@ func (h *Handler) ImportPrivateLibrary(w http.ResponseWriter, r *http.Request) {
 		}
 		if record.PreviewDigest != input.Consent.PreviewDigest {
 			writeError(w, http.StatusConflict, "idempotency_conflict")
+			return
+		}
+		if record.RemovedAt.Valid {
+			writeError(w, http.StatusGone, "private_import_removed")
 			return
 		}
 		writeJSON(w, http.StatusOK, privateImportReceipt(record, destination.ServerID))
@@ -288,4 +292,54 @@ func (h *Handler) writePrivateLibraryObject(w http.ResponseWriter, record db.Pri
 		Selection json.RawMessage       `json:"selection"`
 		Bundle    libraryimport.Bundle  `json:"bundle"`
 	}{Receipt: privateImportReceipt(record, h.cfg.PrivateImportAuthorityID), Selection: record.Payload, Bundle: bundle})
+}
+
+func (h *Handler) RemovePrivateLibraryImport(w http.ResponseWriter, r *http.Request) {
+	member, ok := h.privateImportMember(w, r)
+	if !ok {
+		return
+	}
+	id, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "import_id")
+	if !ok {
+		return
+	}
+	record, err := h.Queries.GetPrivateLibraryImportForOwner(r.Context(), db.GetPrivateLibraryImportForOwnerParams{ID: id, WorkspaceID: member.WorkspaceID, OwnerID: member.UserID})
+	if err != nil {
+		privateImportDBError(w, err)
+		return
+	}
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, libraryimport.MaxRequestBytes))
+	if err != nil {
+		writeError(w, http.StatusRequestEntityTooLarge, "payload_limit")
+		return
+	}
+	input, err := libraryimport.DecodeRemovalRequest(raw)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_private_import_removal")
+		return
+	}
+	destination, supported := h.privateImportDestination(r, member)
+	if !supported {
+		writeError(w, http.StatusNotImplemented, "private_import_unsupported")
+		return
+	}
+	if input.Preview.ObjectID != uuidToString(id) || input.Preview.Import.Destination != destination {
+		writeError(w, http.StatusConflict, "removal_destination_changed")
+		return
+	}
+	if err := input.VerifyConsent(time.Now()); err != nil {
+		writeError(w, http.StatusForbidden, "removal_consent_mismatch_or_expired")
+		return
+	}
+	digest, err := input.Preview.Import.Digest()
+	if err != nil || digest != record.PreviewDigest {
+		writeError(w, http.StatusConflict, "removal_preview_changed")
+		return
+	}
+	if _, err := h.Queries.RemovePrivateLibraryImportForOwner(r.Context(), db.RemovePrivateLibraryImportForOwnerParams{ID: id, WorkspaceID: member.WorkspaceID, OwnerID: member.UserID, PreviewDigest: digest}); err != nil {
+		privateImportDBError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
 }
