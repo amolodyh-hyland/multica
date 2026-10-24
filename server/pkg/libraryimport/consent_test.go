@@ -151,7 +151,7 @@ func response(status int, v any) *http.Response {
 }
 
 func TestUploadFailsBeforeDisclosure(t *testing.T) {
-	for _, mode := range []string{"no consent", "unsupported", "different destination", "redirect", "offline", "cancelled", "ok", "bad receipt"} {
+	for _, mode := range []string{"no consent", "unsupported", "different destination", "redirect", "offline", "cancelled", "ok", "bad receipt", "bad transport", "bad object id", "bad approval"} {
 		t.Run(mode, func(t *testing.T) {
 			input := testRequest(time.Now())
 			ctx, cancel := context.WithCancel(context.Background())
@@ -188,9 +188,22 @@ func TestUploadFailsBeforeDisclosure(t *testing.T) {
 				if err != nil || decoded.Verify() != nil {
 					t.Fatal("upload mutated bytes")
 				}
-				receipt := Receipt{ObjectID: "object1", AuthorityID: "server1", ApprovalRef: "approval1", PreviewDigest: input.Consent.PreviewDigest, ContentHash: input.Preview.Entry.ContentHash, TransportHash: knowledge.Sum([]byte("transport")), Status: "stored", ReasonCode: "unsupported_provider"}
+				_, transport := (Payload{Entry: input.Preview.Entry, Content: input.Content}).Transport("object1")
+				receipt := Receipt{ObjectID: "object1", AuthorityID: "server1", ApprovalRef: "private-import:object1", PreviewDigest: input.Consent.PreviewDigest, ContentHash: input.Preview.Entry.ContentHash, TransportHash: transport.Hash, Status: "stored", ReasonCode: "unsupported_provider"}
 				if mode == "bad receipt" {
 					receipt.ContentHash = "wrong"
+				}
+				if mode == "bad transport" {
+					receipt.TransportHash = knowledge.Sum([]byte("wrong transport"))
+				}
+				if mode == "bad object id" {
+					receipt.ObjectID = "../other"
+					_, invalid := (Payload{Entry: input.Preview.Entry, Content: input.Content}).Transport(receipt.ObjectID)
+					receipt.TransportHash = invalid.Hash
+					receipt.ApprovalRef = "private-import:" + receipt.ObjectID
+				}
+				if mode == "bad approval" {
+					receipt.ApprovalRef = "unrelated"
 				}
 				return response(201, receipt), nil
 			})}
@@ -205,7 +218,7 @@ func TestUploadFailsBeforeDisclosure(t *testing.T) {
 			if mode == "no consent" {
 				want = 0
 			}
-			if mode == "ok" || mode == "bad receipt" {
+			if mode == "ok" || mode == "bad receipt" || mode == "bad transport" || mode == "bad object id" || mode == "bad approval" {
 				want = 2
 			}
 			if len(methods) != want {
@@ -218,7 +231,8 @@ func TestUploadFailsBeforeDisclosure(t *testing.T) {
 func TestUploadFreezesSelectionAndHonorsExpiryDeadline(t *testing.T) {
 	input := testRequest(time.Now())
 	original := input.Content["rules/review.md"]
-	receipt := Receipt{ObjectID: "object1", AuthorityID: "server1", ApprovalRef: "approval1", PreviewDigest: input.Consent.PreviewDigest, ContentHash: input.Preview.Entry.ContentHash, TransportHash: knowledge.Sum([]byte("transport")), Status: "stored", ReasonCode: "unsupported_provider"}
+	_, transport := (Payload{Entry: input.Preview.Entry, Content: input.Content}).Transport("object1")
+	receipt := Receipt{ObjectID: "object1", AuthorityID: "server1", ApprovalRef: "private-import:object1", PreviewDigest: input.Consent.PreviewDigest, ContentHash: input.Preview.Entry.ContentHash, TransportHash: transport.Hash, Status: "stored", ReasonCode: "unsupported_provider"}
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		expires, _ := time.Parse(timestampLayout, input.Consent.ExpiresAt)
 		deadline, ok := req.Context().Deadline()

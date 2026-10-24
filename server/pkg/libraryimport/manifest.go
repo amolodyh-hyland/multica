@@ -2,7 +2,6 @@ package libraryimport
 
 import (
 	"errors"
-	"strings"
 
 	"github.com/multica-ai/multica/server/pkg/knowledge"
 	"github.com/multica-ai/multica/server/pkg/skillbundle"
@@ -98,18 +97,6 @@ func (p Payload) Transport(objectID string) (skillbundle.Skill, skillbundle.Mani
 		}
 	}
 	return skill, skillbundle.BuildManifest(skill)
-}
-
-func ValidHash(s string) bool {
-	if len(s) != 71 || !strings.HasPrefix(s, "sha256:") {
-		return false
-	}
-	for _, c := range s[7:] {
-		if !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f') {
-			return false
-		}
-	}
-	return true
 }
 
 type Bundle struct {

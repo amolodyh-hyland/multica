@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/knowledge"
 )
 
 func Upload(ctx context.Context, client *http.Client, headers http.Header, input Request) (Receipt, error) {
@@ -79,7 +81,8 @@ func Upload(ctx context.Context, client *http.Client, headers http.Header, input
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 16*1024)).Decode(&receipt); err != nil {
 		return Receipt{}, err
 	}
-	if receipt.AuthorityID != input.Preview.Destination.ServerID || receipt.PreviewDigest != input.Consent.PreviewDigest || receipt.ContentHash != input.Preview.Entry.ContentHash || !ValidHash(receipt.TransportHash) || receipt.ObjectID == "" || receipt.ApprovalRef == "" || receipt.Status != "stored" || receipt.ReasonCode != "unsupported_provider" {
+	_, expectedTransport := (Payload{Entry: input.Preview.Entry, Content: input.Content}).Transport(receipt.ObjectID)
+	if receipt.AuthorityID != input.Preview.Destination.ServerID || receipt.PreviewDigest != input.Consent.PreviewDigest || receipt.ContentHash != input.Preview.Entry.ContentHash || receipt.TransportHash != expectedTransport.Hash || !knowledge.ValidID(receipt.ObjectID) || receipt.ApprovalRef != "private-import:"+receipt.ObjectID || receipt.Status != "stored" || receipt.ReasonCode != "unsupported_provider" {
 		return Receipt{}, errors.New("invalid_receipt")
 	}
 	return receipt, nil
