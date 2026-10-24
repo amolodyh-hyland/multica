@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/knowledge"
@@ -291,6 +292,81 @@ func TestPrivateLibraryImportRejectsPostImportProjectChange(t *testing.T) {
 				t.Fatalf("changed Project retained claim access: count=%d err=%v", len(records), err)
 			}
 			testutil.Call(t, h.GetPrivateLibraryImport, withURLParam(newRequest(http.MethodGet, "/api/private-library/imports/"+receipt.ObjectID, nil), "id", receipt.ObjectID)).Want(200)
+		})
+	}
+}
+
+func TestPrivateLibraryImportDependencyLocksPrecedeTask(t *testing.T) {
+	for _, operation := range []string{"runtime teardown", "chat cancellation"} {
+		t.Run(operation, func(t *testing.T) {
+			h, input := privateImportFixture(t)
+			b := input.Preview.Binding
+			var sessionID string
+			if operation == "chat cancellation" {
+				sessionID = dbfx.ChatSession(t, b.PersonaRef.PersonaID, testutil.Cols{"project_id": b.ProjectID})
+				dbfx.Exec(t, `UPDATE agent_task_queue SET issue_id=NULL,chat_session_id=$2 WHERE id=$1`, b.TaskID, sessionID)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			tx, err := testPool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(context.Background())
+			q := h.Queries.WithTx(tx)
+			if operation == "runtime teardown" {
+				if _, err := q.LockAgentRuntime(ctx, parseUUID(b.RuntimeID)); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if _, err := q.LockChatSessionForDelete(ctx, parseUUID(sessionID)); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := q.GetAgentForClaimUpdate(ctx, parseUUID(b.PersonaRef.PersonaID)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			done := make(chan *httptest.ResponseRecorder, 1)
+			req := newRequest(http.MethodPost, "/api/private-library/imports", input).WithContext(ctx)
+			go func() { w := httptest.NewRecorder(); h.ImportPrivateLibrary(w, req); done <- w }()
+			defer func() {
+				cancel()
+				tx.Rollback(context.Background())
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+				}
+			}()
+			if !waitForWaiterBlockedBy(t, int(tx.Conn().PgConn().PID()), 5*time.Second) {
+				t.Fatal("import did not wait on its dependency")
+			}
+			if operation == "runtime teardown" {
+				if _, err := service.TeardownRuntime(ctx, q, parseUUID(b.RuntimeID), service.RuntimeTeardownOptions{CancelNonTerminalTasks: true}); err != nil {
+					t.Fatalf("teardown while import waits: %v", err)
+				}
+			} else {
+				if _, err := q.CancelAgentTasksByChatSession(ctx, parseUUID(sessionID)); err != nil {
+					t.Fatalf("cancel while import waits: %v", err)
+				}
+			}
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case w := <-done:
+				if w.Code != http.StatusNotFound {
+					t.Fatalf("import after dependency change=%d %s", w.Code, w.Body.String())
+				}
+			case <-ctx.Done():
+				t.Fatal("import or teardown blocked instead of completing")
+			}
+			var count int
+			if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM private_library_import WHERE task_id=$1`, b.TaskID).Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			if count != 0 {
+				t.Fatal("racing import persisted private bytes")
+			}
 		})
 	}
 }

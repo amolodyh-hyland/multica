@@ -275,6 +275,68 @@ func (q *Queries) ListPrivateLibraryImportsForTask(ctx context.Context, arg List
 	return items, nil
 }
 
+const lockPrivateLibraryImportAgent = `-- name: LockPrivateLibraryImportAgent :one
+SELECT a.id FROM agent a
+WHERE a.id = $1 AND a.workspace_id = $2 AND a.owner_id = $3
+ AND a.runtime_id = $4 AND a.archived_at IS NULL AND a.kind = 'user'
+FOR SHARE
+`
+
+type LockPrivateLibraryImportAgentParams struct {
+	AgentID     pgtype.UUID `json:"agent_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	OwnerID     pgtype.UUID `json:"owner_id"`
+	RuntimeID   pgtype.UUID `json:"runtime_id"`
+}
+
+func (q *Queries) LockPrivateLibraryImportAgent(ctx context.Context, arg LockPrivateLibraryImportAgentParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockPrivateLibraryImportAgent,
+		arg.AgentID,
+		arg.WorkspaceID,
+		arg.OwnerID,
+		arg.RuntimeID,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockPrivateLibraryImportProject = `-- name: LockPrivateLibraryImportProject :one
+SELECT id FROM project WHERE id = $1 AND workspace_id = $2
+FOR SHARE
+`
+
+type LockPrivateLibraryImportProjectParams struct {
+	ProjectID   pgtype.UUID `json:"project_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockPrivateLibraryImportProject(ctx context.Context, arg LockPrivateLibraryImportProjectParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockPrivateLibraryImportProject, arg.ProjectID, arg.WorkspaceID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockPrivateLibraryImportRuntime = `-- name: LockPrivateLibraryImportRuntime :one
+SELECT r.id FROM agent_runtime r
+WHERE r.id = $1 AND r.workspace_id = $2 AND r.owner_id = $3
+FOR SHARE
+`
+
+type LockPrivateLibraryImportRuntimeParams struct {
+	RuntimeID   pgtype.UUID `json:"runtime_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	OwnerID     pgtype.UUID `json:"owner_id"`
+}
+
+func (q *Queries) LockPrivateLibraryImportRuntime(ctx context.Context, arg LockPrivateLibraryImportRuntimeParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockPrivateLibraryImportRuntime, arg.RuntimeID, arg.WorkspaceID, arg.OwnerID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockPrivateLibraryImportTask = `-- name: LockPrivateLibraryImportTask :one
 SELECT t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id, t.runtime_mcp_overlay, t.escalation_for_task_id, t.fire_at, t.originator_user_id, t.runtime_connected_apps, t.coalesced_comment_ids, t.delivered_comment_ids, t.chat_input_task_id, t.chat_finalize_deferred_at, t.originator_source, t.delegated_from_task_id, t.retry_of_task_id, t.rerun_of_task_id, t.rule_version_id, t.trigger_evidence_kind, t.trigger_evidence_ref_id, t.accountable_user_id, t.session_rollout_missing, t.retired_session_id, t.quick_actions_disabled, t.regenerate_quick_actions_for, t.branch_name, t.durable_work_dir, t.channel_context_revision, t.comment_thread_id, t.cancelled_by_type, t.cancelled_by_id, t.cancelled_by_name, t.issue_snapshot, t.workflow_step, t.knowledge_manifest, t.private_library_manifest FROM agent_task_queue t
 JOIN agent_runtime r ON r.id = t.runtime_id AND r.workspace_id = $1 AND r.owner_id = $2
@@ -287,7 +349,6 @@ WHERE t.id = $4 AND t.runtime_id = $5
  AND (CASE WHEN t.issue_id IS NOT NULL THEN i.project_id ELSE c.project_id END) = p.id
  AND t.status = 'queued' AND t.session_id IS NULL AND t.knowledge_manifest IS NULL AND t.private_library_manifest IS NULL
 FOR UPDATE OF t
-FOR SHARE OF r, a, p
 `
 
 type LockPrivateLibraryImportTaskParams struct {

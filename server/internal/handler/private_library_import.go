@@ -144,6 +144,20 @@ func (h *Handler) ImportPrivateLibrary(w http.ResponseWriter, r *http.Request) {
 		privateImportDBError(w, err)
 		return
 	}
+	// Match runtime teardown and claim/cancel: runtime, persona, then task.
+	// Revalidate the complete binding under these locks before committing bytes.
+	if _, err := q.LockPrivateLibraryImportRuntime(ctx, db.LockPrivateLibraryImportRuntimeParams{RuntimeID: runtimeID, WorkspaceID: member.WorkspaceID, OwnerID: member.UserID}); err != nil {
+		privateImportDBError(w, err)
+		return
+	}
+	if _, err := q.LockPrivateLibraryImportAgent(ctx, db.LockPrivateLibraryImportAgentParams{AgentID: record.AgentID, RuntimeID: runtimeID, WorkspaceID: member.WorkspaceID, OwnerID: member.UserID}); err != nil {
+		privateImportDBError(w, err)
+		return
+	}
+	if _, err := q.LockPrivateLibraryImportProject(ctx, db.LockPrivateLibraryImportProjectParams{ProjectID: projectID, WorkspaceID: member.WorkspaceID}); err != nil {
+		privateImportDBError(w, err)
+		return
+	}
 	task, err := q.LockPrivateLibraryImportTask(ctx, db.LockPrivateLibraryImportTaskParams{WorkspaceID: member.WorkspaceID, OwnerID: member.UserID, ProjectID: projectID, TaskID: taskID, RuntimeID: runtimeID})
 	if err != nil {
 		privateImportDBError(w, err)

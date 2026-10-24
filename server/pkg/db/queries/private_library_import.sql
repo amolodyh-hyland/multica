@@ -10,6 +10,21 @@ SELECT * FROM private_library_import WHERE workspace_id = $1 AND owner_id = $2 A
 -- name: GetPrivateLibraryImportForOwner :one
 SELECT * FROM private_library_import WHERE id = $1 AND workspace_id = $2 AND owner_id = $3;
 
+-- name: LockPrivateLibraryImportRuntime :one
+SELECT r.id FROM agent_runtime r
+WHERE r.id = @runtime_id AND r.workspace_id = @workspace_id AND r.owner_id = @owner_id
+FOR SHARE;
+
+-- name: LockPrivateLibraryImportAgent :one
+SELECT a.id FROM agent a
+WHERE a.id = @agent_id AND a.workspace_id = @workspace_id AND a.owner_id = @owner_id
+ AND a.runtime_id = @runtime_id AND a.archived_at IS NULL AND a.kind = 'user'
+FOR SHARE;
+
+-- name: LockPrivateLibraryImportProject :one
+SELECT id FROM project WHERE id = @project_id AND workspace_id = @workspace_id
+FOR SHARE;
+
 -- name: LockPrivateLibraryImportTask :one
 SELECT t.* FROM agent_task_queue t
 JOIN agent_runtime r ON r.id = t.runtime_id AND r.workspace_id = @workspace_id AND r.owner_id = @owner_id
@@ -21,8 +36,7 @@ WHERE t.id = @task_id AND t.runtime_id = @runtime_id
  AND (t.originator_user_id = @owner_id OR t.accountable_user_id = @owner_id)
  AND (CASE WHEN t.issue_id IS NOT NULL THEN i.project_id ELSE c.project_id END) = p.id
  AND t.status = 'queued' AND t.session_id IS NULL AND t.knowledge_manifest IS NULL AND t.private_library_manifest IS NULL
-FOR UPDATE OF t
-FOR SHARE OF r, a, p;
+FOR UPDATE OF t;
 
 -- name: CountPrivateLibraryImportsForTask :one
 SELECT count(*) FROM private_library_import WHERE workspace_id = $1 AND task_id = $2;
