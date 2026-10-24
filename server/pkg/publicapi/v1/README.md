@@ -317,3 +317,8 @@ Result snapshots are stored once per workspace, delegation and revision in
 the ledger and its concurrent unique index; interrupted index builds use the
 registered invalid-index cleanup. Roll back 595 before 594. Workspace deletion
 removes the snapshots explicitly; there are no foreign keys or cascades.
+
+Result text refusal includes quoted credential keys in JSON, YAML, environment
+assignments and query forms, including prefixed secret, token and key names.
+`testdata/multica-result-text-v1.json` is paired with the consumer contract
+fixture and exercised at all three result boundaries.

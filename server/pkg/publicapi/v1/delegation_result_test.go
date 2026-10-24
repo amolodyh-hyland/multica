@@ -66,3 +66,33 @@ func TestDelegationResultTextBoundary(t *testing.T) {
 		}
 	}
 }
+
+func TestDelegationResultSharedTextVectors(t *testing.T) {
+	raw, err := os.ReadFile("testdata/multica-result-text-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if peer := os.Getenv("AO_RESULT_TEXT_FIXTURE"); peer != "" {
+		other, err := os.ReadFile(peer)
+		if err != nil || !bytes.Equal(raw, other) {
+			t.Fatal("paired text vectors differ", err)
+		}
+	}
+	var vectors struct {
+		Refused []string `json:"refused"`
+		Allowed []string `json:"allowed"`
+	}
+	if err := json.Unmarshal(raw, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range vectors.Refused {
+		if ValidateDelegationResultText(value) == nil {
+			t.Errorf("unsafe result accepted: %q", value)
+		}
+	}
+	for _, value := range vectors.Allowed {
+		if err := ValidateDelegationResultText(value); err != nil {
+			t.Errorf("safe result refused: %q: %v", value, err)
+		}
+	}
+}

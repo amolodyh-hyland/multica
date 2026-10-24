@@ -31,7 +31,7 @@ type DelegationResult struct {
 	Text             string `json:"text"`
 }
 
-var unsafeResult = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://|www\.|(?:https?|ftp|file|data|javascript|mailto|ssh|smb|tel):|(?:mul_|mat_|mcn_|mpi_|mpc_|gh[pousr]_|github_pat_|npm_|xox[baprs]-|sk-)[a-z0-9_-]+|-----BEGIN|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\beyJ[a-z0-9_-]{10,}\.[a-z0-9_-]+\.[a-z0-9_-]+|\b(?:bearer|password|passwd|secret|api[_ -]?key|access[_ -]?token|token|authorization|credential)\s*[:= ]\s*\S+|(?:^|[\s\x60"'(])(?:[a-z]:[\\/]|[/\\~][\w.\\/-]+)|\b[\w.-]+[/\\][\w.\\/-]+)`)
+var unsafeResult = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://|www\.|(?:https?|ftp|file|data|javascript|mailto|ssh|smb|tel):|(?:mul_|mat_|mcn_|mpi_|mpc_|gh[pousr]_|github_pat_|npm_|xox[baprs]-|sk-)[a-z0-9_-]+|-----BEGIN|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\beyJ[a-z0-9_-]{10,}\.[a-z0-9_-]+\.[a-z0-9_-]+|\b(?:[a-z0-9]+[_.-])*(?:bearer|password|passwd|pwd|passphrase|secrets?|tokens?|keys?|auth|authorization|credentials?|api[_ -]?key|access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|private[_ -]?key|connection[_ -]?string)["']?\s*[:= ]\s*\S+|(?:^|[\s\x60"'(])(?:[a-z]:[\\/]|[/\\~][\w.\\/-]+)|\b[\w.-]+[/\\][\w.\\/-]+)`)
 
 func ValidateDelegationResultText(text string) error {
 	if len(text) == 0 || len(text) > MaxDelegationResultBytes || strings.TrimSpace(text) == "" || !utf8.ValidString(text) || unsafeResult.MatchString(text) || strings.ContainsAny(text, "/\\") {
