@@ -249,3 +249,48 @@ func TestPrivateLibraryImportInterruptedCommitAndConcurrentRetry(t *testing.T) {
 		t.Fatalf("created=%d", created)
 	}
 }
+
+func TestPrivateLibraryImportRejectsPostImportProjectChange(t *testing.T) {
+	for _, origin := range []string{"issue", "chat"} {
+		t.Run(origin, func(t *testing.T) {
+			h, input := privateImportFixture(t)
+			b := input.Preview.Binding
+			var originID string
+			if origin == "chat" {
+				originID = dbfx.ChatSession(t, b.PersonaRef.PersonaID, testutil.Cols{"project_id": b.ProjectID})
+				dbfx.Exec(t, `UPDATE agent_task_queue SET issue_id=NULL,chat_session_id=$2 WHERE id=$1`, b.TaskID, originID)
+			} else {
+				if err := testPool.QueryRow(context.Background(), `SELECT issue_id FROM agent_task_queue WHERE id=$1`, b.TaskID).Scan(&originID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var receipt libraryimport.Receipt
+			testutil.Call(t, h.ImportPrivateLibrary, newRequest(http.MethodPost, "/api/private-library/imports", input)).Want(201).JSON(&receipt)
+			dbfx.Exec(t, `UPDATE agent_task_queue SET status='dispatched',dispatched_at=now() WHERE id=$1`, b.TaskID)
+			get := func(method string) *http.Request {
+				req := newRequest(method, "/api/private-library/tasks/"+b.TaskID+"/imports/"+receipt.ObjectID, nil)
+				req.Header.Set("X-Workspace-ID", testWorkspaceID)
+				req.Header.Set("X-Agent-ID", b.PersonaRef.PersonaID)
+				req.Header.Set("X-Task-ID", b.TaskID)
+				req.Header.Set("X-Actor-Source", "task_token")
+				req = req.WithContext(middleware.WithAuthCredential(req.Context(), middleware.AuthCredential{Kind: middleware.AuthCredentialTaskToken}))
+				return withURLParams(req, "id", receipt.ObjectID, "taskId", b.TaskID)
+			}
+			testutil.Call(t, h.GetTaskPrivateLibraryImport, get(http.MethodGet)).Want(200)
+			nextProject := dbfx.Project(t, "Moved private task")
+			if origin == "chat" {
+				dbfx.Exec(t, `UPDATE chat_session SET project_id=$2 WHERE id=$1`, originID, nextProject)
+			} else {
+				dbfx.Exec(t, `UPDATE issue SET project_id=$2 WHERE id=$1`, originID, nextProject)
+			}
+			for _, method := range []string{http.MethodGet, http.MethodHead} {
+				testutil.Call(t, h.GetTaskPrivateLibraryImport, get(method)).Want(404)
+			}
+			records, err := h.Queries.ListPrivateLibraryImportsForTask(context.Background(), db.ListPrivateLibraryImportsForTaskParams{WorkspaceID: parseUUID(testWorkspaceID), TaskID: parseUUID(b.TaskID), OwnerID: parseUUID(testUserID)})
+			if err != nil || len(records) != 0 {
+				t.Fatalf("changed Project retained claim access: count=%d err=%v", len(records), err)
+			}
+			testutil.Call(t, h.GetPrivateLibraryImport, withURLParam(newRequest(http.MethodGet, "/api/private-library/imports/"+receipt.ObjectID, nil), "id", receipt.ObjectID)).Want(200)
+		})
+	}
+}

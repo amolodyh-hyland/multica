@@ -33,7 +33,11 @@ JOIN agent_task_queue t ON t.id = b.task_id AND t.agent_id = b.agent_id AND t.ru
 JOIN agent_runtime r ON r.id = b.runtime_id AND r.workspace_id = b.workspace_id AND r.owner_id = b.owner_id
 JOIN agent a ON a.id = b.agent_id AND a.workspace_id = b.workspace_id AND a.owner_id = b.owner_id AND a.runtime_id = r.id AND a.archived_at IS NULL AND a.kind = 'user'
 JOIN member m ON m.workspace_id = b.workspace_id AND m.user_id = b.owner_id
+JOIN project p ON p.id = b.project_id AND p.workspace_id = b.workspace_id
+LEFT JOIN issue i ON i.id = t.issue_id AND i.workspace_id = b.workspace_id
+LEFT JOIN chat_session c ON c.id = t.chat_session_id AND c.workspace_id = b.workspace_id
 WHERE b.id = @id AND b.workspace_id = @workspace_id AND b.task_id = @task_id AND b.agent_id = @agent_id AND b.owner_id = @owner_id
+ AND (CASE WHEN t.issue_id IS NOT NULL THEN i.project_id ELSE c.project_id END) = b.project_id
  AND t.status IN ('dispatched', 'waiting_local_directory', 'running');
 
 -- name: DeletePrivateLibraryImportsForWorkspace :exec
@@ -45,7 +49,11 @@ JOIN agent_task_queue t ON t.id = b.task_id AND t.agent_id = b.agent_id AND t.ru
 JOIN agent_runtime r ON r.id = b.runtime_id AND r.workspace_id = b.workspace_id AND r.owner_id = b.owner_id
 JOIN agent a ON a.id = b.agent_id AND a.workspace_id = b.workspace_id AND a.owner_id = b.owner_id AND a.runtime_id = r.id AND a.archived_at IS NULL AND a.kind = 'user'
 JOIN member m ON m.workspace_id = b.workspace_id AND m.user_id = b.owner_id
+JOIN project p ON p.id = b.project_id AND p.workspace_id = b.workspace_id
+LEFT JOIN issue i ON i.id = t.issue_id AND i.workspace_id = b.workspace_id
+LEFT JOIN chat_session c ON c.id = t.chat_session_id AND c.workspace_id = b.workspace_id
 WHERE b.workspace_id = @workspace_id AND b.task_id = @task_id AND b.owner_id = @owner_id
+ AND (CASE WHEN t.issue_id IS NOT NULL THEN i.project_id ELSE c.project_id END) = b.project_id
 ORDER BY b.created_at, b.id
 LIMIT 65;
 
