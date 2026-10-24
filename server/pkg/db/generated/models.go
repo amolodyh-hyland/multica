@@ -1335,6 +1335,22 @@ type PluginStorage struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
+type PrivateLibraryImport struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	OwnerID       pgtype.UUID        `json:"owner_id"`
+	AttemptID     string             `json:"attempt_id"`
+	TaskID        pgtype.UUID        `json:"task_id"`
+	RuntimeID     pgtype.UUID        `json:"runtime_id"`
+	AgentID       pgtype.UUID        `json:"agent_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	PreviewDigest string             `json:"preview_digest"`
+	ContentHash   string             `json:"content_hash"`
+	TransportHash string             `json:"transport_hash"`
+	Payload       []byte             `json:"payload"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type Project struct {
 	ID           pgtype.UUID        `json:"id"`
 	WorkspaceID  pgtype.UUID        `json:"workspace_id"`

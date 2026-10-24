@@ -1234,6 +1234,9 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 				if err := qtx.DeletePublicDelegationResultsForWorkspace(ctx, requester.WorkspaceID); err != nil {
 					return err
 				}
+				if err := qtx.DeletePrivateLibraryImportsForWorkspace(ctx, requester.WorkspaceID); err != nil {
+					return err
+				}
 				if err := qtx.DeletePublicDelegationsForWorkspace(ctx, requester.WorkspaceID); err != nil {
 					return err
 				}

@@ -17,7 +17,7 @@ The server must have an explicitly configured stable `MULTICA_PRIVATE_IMPORT_AUT
 - `GET /api/private-library/capabilities`: human membership, no file metadata in the request.
 - `POST /api/private-library/imports`: exact local consent receipt, immutable payload, and explicit binding; returns a storage receipt.
 - `GET /api/private-library/imports/{id}`: owner-only complete object, including its retained selection and the existing bundle wire shape.
-- `GET /api/daemon/runtimes/{runtimeId}/tasks/{taskId}/private-library/{id}`: exact task/runtime and authenticated owning daemon only. Other members, Workspace administrators, other tasks, other daemons and other Workspaces receive no private content.
+- `GET /api/private-library/tasks/{taskId}/imports/{id}`: existing task token for that exact invocation, with middleware-stamped task, persona, owner and Workspace identity. Broad daemon credentials do not grant private access. Other members, Workspace administrators, other tasks, broad daemon tokens and other Workspaces receive no private content.
 
 New imports require a queued issue/chat task without an established session or knowledge snapshot, matching the explicit Project. The human must own its runtime and native persona and be its recorded originator or accountable human. An optional persona reference is `(serverId, workspaceId, personaId)` and must match the task's native agent ID; a daemon profile is never a persona ID. Other task origins fail closed in this milestone. An offline runtime may retain an inert import; this does not make it runnable.
 
