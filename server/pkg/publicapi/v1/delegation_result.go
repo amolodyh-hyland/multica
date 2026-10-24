@@ -31,7 +31,7 @@ type DelegationResult struct {
 	Text             string `json:"text"`
 }
 
-var unsafeResult = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://|www\.|(?:mul_|mat_|mcn_|mpi_|mpc_|ghp_|github_pat_|sk-)[a-z0-9_-]+|-----BEGIN|\b(?:bearer|password|passwd|secret|api[_ -]?key|access[_ -]?token)\s*[:= ]\s*\S+|(?:^|[\s\x60"'(])(?:[a-z]:[\\/]|[/\\~][\w.\\/-]+)|\b[\w.-]+[/\\][\w.\\/-]+)`)
+var unsafeResult = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://|www\.|(?:https?|ftp|file|data|javascript|mailto|ssh|smb|tel):|(?:mul_|mat_|mcn_|mpi_|mpc_|ghp_|github_pat_|sk-)[a-z0-9_-]+|-----BEGIN|\b(?:bearer|password|passwd|secret|api[_ -]?key|access[_ -]?token)\s*[:= ]\s*\S+|(?:^|[\s\x60"'(])(?:[a-z]:[\\/]|[/\\~][\w.\\/-]+)|\b[\w.-]+[/\\][\w.\\/-]+)`)
 
 func ValidateDelegationResultText(text string) error {
 	if len(text) == 0 || len(text) > MaxDelegationResultBytes || strings.TrimSpace(text) == "" || !utf8.ValidString(text) || unsafeResult.MatchString(text) || strings.ContainsAny(text, "/\\") {

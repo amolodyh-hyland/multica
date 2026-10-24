@@ -55,7 +55,7 @@ func TestDelegationResultContract(t *testing.T) {
 }
 
 func TestDelegationResultTextBoundary(t *testing.T) {
-	for _, value := range []string{"", "  ", strings.Repeat("x", MaxDelegationResultBytes+1), "\xff", "hi\x00there", "mul_private", "https://example.test/download", "/Users/person/private", "C:\\private\\file", "../secret", "password=private", "-----BEGIN PRIVATE KEY-----"} {
+	for _, value := range []string{"", "  ", strings.Repeat("x", MaxDelegationResultBytes+1), "\xff", "hi\x00there", "mul_private", "https://example.test/download", "/Users/person/private", "C:\\private\\file", "../secret", "password=private", "mailto:person@example.test", "data:text,private", "-----BEGIN PRIVATE KEY-----"} {
 		if ValidateDelegationResultText(value) == nil {
 			t.Fatalf("unsafe result accepted: %q", value[:min(len(value), 100)])
 		}
