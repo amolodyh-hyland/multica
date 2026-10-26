@@ -2,10 +2,13 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/testutil"
@@ -308,5 +311,176 @@ func TestIssueRuntimePreservesConfirmedDelegation(t *testing.T) {
 	setIssueRuntime(t, testHandler, issue, agent, next, 409)
 	if n := dbfx.Count(t, `SELECT count(*) FROM issue_runtime_override WHERE issue_id=$1`, issue); n != 0 {
 		t.Fatal("confirmed delegation's runtime changed")
+	}
+}
+
+func TestIssueRuntimeAdmissionUsesOverrideBeforeDefault(t *testing.T) {
+	for _, defaultState := range []string{"unbound", "unusable"} {
+		for _, action := range []string{"comment", "mention", "reply", "continuation", "promotion", "assignment"} {
+			t.Run(defaultState+"/"+action, func(t *testing.T) {
+				old := dbfx.Runtime(t, "admission default")
+				target := dbfx.Runtime(t, "admission override")
+				profile := dbfx.Agent(t, "admission profile", old)
+				issue := dbfx.Issue(t, "admission override issue", testutil.Cols{"assignee_type": "agent", "assignee_id": profile, "status": "backlog"})
+				dbfx.Cleanup(t, `DELETE FROM agent_task_queue WHERE issue_id=$1`, issue)
+				dbfx.Cleanup(t, `DELETE FROM issue_runtime_override WHERE issue_id=$1`, issue)
+				setIssueRuntime(t, testHandler, issue, profile, target, http.StatusOK)
+				if defaultState == "unbound" {
+					dbfx.Exec(t, `UPDATE agent SET runtime_id=NULL WHERE id=$1`, profile)
+				} else {
+					dbfx.Exec(t, `UPDATE agent_runtime SET status='offline', metadata='{"offline_reason":{"code":"not_executable","detail":"CLI cannot run"}}'::jsonb WHERE id=$1`, old)
+				}
+				if action == "assignment" {
+					dbfx.Exec(t, `UPDATE issue SET status='todo', assignee_type=NULL, assignee_id=NULL WHERE id=$1`, issue)
+					testutil.Call(t, testHandler.UpdateIssue, withURLParam(newRequest(http.MethodPut, "/api/issues/"+issue, map[string]any{"assignee_type": "agent", "assignee_id": profile}), "id", issue)).Want(http.StatusOK)
+				} else if action == "promotion" {
+					testutil.Call(t, testHandler.UpdateIssue, withURLParam(newRequest(http.MethodPut, "/api/issues/"+issue, map[string]any{"status": "todo"}), "id", issue)).Want(http.StatusOK)
+				} else {
+					content := "Please continue this issue"
+					if action == "mention" {
+						content = "[@Agent](mention://agent/" + profile + ") please continue"
+					}
+					body := map[string]any{"content": content}
+					if action == "reply" {
+						body["parent_id"] = dbfx.Comment(t, issue, "Prior agent message", testutil.Cols{"author_type": "agent", "author_id": profile})
+					} else if action == "continuation" {
+						body["parent_id"] = dbfx.Comment(t, issue, "[@Agent](mention://agent/"+profile+") original thread")
+					}
+					testutil.Call(t, testHandler.CreateComment, withURLParam(newRequest(http.MethodPost, "/api/issues/"+issue+"/comments", body), "id", issue)).Want(http.StatusCreated)
+				}
+				if n := dbfx.Count(t, `SELECT count(*) FROM agent_task_queue WHERE issue_id=$1 AND agent_id=$2 AND status='queued' AND runtime_id=$3 AND runtime_override_id=$3`, issue, profile, target); n != 1 {
+					t.Fatalf("healthy override received %d queued runs with %s shared default", n, defaultState)
+				}
+			})
+		}
+	}
+}
+
+func TestIssueRuntimeRetryRacingProfileSwitchUsesCurrentBinding(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	old := dbfx.Runtime(t, "retry race default")
+	target := dbfx.Runtime(t, "retry race new default")
+	previousOverride := dbfx.Runtime(t, "retry race prior override")
+	profile := dbfx.Agent(t, "retry race profile", old)
+	issue := dbfx.Issue(t, "retry race issue", testutil.Cols{"assignee_type": "agent", "assignee_id": profile})
+	parentID := dbfx.Task(t, profile, testutil.Cols{"runtime_id": previousOverride, "runtime_override_id": previousOverride, "issue_id": issue, "status": "failed", "attempt": 1, "max_attempts": 2, "failure_reason": "timeout"})
+	dbfx.Cleanup(t, `DELETE FROM agent_task_queue WHERE issue_id=$1`, issue)
+	// The previous issue override has already been cleared. The retry must
+	// resolve the default after waiting for the concurrent profile switch.
+	parent, err := testHandler.Queries.GetAgentTask(ctx, parseUUID(parentID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	if _, err := tx.Exec(ctx, `UPDATE agent SET runtime_id=$1 WHERE id=$2`, target, profile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.New(tx).MovePendingAgentTasksToRuntime(ctx, db.MovePendingAgentTasksToRuntimeParams{AgentID: parseUUID(profile), RuntimeID: parseUUID(target)}); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := pgx.Connect(ctx, testPool.Config().ConnString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(context.Background())
+	svc := *testHandler.TaskService
+	svc.Queries, svc.TxStarter = db.New(conn), conn
+	type result struct {
+		task *db.AgentTaskQueue
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() { task, err := svc.MaybeRetryFailedTask(ctx, parent); done <- result{task, err} }()
+	waitForBlockedWriter(t, ctx, int32(conn.PgConn().PID()))
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	out := <-done
+	if out.err != nil {
+		t.Fatal(out.err)
+	}
+	if out.task == nil || out.task.RuntimeID != parseUUID(target) || out.task.RuntimeOverrideID.Valid {
+		t.Fatalf("retry=%+v; want current default %s without override authority", out.task, target)
+	}
+	claimed, err := testHandler.TaskService.ClaimTaskForRuntime(ctx, parseUUID(target))
+	if err != nil || claimed == nil || claimed.ID != out.task.ID {
+		t.Fatalf("retry not claimable: task=%v error=%v", claimed, err)
+	}
+}
+
+func TestRuntimeSwitchDisablesManualRerunSourceResume(t *testing.T) {
+	for _, scope := range []string{"issue", "profile"} {
+		for _, sameSource := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/source-runtime-%v", scope, sameSource), func(t *testing.T) {
+				sourceRuntime := dbfx.Runtime(t, "rerun source", testutil.Cols{"daemon_id": "rerun-source"})
+				current := dbfx.Runtime(t, "rerun current", testutil.Cols{"daemon_id": "rerun-current"})
+				target := sourceRuntime
+				if !sameSource {
+					target = dbfx.Runtime(t, "rerun third runtime", testutil.Cols{"daemon_id": "rerun-target"})
+				}
+				profile := dbfx.Agent(t, "retarget rerun profile", current)
+				issue := dbfx.Issue(t, "retarget rerun issue", testutil.Cols{"assignee_type": "agent", "assignee_id": profile})
+				source := dbfx.Task(t, profile, testutil.Cols{"runtime_id": sourceRuntime, "issue_id": issue, "status": "completed", "session_id": "historical-native-session", "work_dir": "/tmp/historical-rerun-directory"})
+				dbfx.Cleanup(t, `DELETE FROM agent_task_queue WHERE issue_id=$1`, issue)
+				dbfx.Cleanup(t, `DELETE FROM issue_runtime_override WHERE issue_id=$1`, issue)
+				rerun, err := testHandler.TaskService.RerunIssue(context.Background(), parseUUID(issue), parseUUID(source), pgtype.UUID{}, parseUUID(testUserID), nil)
+				if err != nil || rerun == nil {
+					t.Fatalf("rerun=%v error=%v", rerun, err)
+				}
+				if scope == "issue" {
+					setIssueRuntime(t, testHandler, issue, profile, target, http.StatusOK)
+				} else {
+					dbfx.Cleanup(t, `DELETE FROM activity_log WHERE details->>'agent_id'=$1`, profile)
+					testutil.Call(t, testHandler.UpdateAgent, withURLParam(newRequest(http.MethodPatch, "/api/agents/"+profile, map[string]any{"runtime_id": target}), "id", profile)).Want(http.StatusOK)
+				}
+				targetRuntime, err := testHandler.Queries.GetAgentRuntime(context.Background(), parseUUID(target))
+				if err != nil {
+					t.Fatal(err)
+				}
+				request := withURLParam(newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+target+"/tasks/claim", nil, testWorkspaceID, targetRuntime.DaemonID.String), "runtimeId", target)
+				response := testutil.Call(t, testHandler.ClaimTaskByRuntime, request).Want(http.StatusOK)
+				var payload struct {
+					Task *AgentTaskResponse `json:"task"`
+				}
+				response.JSON(&payload)
+				if payload.Task == nil || payload.Task.ID != uuidToString(rerun.ID) {
+					t.Fatalf("no retargeted rerun: %s", response.Body.String())
+				}
+				if payload.Task.PriorSessionID != "" || payload.Task.PriorWorkDir != "" {
+					t.Fatalf("retargeted rerun restored source state: session=%q directory=%q", payload.Task.PriorSessionID, payload.Task.PriorWorkDir)
+				}
+				saved, err := testHandler.Queries.GetAgentTask(context.Background(), rerun.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if saved.RerunOfTaskID != parseUUID(source) {
+					t.Fatal("retargeting lost rerun provenance")
+				}
+				// A failure before launch must not revive the source via the
+				// retry's ordinary most-recent-session fallback either.
+				dbfx.Exec(t, `UPDATE agent_task_queue SET status='failed', completed_at=now() WHERE id=$1`, rerun.ID)
+				retry, err := testHandler.Queries.CreateRetryTask(context.Background(), db.CreateRetryTaskParams{ID: rerun.ID})
+				if err != nil {
+					t.Fatal(err)
+				}
+				retryResponse := testutil.Call(t, testHandler.ClaimTaskByRuntime, request.Clone(request.Context())).Want(http.StatusOK)
+				var retryPayload struct {
+					Task *AgentTaskResponse `json:"task"`
+				}
+				retryResponse.JSON(&retryPayload)
+				if retryPayload.Task == nil || retryPayload.Task.ID != uuidToString(retry.ID) {
+					t.Fatalf("no retry: %s", retryResponse.Body.String())
+				}
+				if retryPayload.Task.PriorSessionID != "" || retryPayload.Task.PriorWorkDir != "" {
+					t.Fatal("retry revived native state cleared by retargeting")
+				}
+
+			})
+		}
 	}
 }

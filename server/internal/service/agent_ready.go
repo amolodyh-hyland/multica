@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/dispatch"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -149,6 +150,17 @@ func AgentReadiness(ctx context.Context, lookup RuntimeLookup, agent db.Agent) (
 		return AgentVerdict{}, err
 	}
 	return runtimeVerdict(rt, agent), nil
+}
+
+// ResolveIssueAgentRuntime returns the execution binding used for issue
+// admission and enqueue. The returned copy leaves the reusable profile intact.
+func ResolveIssueAgentRuntime(ctx context.Context, q *db.Queries, issueID pgtype.UUID, profile db.Agent) (db.Agent, error) {
+	runtimeID, err := q.ResolveIssueTaskRuntime(ctx, db.ResolveIssueTaskRuntimeParams{AgentID: profile.ID, IssueID: issueID})
+	if err != nil {
+		return db.Agent{}, err
+	}
+	profile.RuntimeID = runtimeID
+	return profile, nil
 }
 
 // runtimeVerdict combines runtime health with the ownership binding that

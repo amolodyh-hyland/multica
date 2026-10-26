@@ -25,12 +25,12 @@ WHERE issue_id = @issue_id AND agent_id = @agent_id
 -- name: MovePendingIssueAgentTasksToRuntime :many
 UPDATE agent_task_queue
 SET runtime_id = @runtime_id, runtime_override_id=sqlc.narg('runtime_override_id'),
-    session_id=NULL, work_dir=NULL, force_fresh_session=TRUE
+    session_id=NULL, work_dir=NULL, force_fresh_session=TRUE, native_resume_disabled=TRUE
 WHERE issue_id = @issue_id AND agent_id = @agent_id AND status IN ('queued','deferred')
 RETURNING *;
 
 -- name: ResolveIssueTaskRuntime :one
-SELECT COALESCE(issue_runtime_for_run(a.id,@issue_id),a.runtime_id)::uuid AS runtime_id
+SELECT COALESCE(issue_runtime_for_run(a.id,@issue_id),(SELECT binding.runtime_id FROM agent binding WHERE binding.id = a.id FOR SHARE))::uuid AS runtime_id
 FROM agent a WHERE a.id = @agent_id;
 
 -- name: HasPendingPublicDelegationForIssueAgent :one

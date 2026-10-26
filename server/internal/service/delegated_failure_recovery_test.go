@@ -1260,3 +1260,25 @@ func TestPendingDelegatedFailureSweepSkipsTriageSourceIssue(t *testing.T) {
 		t.Fatalf("recovery tasks after accept = %d, want 1", n)
 	}
 }
+
+func TestDelegatedFailureRecoveryUsesIssueOverrideWithUnboundDefault(t *testing.T) {
+	ctx := context.Background()
+	f, svc := seedDelegatedFailureFixture(t)
+	fx := dbfx.New(f.pool, f.workspaceID, f.userID)
+	target := fx.Runtime(t, "recovery issue override")
+	fx.Exec(t, `UPDATE issue SET assignee_type='agent', assignee_id=$1 WHERE id=$2`, f.coordinator, f.issueID)
+	fx.InsertNoID(t, "issue_runtime_override", dbfx.Cols{"workspace_id": f.workspaceID, "issue_id": f.issueID, "agent_id": f.coordinator, "runtime_id": target, "updated_by": f.userID}, "issue_id=$1", f.issueID)
+	fx.Exec(t, `UPDATE agent SET runtime_id=NULL WHERE id=$1`, f.coordinator)
+	failedID := f.insertWorkerTask(t, "failed", "comment", 1, 2)
+	signal, created, err := svc.ensureDelegatedFailureRecoveryComment(ctx, failedID)
+	if err != nil || signal == nil || !created {
+		t.Fatalf("recovery signal with healthy override: created=%v target=%v error=%v", created, signal, err)
+	}
+	sweep, err := svc.RecoverPendingDelegatedFailures(ctx, 100)
+	if err != nil || sweep.Replayed != 1 {
+		t.Fatalf("override recovery sweep=%+v error=%v", sweep, err)
+	}
+	if n := fx.Count(t, `SELECT count(*) FROM agent_task_queue WHERE issue_id=$1 AND agent_id=$2 AND runtime_id=$3 AND runtime_override_id=$3 AND status='queued'`, f.issueID, f.coordinator, target); n != 1 {
+		t.Fatalf("healthy override received %d recovery runs", n)
+	}
+}

@@ -505,7 +505,7 @@ INSERT INTO agent_task_queue (
     agent_id, runtime_id, runtime_override_id, issue_id, chat_session_id, autopilot_run_id,
     status, priority, trigger_comment_id, coalesced_comment_ids, trigger_summary, context,
     session_id, work_dir,
-    attempt, max_attempts, parent_task_id, force_fresh_session, is_leader_task,
+    attempt, max_attempts, parent_task_id, force_fresh_session, native_resume_disabled, is_leader_task,
     squad_id, originator_user_id, accountable_user_id, runtime_mcp_overlay, runtime_connected_apps,
     originator_source, delegated_from_task_id, rule_version_id,
     trigger_evidence_kind, trigger_evidence_ref_id, retry_of_task_id,
@@ -521,6 +521,7 @@ SELECT
     CASE WHEN destination.runtime_id IS DISTINCT FROM p.runtime_id THEN NULL ELSE p.work_dir END,
     p.attempt + 1, COALESCE(sqlc.narg(max_attempts)::int, p.max_attempts), p.id,
     (p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity' OR destination.runtime_id IS DISTINCT FROM p.runtime_id),
+    (p.native_resume_disabled AND p.session_id IS NULL) OR destination.runtime_id IS DISTINCT FROM p.runtime_id,
     p.is_leader_task,
     p.squad_id,
     p.originator_user_id,
@@ -545,7 +546,7 @@ CROSS JOIN LATERAL (
 CROSS JOIN LATERAL (
     SELECT CASE WHEN p.issue_id IS NOT NULL
         AND (p.runtime_override_id IS NOT NULL OR selection.override_id IS NOT NULL)
-    THEN COALESCE(selection.override_id, (SELECT a.runtime_id FROM agent a WHERE a.id = p.agent_id), p.runtime_id)
+    THEN COALESCE(selection.override_id, (SELECT a.runtime_id FROM agent a WHERE a.id = p.agent_id FOR SHARE), p.runtime_id)
     ELSE p.runtime_id END::uuid AS runtime_id
 ) destination
 WHERE p.id = $1
@@ -1626,7 +1627,8 @@ UPDATE agent_task_queue
 SET runtime_id = @runtime_id,
     session_id = NULL,
     work_dir = NULL,
-    force_fresh_session = TRUE
+    force_fresh_session = TRUE,
+    native_resume_disabled = TRUE
 WHERE agent_id = @agent_id
   AND runtime_override_id IS NULL
   AND status IN ('queued', 'deferred')
@@ -2066,7 +2068,12 @@ WHERE recovery.author_type = 'system'
       ELSE source_status.category
   END IN ('unstarted', 'started')
   AND source_agent.archived_at IS NULL
-  AND source_agent.runtime_id IS NOT NULL
+  AND (source_agent.runtime_id IS NOT NULL OR EXISTS (
+      SELECT 1 FROM issue_runtime_override selected
+      WHERE selected.issue_id = source_issue.id AND selected.agent_id = source_agent.id
+        AND selected.workspace_id = source_issue.workspace_id
+        AND source_issue.assignee_type = 'agent' AND source_issue.assignee_id = source_agent.id
+  ))
   AND source_agent.workspace_id = source_issue.workspace_id
   AND NOT EXISTS (
       SELECT 1

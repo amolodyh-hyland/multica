@@ -2441,7 +2441,7 @@ func rerunSourceMatchesTaskScope(task, source db.AgentTaskQueue) bool {
 // gone. Either way the failed attempt's working memory does not come back, so
 // the continuity gap is disclosed.
 func applyFreshSessionRetryWorkdir(task db.AgentTaskQueue, resp *AgentTaskResponse, daemonKeepsCheckoutWork bool) {
-	if daemonKeepsCheckoutWork && task.WorkDir.Valid {
+	if !task.NativeResumeDisabled && daemonKeepsCheckoutWork && task.WorkDir.Valid {
 		resp.PriorWorkDir = task.WorkDir.String
 	}
 	resp.PriorSessionResumeUnavailable = true
@@ -3026,12 +3026,14 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			resp.TriggerCommentContent = "The newest triggering comment is no longer available. Address every earlier comment included below."
 		}
 
-		// Resolve the prior agent session / workdir to resume.
-		if task.RerunOfTaskID.Valid {
+		// Retargeted attempts retain rerun provenance but cannot restore native
+		// state from it. ForceFreshSession also marks ordinary manual reruns
+		// for older servers, so retargeting has an explicit resume policy.
+		if task.RerunOfTaskID.Valid && !task.NativeResumeDisabled {
 			// Manual retry: resume precisely from the source task the user
 			// clicked, NOT the most-recent (agent, issue) row — a parallel task
 			// on the same issue must never hijack the resume (MUL-4869). The
-			// workdir is ALWAYS reused when it still exists; the session is
+			// workdir is reused when it still exists; the session is
 			// resumed only when the source failure did not poison the
 			// conversation AND the source ran on this runtime.
 			//
@@ -3080,7 +3082,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				)
 				resp.PriorSessionResumeUnavailable = true
 			}
-		} else if !task.ForceFreshSession {
+		} else if !task.ForceFreshSession && !task.NativeResumeDisabled {
 			// Non-rerun follow-up on the same issue: resume the most recent
 			// (agent, issue) session so the agent keeps the issue's conversation
 			// context across turns. The "Focus on THIS comment" guard in
@@ -3239,7 +3241,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			}
 		}
 		projectCtx.applyTo(&resp)
-		if !task.ForceFreshSession && !task.ChannelContextRevision.Valid {
+		if !task.ForceFreshSession && !task.NativeResumeDisabled && !task.ChannelContextRevision.Valid {
 			// Resume chat sessions only when the stored pointer was produced
 			// by the same runtime as the claiming task. When the chat_session
 			// pointer is missing (legacy NULL runtime_id), stale (last task
@@ -3297,7 +3299,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		// Input ownership is the claim's fail-closed boundary. Resume-history
 		// reads belong after it: a task that cannot load its input is preserved
 		// for redelivery and must not spend two more queries before returning.
-		if !task.ForceFreshSession {
+		if !task.ForceFreshSession && !task.NativeResumeDisabled {
 			contextRevision := pgtype.Int8{}
 			if task.ChannelContextRevision.Valid {
 				contextRevision = task.ChannelContextRevision

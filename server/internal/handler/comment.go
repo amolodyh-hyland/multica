@@ -2747,10 +2747,14 @@ func (h *Handler) routeReplyToParentAuthor(ctx context.Context, issue db.Issue, 
 		ID:          parent.AuthorID,
 		WorkspaceID: issue.WorkspaceID,
 	})
-	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+	if err != nil || agent.ArchivedAt.Valid {
 		return commentAgentTrigger{}, false
 	}
 	if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.OriginatorUserID, uuidToString(issue.WorkspaceID)) {
+		return commentAgentTrigger{}, false
+	}
+	agent, err = service.ResolveIssueAgentRuntime(ctx, h.Queries, issue.ID, agent)
+	if err != nil || !agent.RuntimeID.Valid {
 		return commentAgentTrigger{}, false
 	}
 	hasPending, err := h.hasPendingTaskForIssueAndAgent(ctx, issue.ID, parent.AuthorID, opts)
@@ -2946,10 +2950,14 @@ func (h *Handler) routeConversationContinuationToAgent(ctx context.Context, issu
 		ID:          agentID,
 		WorkspaceID: issue.WorkspaceID,
 	})
-	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+	if err != nil || agent.ArchivedAt.Valid {
 		return commentAgentTrigger{}, false
 	}
 	if !h.canInvokeAgent(ctx, agent, "member", memberID, memberID, uuidToString(issue.WorkspaceID)) {
+		return commentAgentTrigger{}, false
+	}
+	agent, err = service.ResolveIssueAgentRuntime(ctx, h.Queries, issue.ID, agent)
+	if err != nil || !agent.RuntimeID.Valid {
 		return commentAgentTrigger{}, false
 	}
 	hasPending, err := h.hasPendingTaskForIssueAndAgent(ctx, issue.ID, agentID, opts)
@@ -3263,6 +3271,11 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 		}
 		if agent.ArchivedAt.Valid {
 			blockTarget("agent", m.ID, ReasonTargetUnavailable)
+			continue
+		}
+		agent, err = service.ResolveIssueAgentRuntime(ctx, h.Queries, issue.ID, agent)
+		if err != nil {
+			blockTarget("agent", m.ID, ReasonInternalError)
 			continue
 		}
 		// One readiness verdict for every admission path (service.AgentReadiness).

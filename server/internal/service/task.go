@@ -1274,12 +1274,9 @@ func (s *TaskService) enqueueIssueTaskWithCommentPlan(ctx context.Context, issue
 		slog.Debug("task enqueue skipped: agent is archived", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agent.ID))
 		return db.AgentTaskQueue{}, fmt.Errorf("agent is archived")
 	}
-	if !agent.RuntimeID.Valid {
-		effective, err := s.Queries.ResolveIssueTaskRuntime(ctx, db.ResolveIssueTaskRuntimeParams{AgentID: agent.ID, IssueID: issue.ID})
-		if err != nil {
-			return db.AgentTaskQueue{}, fmt.Errorf("resolve issue runtime: %w", err)
-		}
-		agent.RuntimeID = effective
+	agent, err = ResolveIssueAgentRuntime(ctx, s.Queries, issue.ID, agent)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("resolve issue runtime: %w", err)
 	}
 	if !agent.RuntimeID.Valid {
 		slog.Error("task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "error", "agent has no runtime")
@@ -1453,12 +1450,9 @@ func (s *TaskService) enqueueMentionTaskWithCommentPlan(ctx context.Context, iss
 		slog.Debug("mention task enqueue skipped: agent is archived", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID))
 		return db.AgentTaskQueue{}, fmt.Errorf("agent is archived")
 	}
-	if !agent.RuntimeID.Valid {
-		effective, err := s.Queries.ResolveIssueTaskRuntime(ctx, db.ResolveIssueTaskRuntimeParams{AgentID: agent.ID, IssueID: issue.ID})
-		if err != nil {
-			return db.AgentTaskQueue{}, fmt.Errorf("resolve issue runtime: %w", err)
-		}
-		agent.RuntimeID = effective
+	agent, err = ResolveIssueAgentRuntime(ctx, s.Queries, issue.ID, agent)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("resolve issue runtime: %w", err)
 	}
 	if !agent.RuntimeID.Valid {
 		slog.Error("mention task enqueue failed: agent has no runtime", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID))
@@ -6320,7 +6314,14 @@ func loadDelegatedFailureRecoveryTarget(ctx context.Context, q *db.Queries, fail
 		}
 		return nil, fmt.Errorf("load source agent: %w", err)
 	}
-	if agent.ArchivedAt.Valid || !agent.RuntimeID.Valid || agent.WorkspaceID != issue.WorkspaceID {
+	if agent.ArchivedAt.Valid || agent.WorkspaceID != issue.WorkspaceID {
+		return nil, nil
+	}
+	agent, err = ResolveIssueAgentRuntime(ctx, q, issue.ID, agent)
+	if err != nil {
+		return nil, fmt.Errorf("resolve source issue runtime: %w", err)
+	}
+	if !agent.RuntimeID.Valid {
 		return nil, nil
 	}
 	return &delegatedFailureRecoveryTarget{failed: failed, source: source, issue: issue, agent: agent}, nil

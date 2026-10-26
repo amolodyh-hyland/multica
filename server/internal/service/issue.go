@@ -936,6 +936,10 @@ func agentAssigneeVerdict(ctx context.Context, lookup RuntimeLookup, issue db.Is
 	if err != nil {
 		return AgentVerdict{}, false
 	}
+	agent, err = ResolveIssueAgentRuntime(ctx, lookup.Queries, issue.ID, agent)
+	if err != nil {
+		return AgentVerdict{}, false
+	}
 	verdict, err := AgentReadiness(ctx, lookup, agent)
 	if err != nil {
 		return AgentVerdict{}, false

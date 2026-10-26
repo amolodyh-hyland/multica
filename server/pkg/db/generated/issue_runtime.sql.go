@@ -150,9 +150,9 @@ func (q *Queries) LockIssueForRuntimeSwitch(ctx context.Context, arg LockIssueFo
 const movePendingIssueAgentTasksToRuntime = `-- name: MovePendingIssueAgentTasksToRuntime :many
 UPDATE agent_task_queue
 SET runtime_id = $1, runtime_override_id=$2,
-    session_id=NULL, work_dir=NULL, force_fresh_session=TRUE
+    session_id=NULL, work_dir=NULL, force_fresh_session=TRUE, native_resume_disabled=TRUE
 WHERE issue_id = $3 AND agent_id = $4 AND status IN ('queued','deferred')
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision, comment_thread_id, cancelled_by_type, cancelled_by_id, cancelled_by_name, issue_snapshot, workflow_step, knowledge_manifest, private_library_manifest, runtime_override_id
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision, comment_thread_id, cancelled_by_type, cancelled_by_id, cancelled_by_name, issue_snapshot, workflow_step, knowledge_manifest, private_library_manifest, runtime_override_id, native_resume_disabled
 `
 
 type MovePendingIssueAgentTasksToRuntimeParams struct {
@@ -240,6 +240,7 @@ func (q *Queries) MovePendingIssueAgentTasksToRuntime(ctx context.Context, arg M
 			&i.KnowledgeManifest,
 			&i.PrivateLibraryManifest,
 			&i.RuntimeOverrideID,
+			&i.NativeResumeDisabled,
 		); err != nil {
 			return nil, err
 		}
@@ -252,7 +253,7 @@ func (q *Queries) MovePendingIssueAgentTasksToRuntime(ctx context.Context, arg M
 }
 
 const resolveIssueTaskRuntime = `-- name: ResolveIssueTaskRuntime :one
-SELECT COALESCE(issue_runtime_for_run(a.id,$1),a.runtime_id)::uuid AS runtime_id
+SELECT COALESCE(issue_runtime_for_run(a.id,$1),(SELECT binding.runtime_id FROM agent binding WHERE binding.id = a.id FOR SHARE))::uuid AS runtime_id
 FROM agent a WHERE a.id = $2
 `
 

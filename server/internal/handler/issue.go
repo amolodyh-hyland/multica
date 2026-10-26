@@ -4321,10 +4321,14 @@ func (h *Handler) assigneeFallbackAgent(ctx context.Context, issue db.Issue, act
 		return db.Agent{}, false, false
 	}
 	agent, err := h.Queries.GetAgent(ctx, issue.AssigneeID)
-	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+	if err != nil || agent.ArchivedAt.Valid {
 		return db.Agent{}, false, false
 	}
 	if !h.canInvokeAgent(ctx, agent, actorType, actorID, opts.OriginatorUserID, uuidToString(issue.WorkspaceID)) {
+		return db.Agent{}, false, false
+	}
+	agent, err = service.ResolveIssueAgentRuntime(ctx, h.Queries, issue.ID, agent)
+	if err != nil || !agent.RuntimeID.Valid {
 		return db.Agent{}, false, false
 	}
 	// Coalescing queue: pending is still a valid route target, but callers
@@ -4381,6 +4385,10 @@ func (h *Handler) isAgentAssigneeReady(ctx context.Context, issue db.Issue) bool
 	}
 
 	agent, err := h.Queries.GetAgent(ctx, issue.AssigneeID)
+	if err != nil {
+		return false
+	}
+	agent, err = service.ResolveIssueAgentRuntime(ctx, h.Queries, issue.ID, agent)
 	if err != nil {
 		return false
 	}

@@ -182,6 +182,7 @@ type AgentTaskQueue struct {
 	KnowledgeManifest         []byte      `json:"knowledge_manifest"`
 	PrivateLibraryManifest    []byte      `json:"private_library_manifest"`
 	RuntimeOverrideID         pgtype.UUID `json:"runtime_override_id"`
+	NativeResumeDisabled      bool        `json:"native_resume_disabled"`
 }
 
 type AgentToLabel struct {
