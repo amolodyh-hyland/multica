@@ -52,6 +52,31 @@ func (q *Queries) DeleteIssueRuntimeOverridesByRuntime(ctx context.Context, runt
 	return err
 }
 
+const getIssueRecoverySignalRuntime = `-- name: GetIssueRecoverySignalRuntime :one
+SELECT COALESCE(r.id, a.runtime_id)::uuid AS runtime_id
+FROM agent a
+JOIN issue i ON i.id = $1 AND i.workspace_id = a.workspace_id
+LEFT JOIN issue_runtime_override o ON o.issue_id = i.id
+  AND o.workspace_id = i.workspace_id AND o.agent_id = a.id
+  AND i.assignee_type = 'agent' AND i.assignee_id = a.id
+LEFT JOIN agent_runtime r ON r.id = o.runtime_id AND r.workspace_id = o.workspace_id
+WHERE a.id = $2
+`
+
+type GetIssueRecoverySignalRuntimeParams struct {
+	IssueID pgtype.UUID `json:"issue_id"`
+	AgentID pgtype.UUID `json:"agent_id"`
+}
+
+// Signal creation holds the failed task lock. Taking profile locks here would
+// invert runtime teardown's profile/task order. Enqueue resolves again under locks.
+func (q *Queries) GetIssueRecoverySignalRuntime(ctx context.Context, arg GetIssueRecoverySignalRuntimeParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getIssueRecoverySignalRuntime, arg.IssueID, arg.AgentID)
+	var runtime_id pgtype.UUID
+	err := row.Scan(&runtime_id)
+	return runtime_id, err
+}
+
 const getIssueRuntimeOverride = `-- name: GetIssueRuntimeOverride :one
 SELECT o.workspace_id, o.issue_id, o.agent_id, o.runtime_id, o.updated_by, o.updated_at FROM issue_runtime_override o
 JOIN issue i ON i.id=o.issue_id AND i.workspace_id=o.workspace_id

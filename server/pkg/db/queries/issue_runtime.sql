@@ -33,6 +33,18 @@ RETURNING *;
 SELECT COALESCE(issue_runtime_for_run(a.id,@issue_id),(SELECT binding.runtime_id FROM agent binding WHERE binding.id = a.id FOR SHARE))::uuid AS runtime_id
 FROM agent a WHERE a.id = @agent_id;
 
+-- name: GetIssueRecoverySignalRuntime :one
+-- Signal creation holds the failed task lock. Taking profile locks here would
+-- invert runtime teardown's profile/task order. Enqueue resolves again under locks.
+SELECT COALESCE(r.id, a.runtime_id)::uuid AS runtime_id
+FROM agent a
+JOIN issue i ON i.id = @issue_id AND i.workspace_id = a.workspace_id
+LEFT JOIN issue_runtime_override o ON o.issue_id = i.id
+  AND o.workspace_id = i.workspace_id AND o.agent_id = a.id
+  AND i.assignee_type = 'agent' AND i.assignee_id = a.id
+LEFT JOIN agent_runtime r ON r.id = o.runtime_id AND r.workspace_id = o.workspace_id
+WHERE a.id = @agent_id;
+
 -- name: HasPendingPublicDelegationForIssueAgent :one
 SELECT EXISTS (
  SELECT 1 FROM public_delegation d JOIN agent_task_queue t ON t.id = d.task_id

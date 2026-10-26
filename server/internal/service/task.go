@@ -6317,7 +6317,9 @@ func loadDelegatedFailureRecoveryTarget(ctx context.Context, q *db.Queries, fail
 	if agent.ArchivedAt.Valid || agent.WorkspaceID != issue.WorkspaceID {
 		return nil, nil
 	}
-	agent, err = ResolveIssueAgentRuntime(ctx, q, issue.ID, agent)
+	agent.RuntimeID, err = q.GetIssueRecoverySignalRuntime(ctx, db.GetIssueRecoverySignalRuntimeParams{
+		IssueID: issue.ID, AgentID: agent.ID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("resolve source issue runtime: %w", err)
 	}
