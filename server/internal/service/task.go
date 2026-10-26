@@ -1275,6 +1275,13 @@ func (s *TaskService) enqueueIssueTaskWithCommentPlan(ctx context.Context, issue
 		return db.AgentTaskQueue{}, fmt.Errorf("agent is archived")
 	}
 	if !agent.RuntimeID.Valid {
+		effective, err := s.Queries.ResolveIssueTaskRuntime(ctx, db.ResolveIssueTaskRuntimeParams{AgentID: agent.ID, IssueID: issue.ID})
+		if err != nil {
+			return db.AgentTaskQueue{}, fmt.Errorf("resolve issue runtime: %w", err)
+		}
+		agent.RuntimeID = effective
+	}
+	if !agent.RuntimeID.Valid {
 		slog.Error("task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "error", "agent has no runtime")
 		return db.AgentTaskQueue{}, fmt.Errorf("agent has no runtime")
 	}
@@ -1445,6 +1452,13 @@ func (s *TaskService) enqueueMentionTaskWithCommentPlan(ctx context.Context, iss
 	if agent.ArchivedAt.Valid {
 		slog.Debug("mention task enqueue skipped: agent is archived", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID))
 		return db.AgentTaskQueue{}, fmt.Errorf("agent is archived")
+	}
+	if !agent.RuntimeID.Valid {
+		effective, err := s.Queries.ResolveIssueTaskRuntime(ctx, db.ResolveIssueTaskRuntimeParams{AgentID: agent.ID, IssueID: issue.ID})
+		if err != nil {
+			return db.AgentTaskQueue{}, fmt.Errorf("resolve issue runtime: %w", err)
+		}
+		agent.RuntimeID = effective
 	}
 	if !agent.RuntimeID.Valid {
 		slog.Error("mention task enqueue failed: agent has no runtime", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID))
@@ -3542,15 +3556,6 @@ func (s *TaskService) claimTask(ctx context.Context, agentID, runtimeID pgtype.U
 		}
 		if !claimRuntimeID.Valid {
 			outcome = "no_runtime"
-			return nil
-		}
-		// A daemon may still hold a stale candidate after the agent is rebound.
-		// Reject it before doing capacity work. ClaimAgentTask repeats the fence
-		// before its state transition; the claim handler then rechecks the freshly
-		// loaded Agent before returning any payload. Runtime mutation teardown is
-		// responsible for serializing and settling the remaining queued rows.
-		if runtimeID.Valid && agent.RuntimeID != runtimeID {
-			outcome = "runtime_mismatch"
 			return nil
 		}
 

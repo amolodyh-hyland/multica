@@ -348,7 +348,7 @@ RETURNING id, workspace_id, owner_id, daemon_id, provider;
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now(),
     cancelled_by_type = 'system', cancelled_by_id = NULL, cancelled_by_name = NULL
-WHERE (runtime_id = ANY(@runtime_ids::uuid[]) OR agent_id = ANY(@agent_ids::uuid[]))
+WHERE (runtime_id = ANY(@runtime_ids::uuid[]) OR (agent_id = ANY(@agent_ids::uuid[]) AND runtime_override_id IS NULL))
   AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
 RETURNING *;
 
@@ -428,7 +428,7 @@ RETURNING task.*;
 -- runtime_delete_not_drained rather than letting the CHECK constraint turn it
 -- into an opaque 500, and rather than deleting rows to make it go away.
 SELECT count(*) FROM agent_task_queue
-WHERE (runtime_id = ANY(@runtime_ids::uuid[]) OR agent_id = ANY(@agent_ids::uuid[]))
+WHERE (runtime_id = ANY(@runtime_ids::uuid[]) OR (agent_id = ANY(@agent_ids::uuid[]) AND runtime_override_id IS NULL))
   AND completed_at IS NULL;
 
 -- name: UnbindTasksFromRuntime :execrows
@@ -471,6 +471,7 @@ WHERE runtime_id = @runtime_id
 RETURNING *;
 
 -- name: DeleteAgentRuntime :exec
+WITH cleared_issue_overrides AS (DELETE FROM issue_runtime_override WHERE runtime_id = $1)
 DELETE FROM agent_runtime WHERE id = $1;
 
 -- name: DeleteSystemAgentsByRuntime :exec
@@ -505,9 +506,12 @@ WHERE workspace_id = @workspace_id
 
 -- name: ReassignAgentsToRuntime :execrows
 -- Re-points every agent referencing old_runtime_id at new_runtime_id.
-UPDATE agent
+WITH moved_issue_overrides AS (
+    UPDATE issue_runtime_override SET runtime_id = @new_runtime_id WHERE runtime_id = @old_runtime_id
+)
+UPDATE agent a
 SET runtime_id = @new_runtime_id
-WHERE runtime_id = @old_runtime_id;
+WHERE a.runtime_id = @old_runtime_id;
 
 -- name: LockWorkspaceForRuntimeMerge :exec
 -- Step 1 of the legacy runtime merge's fence, and the same first step every task
@@ -566,7 +570,8 @@ WITH fence AS MATERIALIZED (
 ),
 reassigned AS (
     UPDATE agent_task_queue
-    SET runtime_id = @new_runtime_id
+    SET runtime_id = @new_runtime_id,
+        runtime_override_id = CASE WHEN runtime_override_id = @old_runtime_id THEN @new_runtime_id ELSE runtime_override_id END
     WHERE runtime_id = @old_runtime_id
       AND (SELECT ok FROM fence)
     RETURNING id

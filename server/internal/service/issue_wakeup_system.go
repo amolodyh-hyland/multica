@@ -326,6 +326,12 @@ func resolveWakeTarget(ctx context.Context, q *db.Queries, issue db.Issue) (wake
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return target, err
 		}
+		if err == nil && !agent.ArchivedAt.Valid {
+			agent.RuntimeID, err = q.ResolveIssueTaskRuntime(ctx, db.ResolveIssueTaskRuntimeParams{AgentID: agent.ID, IssueID: issue.ID})
+			if err != nil {
+				return target, err
+			}
+		}
 		if err == nil && usable(agent) {
 			target.Agent = agent
 		}

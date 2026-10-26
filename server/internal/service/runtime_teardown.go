@@ -131,6 +131,10 @@ func TeardownRuntime(ctx context.Context, qtx *db.Queries, runtimeID pgtype.UUID
 	}
 	out.PausedAutopilots = paused
 
+	if err := qtx.DeleteIssueRuntimeOverridesByRuntime(ctx, runtimeID); err != nil {
+		return out, fmt.Errorf("clear issue runtime overrides: %w", err)
+	}
+
 	if _, err := qtx.UnbindTasksFromRuntime(ctx, runtimeID); err != nil {
 		return out, fmt.Errorf("unbind task history: %w", err)
 	}

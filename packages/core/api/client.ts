@@ -1,3 +1,4 @@
+import { IssueRuntimeSchema, type IssueRuntime } from "./schemas";
 import type { ZodType } from "zod";
 import type { IssueWakeup, IssueWakeupInput, IssueWakeupSummaryRow, PausedWakeup, SystemWakeup, WakeupRun, WorkspaceSystemWakeup } from "../types/issue-wakeup";
 import type { WorkspaceWakeupPage, WorkspaceWakeupFilters } from "../types/issue-wakeup";
@@ -1339,6 +1340,20 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(`/api/issue-wakeups?${params}`);
     const parsed = parseWithFallback<WorkspaceWakeupPage | null>(raw, WorkspaceWakeupPageSchema, null, { endpoint: "GET /api/issue-wakeups" });
     if (!parsed) throw new Error("Could not load workspace wakeups");
+    return parsed;
+  }
+
+  async getIssueRuntime(issueId: string): Promise<IssueRuntime> {
+    const raw = await this.fetch<unknown>(`/api/issues/${encodeURIComponent(issueId)}/runtime`);
+    const parsed = parseWithFallback<IssueRuntime | null>(raw, IssueRuntimeSchema, null, { endpoint: "GET /api/issues/:id/runtime" });
+    if (!parsed) throw new Error("Could not load issue runtime");
+    return parsed;
+  }
+
+  async setIssueRuntime(issueId: string, input: { agent_id: string; runtime_id: string | null }): Promise<IssueRuntime> {
+    const raw = await this.fetch<unknown>(`/api/issues/${encodeURIComponent(issueId)}/runtime`, { method: "PUT", body: JSON.stringify(input) });
+    const parsed = parseWithFallback<IssueRuntime | null>(raw, IssueRuntimeSchema, null, { endpoint: "PUT /api/issues/:id/runtime" });
+    if (!parsed) throw new Error("Could not save issue runtime");
     return parsed;
   }
 

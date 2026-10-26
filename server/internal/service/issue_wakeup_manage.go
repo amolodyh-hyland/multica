@@ -80,7 +80,7 @@ func (s *IssueWakeupService) Trigger(ctx context.Context, issueID, id, member pg
 	if err != nil {
 		return ErrWakeupForbidden
 	}
-	if err = s.authorize(ctx, q, w.WorkspaceID, member, agent); err != nil {
+	if err = s.authorize(ctx, q, w.WorkspaceID, member, w.IssueID, agent); err != nil {
 		return err
 	}
 	var now time.Time

@@ -181,6 +181,7 @@ type AgentTaskQueue struct {
 	WorkflowStep              pgtype.Text `json:"workflow_step"`
 	KnowledgeManifest         []byte      `json:"knowledge_manifest"`
 	PrivateLibraryManifest    []byte      `json:"private_library_manifest"`
+	RuntimeOverrideID         pgtype.UUID `json:"runtime_override_id"`
 }
 
 type AgentToLabel struct {
@@ -930,6 +931,15 @@ type IssueReaction struct {
 	ActorID     pgtype.UUID        `json:"actor_id"`
 	Emoji       string             `json:"emoji"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type IssueRuntimeOverride struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
+	RuntimeID   pgtype.UUID        `json:"runtime_id"`
+	UpdatedBy   pgtype.UUID        `json:"updated_by"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type IssueSourceContext struct {

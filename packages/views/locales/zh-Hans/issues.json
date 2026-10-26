@@ -1,4 +1,13 @@
 {
+  "runtime": {
+    "changed": "将已分配智能体的提供商从 {{from}} 更改为 {{to}}",
+    "unbound": "未绑定",
+    "label": "提供商 / 运行时",
+    "use_default": "使用配置默认值",
+    "hint": "仅适用于此问题的已分配智能体。切换前请完成或取消正在执行的运行。",
+    "load_failed": "无法加载运行时。",
+    "save_failed": "无法保存运行时。"
+  },
   "inline_run": {
     "label": "{{name}} 的运行",
     "stop": "停止",

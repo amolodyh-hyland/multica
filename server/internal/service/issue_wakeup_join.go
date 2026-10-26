@@ -362,7 +362,7 @@ func (s *IssueWakeupService) mayJoin(ctx context.Context, q *db.Queries, issue d
 		if w.AgentID != task.AgentID || w.CreatedBy != task.OriginatorUserID || (w.Mode == "once" && w.LastTaskID.Valid) {
 			return "", false, nil
 		}
-		if err := s.authorize(ctx, q, w.WorkspaceID, w.CreatedBy, agent); err != nil {
+		if err := s.authorize(ctx, q, w.WorkspaceID, w.CreatedBy, w.IssueID, agent); err != nil {
 			if errors.Is(err, ErrWakeupForbidden) {
 				err = nil
 			}

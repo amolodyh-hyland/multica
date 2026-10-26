@@ -1,4 +1,13 @@
 {
+  "runtime": {
+    "changed": "a changé le fournisseur de l’agent affecté de {{from}} à {{to}}",
+    "unbound": "non associé",
+    "label": "Fournisseur / environnement",
+    "use_default": "Utiliser le profil par défaut",
+    "hint": "S’applique uniquement à l’agent affecté à cette tâche. Terminez ou annulez les exécutions actives avant de changer.",
+    "load_failed": "Impossible de charger l’environnement.",
+    "save_failed": "Impossible d’enregistrer l’environnement."
+  },
   "inline_run": {
     "label": "Exécution de {{name}}",
     "stop": "Arrêter",

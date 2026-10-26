@@ -2130,7 +2130,7 @@ func (h *Handler) finalizeClaimDelivery(
 				return &service.ClaimDeliveryAuthzError{Reason: "error_delegation_invocation_not_allowed", Detail: "delegation invocation is no longer allowed"}
 			}
 		}
-		if agent.RuntimeID != task.RuntimeID {
+		if agent.RuntimeID != task.RuntimeID && (!task.RuntimeOverrideID.Valid || task.RuntimeOverrideID != task.RuntimeID) {
 			return &service.ClaimDeliveryAuthzError{
 				Reason: "error_agent_runtime_changed",
 				Detail: "agent runtime changed before delivery",
@@ -2543,7 +2543,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// changing task state, but Agent mutations do not stay locked through HTTP
 	// response assembly. Recheck the freshly loaded Agent here so a rebind or
 	// owner change that committed after the claim cannot reach the daemon.
-	if agent.RuntimeID != task.RuntimeID {
+	if agent.RuntimeID != task.RuntimeID && (!task.RuntimeOverrideID.Valid || task.RuntimeOverrideID != task.RuntimeID) {
 		slog.Warn("daemon claim: agent runtime changed before delivery; refusing dispatch",
 			"task_id", uuidToString(task.ID),
 			"agent_id", uuidToString(task.AgentID),
@@ -2656,6 +2656,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		RuntimeConfig:         runtimeConfig,
 		DisabledRuntimeSkills: disabledRuntimeSkillsFor(agent.DisabledRuntimeSkills, runtimeID, runtime.Provider),
 	}
+	if task.RuntimeOverrideID.Valid {
+		resp.Agent.Model = ""
+		resp.Agent.ThinkingLevel = ""
+		resp.Agent.ServiceTier = ""
+		resp.Agent.CustomArgs = nil
+	}
+
 	// System agents carry a product-owned instruction layer that ships with
 	// this binary instead of being copied into their row at creation. That
 	// is what makes it hot-updatable: editing the embedded file and

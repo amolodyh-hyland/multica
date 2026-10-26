@@ -335,14 +335,14 @@ LIMIT @page_limit;
 -- that passes no id still inserts — it just gets a random v4, exactly as before.
 -- The same pattern is used by every INSERT listed in pkg/dbid's write table.
 INSERT INTO agent_task_queue (
-    agent_id, runtime_id, issue_id, status, priority, trigger_comment_id,
+    agent_id, runtime_id, runtime_override_id, issue_id, status, priority, trigger_comment_id,
     coalesced_comment_ids, trigger_summary, force_fresh_session, is_leader_task, handoff_note,
     squad_id, context, originator_user_id, accountable_user_id, runtime_mcp_overlay, runtime_connected_apps,
     originator_source, delegated_from_task_id, rule_version_id, rerun_of_task_id, trigger_evidence_kind, trigger_evidence_ref_id,
     workflow_step, id
 )
 SELECT
-    @agent_id, (SELECT binding.runtime_id FROM agent binding WHERE binding.id = @agent_id FOR SHARE), @issue_id, 'queued', @priority, sqlc.narg(trigger_comment_id),
+    @agent_id, COALESCE(issue_runtime_for_run(@agent_id,@issue_id),(SELECT binding.runtime_id FROM agent binding WHERE binding.id = @agent_id FOR SHARE)), issue_runtime_for_run(@agent_id,@issue_id), @issue_id, 'queued', @priority, sqlc.narg(trigger_comment_id),
     COALESCE(sqlc.narg(coalesced_comment_ids)::uuid[], '{}'),
     sqlc.narg(trigger_summary),
     COALESCE(sqlc.narg('force_fresh_session')::boolean, FALSE),
@@ -368,6 +368,7 @@ SELECT
     (SELECT i.status FROM issue i WHERE i.id = @issue_id),
     COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
 WHERE lock_task_owner_rows(@agent_id, @issue_id, @runtime_id::uuid)
+  AND lock_task_owner_rows(@agent_id, @issue_id, COALESCE(issue_runtime_for_run(@agent_id, @issue_id), (SELECT binding.runtime_id FROM agent binding WHERE binding.id = @agent_id), @runtime_id::uuid))
 RETURNING *;
 
 -- name: CreateDeferredChannelIssueTask :one
@@ -379,7 +380,7 @@ RETURNING *;
 -- issue task up front for crash safety, but keep it inert until attachment
 -- binding settles or the fire_at fallback is promoted by the normal sweeper.
 INSERT INTO agent_task_queue (
-    agent_id, runtime_id, issue_id, status, priority, trigger_comment_id,
+    agent_id, runtime_id, runtime_override_id, issue_id, status, priority, trigger_comment_id,
     coalesced_comment_ids, trigger_summary, force_fresh_session, is_leader_task, handoff_note,
     squad_id, context, originator_user_id, accountable_user_id, runtime_mcp_overlay, runtime_connected_apps,
     originator_source, delegated_from_task_id, rule_version_id, rerun_of_task_id,
@@ -387,7 +388,7 @@ INSERT INTO agent_task_queue (
     workflow_step, id
 )
 SELECT
-    @agent_id, (SELECT binding.runtime_id FROM agent binding WHERE binding.id = @agent_id FOR SHARE), @issue_id, 'deferred', @priority, sqlc.narg(trigger_comment_id),
+    @agent_id, COALESCE(issue_runtime_for_run(@agent_id,@issue_id),(SELECT binding.runtime_id FROM agent binding WHERE binding.id = @agent_id FOR SHARE)), issue_runtime_for_run(@agent_id,@issue_id), @issue_id, 'deferred', @priority, sqlc.narg(trigger_comment_id),
     COALESCE(sqlc.narg(coalesced_comment_ids)::uuid[], '{}'),
     sqlc.narg(trigger_summary),
     COALESCE(sqlc.narg('force_fresh_session')::boolean, FALSE),
@@ -413,6 +414,7 @@ SELECT
     (SELECT i.status FROM issue i WHERE i.id = @issue_id),
     COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
 WHERE lock_task_owner_rows(@agent_id, @issue_id, @runtime_id::uuid)
+  AND lock_task_owner_rows(@agent_id, @issue_id, COALESCE(issue_runtime_for_run(@agent_id, @issue_id), (SELECT binding.runtime_id FROM agent binding WHERE binding.id = @agent_id), @runtime_id::uuid))
 RETURNING *;
 
 -- name: PromoteDeferredChannelIssueTask :one
@@ -487,7 +489,8 @@ WHERE id = $1 AND issue_id IS NULL
 -- Preserve a NULL chat_input_task_id for legacy/channel parents rather than
 -- promoting untagged history to the task-owned input path.
 --
--- Keep work_dir for every retry, but clear resume context for unsafe sessions.
+-- Keep native context unless the issue selection changed or the session is unsafe.
+-- A profile-only rebind keeps the established retry lineage behavior.
 -- Keep failure predicates aligned with resumeUnsafeFailureReason and resume lookups.
 -- Composio uses the agent owner's connection; originator remains audit provenance.
 --
@@ -499,7 +502,7 @@ WHERE id = $1 AND issue_id IS NULL
 -- defers dispatch until promotion. max_attempts optionally persists the effective
 -- ceiling; it does not re-enable tasks whose retry budget was disabled.
 INSERT INTO agent_task_queue (
-    agent_id, runtime_id, issue_id, chat_session_id, autopilot_run_id,
+    agent_id, runtime_id, runtime_override_id, issue_id, chat_session_id, autopilot_run_id,
     status, priority, trigger_comment_id, coalesced_comment_ids, trigger_summary, context,
     session_id, work_dir,
     attempt, max_attempts, parent_task_id, force_fresh_session, is_leader_task,
@@ -510,14 +513,14 @@ INSERT INTO agent_task_queue (
     channel_context_revision, handoff_note, workflow_step, id
 )
 SELECT
-    p.agent_id, p.runtime_id, p.issue_id, p.chat_session_id, p.autopilot_run_id,
+    p.agent_id, destination.runtime_id, selection.override_id, p.issue_id, p.chat_session_id, p.autopilot_run_id,
     CASE WHEN sqlc.narg(fire_at)::timestamptz IS NOT NULL THEN 'deferred' ELSE 'queued' END,
     CASE WHEN p.chat_session_id IS NOT NULL THEN GREATEST(p.priority, 3) ELSE p.priority END,
     p.trigger_comment_id, p.coalesced_comment_ids, p.trigger_summary, p.context,
-    CASE WHEN p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity' THEN NULL ELSE p.session_id END,
-    p.work_dir,
+    CASE WHEN p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity' OR destination.runtime_id IS DISTINCT FROM p.runtime_id THEN NULL ELSE p.session_id END,
+    CASE WHEN destination.runtime_id IS DISTINCT FROM p.runtime_id THEN NULL ELSE p.work_dir END,
     p.attempt + 1, COALESCE(sqlc.narg(max_attempts)::int, p.max_attempts), p.id,
-    p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity',
+    (p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity' OR destination.runtime_id IS DISTINCT FROM p.runtime_id),
     p.is_leader_task,
     p.squad_id,
     p.originator_user_id,
@@ -536,8 +539,18 @@ SELECT
     -- Named new_task_id, not id: $1 above is the PARENT task's id.
     COALESCE(sqlc.narg('new_task_id')::uuid, gen_random_uuid())
 FROM agent_task_queue p
+CROSS JOIN LATERAL (
+    SELECT issue_runtime_for_run(p.agent_id, p.issue_id)::uuid AS override_id
+) selection
+CROSS JOIN LATERAL (
+    SELECT CASE WHEN p.issue_id IS NOT NULL
+        AND (p.runtime_override_id IS NOT NULL OR selection.override_id IS NOT NULL)
+    THEN COALESCE(selection.override_id, (SELECT a.runtime_id FROM agent a WHERE a.id = p.agent_id), p.runtime_id)
+    ELSE p.runtime_id END::uuid AS runtime_id
+) destination
 WHERE p.id = $1
   AND lock_task_owner_rows(p.agent_id, p.issue_id, p.runtime_id)
+  AND lock_task_owner_rows(p.agent_id, p.issue_id, destination.runtime_id)
 ON CONFLICT (issue_id, agent_id, (COALESCE(comment_thread_id, '00000000-0000-0000-0000-000000000000'::uuid))) WHERE status IN ('queued', 'dispatched')
        OR (status = 'deferred' AND context->>'channel_issue_media_pending' = 'true')
 DO NOTHING
@@ -744,8 +757,8 @@ WHERE id = (
           FROM agent a
           JOIN agent_runtime r ON r.id = atq.runtime_id
           WHERE a.id = atq.agent_id
-            -- A task's persisted runtime is not authority after an agent rebind.
-            AND a.runtime_id = atq.runtime_id
+            -- A profile binding or explicit issue snapshot authorizes this runtime.
+            AND (a.runtime_id = atq.runtime_id OR atq.runtime_override_id = atq.runtime_id)
             -- Queued private-runtime rows are claimable so the handler can
             -- settle an owner mismatch through the existing FailTask path
             -- before daemon delivery. Public runtimes remain shareable across
@@ -863,7 +876,7 @@ WHERE id = (
           FROM agent a
           JOIN agent_runtime r ON r.id = atq.runtime_id
           WHERE a.id = atq.agent_id
-            AND a.runtime_id = atq.runtime_id
+            AND (a.runtime_id = atq.runtime_id OR atq.runtime_override_id = atq.runtime_id)
             AND (
                 r.visibility = 'public'
                 OR (
@@ -910,7 +923,7 @@ WHERE id IN (
           FROM agent a
           JOIN agent_runtime r ON r.id = atq.runtime_id
           WHERE a.id = atq.agent_id
-            AND a.runtime_id = atq.runtime_id
+            AND (a.runtime_id = atq.runtime_id OR atq.runtime_override_id = atq.runtime_id)
             AND (
                 r.visibility = 'public'
                 OR (
@@ -1615,6 +1628,7 @@ SET runtime_id = @runtime_id,
     work_dir = NULL,
     force_fresh_session = TRUE
 WHERE agent_id = @agent_id
+  AND runtime_override_id IS NULL
   AND status IN ('queued', 'deferred')
 RETURNING *;
 
@@ -2147,7 +2161,7 @@ WHERE atq.runtime_id = $1
       FROM agent a
       JOIN agent_runtime r ON r.id = atq.runtime_id
       WHERE a.id = atq.agent_id
-        AND a.runtime_id = atq.runtime_id
+        AND (a.runtime_id = atq.runtime_id OR atq.runtime_override_id = atq.runtime_id)
         AND (
             r.visibility = 'public'
             OR r.visibility = 'private'
@@ -2268,7 +2282,7 @@ WHERE atq.runtime_id = ANY(@runtime_ids::uuid[])
       FROM agent a
       JOIN agent_runtime r ON r.id = atq.runtime_id
       WHERE a.id = atq.agent_id
-        AND a.runtime_id = atq.runtime_id
+        AND (a.runtime_id = atq.runtime_id OR atq.runtime_override_id = atq.runtime_id)
         AND (
             r.visibility = 'public'
             OR r.visibility = 'private'

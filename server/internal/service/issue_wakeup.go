@@ -320,7 +320,7 @@ func (s *IssueWakeupService) EditInstruction(ctx context.Context, issueID, id, m
 	if err != nil {
 		return ErrWakeupForbidden
 	}
-	if err = s.authorize(ctx, q, issue.WorkspaceID, member, agent); err != nil {
+	if err = s.authorize(ctx, q, issue.WorkspaceID, member, issue.ID, agent); err != nil {
 		return err
 	}
 	if w.Revision != in.Revision || w.Instruction != in.ExpectedInstruction {
@@ -467,7 +467,7 @@ func (s *IssueWakeupService) save(ctx context.Context, issueID, member, source, 
 	if err != nil {
 		return out, ErrWakeupForbidden
 	}
-	if err = s.authorize(ctx, q, issue.WorkspaceID, member, agent); err != nil {
+	if err = s.authorize(ctx, q, issue.WorkspaceID, member, issue.ID, agent); err != nil {
 		return out, err
 	}
 	filterAgent, err := wakeupUUID(in.FilterAgentID)
@@ -627,8 +627,15 @@ func (s *IssueWakeupService) save(ctx context.Context, issueID, member, source, 
 	return out, nil
 }
 
-func (s *IssueWakeupService) authorize(ctx context.Context, q *db.Queries, ws, member pgtype.UUID, a db.Agent) error {
-	if !member.Valid || a.ArchivedAt.Valid || !a.RuntimeID.Valid {
+func (s *IssueWakeupService) authorize(ctx context.Context, q *db.Queries, ws, member, issueID pgtype.UUID, a db.Agent) error {
+	if !member.Valid || a.ArchivedAt.Valid {
+		return ErrWakeupForbidden
+	}
+	effective, err := q.ResolveIssueTaskRuntime(ctx, db.ResolveIssueTaskRuntimeParams{AgentID: a.ID, IssueID: issueID})
+	if err != nil {
+		return err
+	}
+	if !effective.Valid {
 		return ErrWakeupForbidden
 	}
 	if _, err := q.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{UserID: member, WorkspaceID: ws}); err != nil {
@@ -969,7 +976,7 @@ func (s *IssueWakeupService) dispatch(ctx context.Context, prev db.IssueWakeup) 
 		return readErr
 	}
 	var overlay runtimeMCPOverlayData
-	if candidate.ID.Valid && s.authorize(ctx, s.Tasks.Queries, prev.WorkspaceID, prev.CreatedBy, candidate) == nil {
+	if candidate.ID.Valid && s.authorize(ctx, s.Tasks.Queries, prev.WorkspaceID, prev.CreatedBy, prev.IssueID, candidate) == nil {
 		overlay = s.Tasks.buildRuntimeMCPOverlay(ctx, prev.CreatedBy, candidate)
 	}
 	tx, err := s.Tasks.TxStarter.Begin(ctx)
@@ -1019,7 +1026,7 @@ func (s *IssueWakeupService) dispatch(ctx context.Context, prev db.IssueWakeup) 
 	if agent.ID.Valid && agent.RuntimeID != candidate.RuntimeID {
 		return tx.Commit(ctx)
 	}
-	authErr := s.authorize(ctx, q, w.WorkspaceID, w.CreatedBy, agent)
+	authErr := s.authorize(ctx, q, w.WorkspaceID, w.CreatedBy, w.IssueID, agent)
 	if w.DisabledAt.Valid || !active || authErr != nil {
 		if authErr != nil && !errors.Is(authErr, ErrWakeupForbidden) {
 			return authErr
@@ -1463,7 +1470,7 @@ func (s *IssueWakeupService) CheckClaim(ctx context.Context, task db.AgentTaskQu
 			return ErrWakeupForbidden
 		}
 		agent, err := s.Tasks.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: task.AgentID, WorkspaceID: w.WorkspaceID})
-		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (agent.ArchivedAt.Valid || !agent.RuntimeID.Valid)) {
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (agent.ArchivedAt.Valid || !task.RuntimeID.Valid)) {
 			return ErrWakeupForbidden
 		}
 		return err
@@ -1478,5 +1485,5 @@ func (s *IssueWakeupService) CheckClaim(ctx context.Context, task db.AgentTaskQu
 	if err != nil {
 		return err
 	}
-	return s.authorize(ctx, s.Tasks.Queries, w.WorkspaceID, w.CreatedBy, agent)
+	return s.authorize(ctx, s.Tasks.Queries, w.WorkspaceID, w.CreatedBy, w.IssueID, agent)
 }
