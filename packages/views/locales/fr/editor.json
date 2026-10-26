@@ -1,4 +1,23 @@
 {
+  "dictation": {
+    "stopping": "Arrêt du micro…",
+    "start": "Dicter sur cet appareil",
+    "stop": "Arrêter la dictée",
+    "cancel": "Annuler la dictée",
+    "checking": "Vérification du moteur vocal local…",
+    "starting": "En attente des autorisations du micro et de reconnaissance vocale…",
+    "recording": "Enregistrement sur cet appareil",
+    "transcribing": "Conversion de la parole en texte…",
+    "errors": {
+      "unsupported": "La dictée sur l’appareil est disponible sur macOS et Windows.",
+      "unavailable": "Aucun moteur vocal local n’est disponible pour cette langue. Installez un module vocal dans les réglages système, puis rouvrez cet éditeur.",
+      "permission_denied": "Autorisez le micro et la reconnaissance vocale dans les réglages système, puis réessayez.",
+      "busy": "Un autre éditeur utilise le micro.",
+      "no_speech": "Aucune parole reconnue. Réessayez d’enregistrer.",
+      "timeout": "Le délai de dictée est dépassé. Essayez un enregistrement plus court.",
+      "failed": "La dictée a échoué. Vérifiez votre micro et réessayez."
+    }
+  },
   "bubble_menu": {
     "bold": "Gras",
     "italic": "Italique",

@@ -26,6 +26,7 @@
 // tests cover version derivation both as a pure string transform and as the
 // real `git describe` invocation against a throwaway repo.
 
+import { bundleDictation } from "./bundle-dictation.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { rmSync } from "node:fs";
 import { delimiter, dirname, resolve } from "node:path";
@@ -425,6 +426,8 @@ function main() {
         "Set APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID for a release build.",
     );
   }
+
+  if (buildMatrix.some((target) => target.platform === "mac")) bundleDictation("darwin");
 
   const useScopedOutputDir = buildMatrix.length > 1;
 

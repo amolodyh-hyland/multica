@@ -1,5 +1,7 @@
 "use client";
 
+import { insertDictationText } from "./insert-dictation-text";
+
 /**
  * ContentEditor — the rich-text editor used wherever the user TYPES content.
  *
@@ -259,6 +261,7 @@ type ContentEditorProps = ContentEditorBaseProps & ContentEditorValueProps;
 interface ContentEditorRef {
   getMarkdown: () => string;
   clearContent: () => void;
+  insertTextAtCursor: (text: string) => boolean;
   focus: () => void;
   /**
    * Focus and place the caret at the document position under the given
@@ -906,6 +909,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
       // placeholder no longer serialises at all, which is strictly stronger
       // than scrubbing it back out afterwards.
       getMarkdown: () => editor?.getMarkdown() ?? "",
+      insertTextAtCursor: (text) => insertDictationText(editor, text),
       clearContent: () => {
         if (!editor) return;
         editor.commands.clearContent();

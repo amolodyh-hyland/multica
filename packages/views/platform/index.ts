@@ -25,3 +25,5 @@ export {
   type ScrollRestorationAdapter,
   type ScrollRestorationEntry,
 } from "./scroll-restoration";
+
+export { DictationProvider } from "./dictation-context";

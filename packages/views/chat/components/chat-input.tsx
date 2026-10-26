@@ -13,6 +13,8 @@ import {
   useUploadGate,
   useComposerSubmit,
 } from "../../editor";
+import { useComposerDictation } from "../../editor/use-composer-dictation";
+import { DictationControls } from "../../editor/dictation-controls";
 import { PASTE_AS_FILE_THRESHOLD } from "../../editor/paste-as-file";
 import {
   useCoordinatedUploads,
@@ -101,6 +103,7 @@ interface ChatInputProps {
   /** Enabled only after the server explicitly advertises follow-up queues. */
   allowSubmitWhileRunning?: boolean;
   disabled?: boolean;
+  dictationEnabled?: boolean;
   /** True when the user has no agent available — disables the editor and
    *  surfaces a distinct placeholder. Kept separate from `disabled` so
    *  archived-session copy stays untouched. */
@@ -158,6 +161,7 @@ export function ChatInput({
   isRunning,
   allowSubmitWhileRunning,
   disabled,
+  dictationEnabled = true,
   noAgent,
   agentArchived,
   agentAccessRevoked,
@@ -443,6 +447,7 @@ export function ChatInput({
   // return. Reset at the top of every submit so a rejected send cannot leave a
   // stale `true` behind for the next one.
   const editorScrubbedRef = useRef(false);
+  const dictation = useComposerDictation({ editorRef, resetKey: `${draftKey}:${editorKey}`, disabled: !!disabled || !!noAgent || !dictationEnabled || loadedDraftKey !== draftKey });
 
   const { submitting, submit } = useComposerSubmit({
     editorRef,
@@ -454,6 +459,7 @@ export function ChatInput({
     afterAccepted: () => (editorScrubbedRef.current ? "refocus" : "none"),
     onSubmit: async (content: string): Promise<boolean> => {
       editorScrubbedRef.current = false;
+      if (dictation.isActive()) return false;
       // These states disable the SubmitButton, but Mod+Enter bypasses it — so a
       // read-only or busy composer must still refuse the keyboard path.
       if (disabled || noAgent || (isRunning && !allowSubmitWhileRunning)) {
@@ -758,9 +764,10 @@ export function ChatInput({
           </div>
         )}
         <div className="absolute bottom-1 right-1.5 flex items-center gap-1">
+          <DictationControls dictation={dictation} disabled={submitting || !!disabled || !!noAgent} />
           <SubmitButton
             onClick={submit}
-            disabled={hasNothingToSend || submitting || !!disabled || !!noAgent}
+            disabled={hasNothingToSend || submitting || dictation.busy || !!disabled || !!noAgent}
             loading={submitting}
             busy={gate.uploading}
             // Queue-capable runs reuse this one action slot: an empty composer

@@ -1,3 +1,4 @@
+import type { DesktopDictationAPI } from "../shared/dictation";
 import { ElectronAPI } from "@electron-toolkit/preload";
 import type { RuntimeConfigResult } from "../shared/runtime-config";
 import type { NavigationGesture } from "../shared/navigation-gestures";
@@ -19,6 +20,7 @@ import type {
 import type { TabSelectionShortcutKey } from "../shared/main-renderer-messages";
 
 interface DesktopAPI {
+  dictation: DesktopDictationAPI;
   /** App version + normalized OS, captured synchronously at preload time. */
   appInfo: {
     version: string;

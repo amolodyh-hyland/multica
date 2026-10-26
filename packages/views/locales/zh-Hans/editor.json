@@ -1,4 +1,23 @@
 {
+  "dictation": {
+    "stopping": "正在停止麦克风…",
+    "start": "在本机语音输入",
+    "stop": "停止语音输入",
+    "cancel": "取消语音输入",
+    "checking": "正在检查本机语音引擎…",
+    "starting": "正在等待麦克风和语音识别权限…",
+    "recording": "正在本机录音",
+    "transcribing": "正在转为文字…",
+    "errors": {
+      "unsupported": "本机语音输入支持 macOS 和 Windows。",
+      "unavailable": "此语言没有可用的本机语音引擎。请在系统设置中安装语音语言包，然后重新打开输入框。",
+      "permission_denied": "请在系统设置中允许麦克风和语音识别权限，然后重试。",
+      "busy": "另一个输入框正在使用麦克风。",
+      "no_speech": "未识别到语音，请重新录音。",
+      "timeout": "语音输入超时，请缩短录音后重试。",
+      "failed": "语音输入失败，请检查麦克风后重试。"
+    }
+  },
   "bubble_menu": {
     "bold": "加粗",
     "italic": "斜体",
