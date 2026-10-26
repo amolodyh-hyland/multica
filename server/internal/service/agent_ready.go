@@ -152,10 +152,10 @@ func AgentReadiness(ctx context.Context, lookup RuntimeLookup, agent db.Agent) (
 	return runtimeVerdict(rt, agent), nil
 }
 
-// ResolveIssueAgentRuntime returns the execution binding used for issue
-// admission and enqueue. The returned copy leaves the reusable profile intact.
+// ResolveIssueAgentRuntime returns an advisory binding for issue admission.
+// Queue writes revalidate it under locks; the reusable profile is unchanged.
 func ResolveIssueAgentRuntime(ctx context.Context, q *db.Queries, issueID pgtype.UUID, profile db.Agent) (db.Agent, error) {
-	runtimeID, err := q.ResolveIssueTaskRuntime(ctx, db.ResolveIssueTaskRuntimeParams{AgentID: profile.ID, IssueID: issueID})
+	runtimeID, err := q.GetIssueAgentRuntime(ctx, db.GetIssueAgentRuntimeParams{AgentID: profile.ID, IssueID: issueID})
 	if err != nil {
 		return db.Agent{}, err
 	}

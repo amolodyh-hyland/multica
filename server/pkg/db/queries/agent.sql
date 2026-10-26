@@ -541,7 +541,7 @@ SELECT
     COALESCE(sqlc.narg('new_task_id')::uuid, gen_random_uuid())
 FROM agent_task_queue p
 CROSS JOIN LATERAL (
-    SELECT issue_runtime_for_run(p.agent_id, p.issue_id)::uuid AS override_id
+    SELECT CASE WHEN p.issue_id IS NOT NULL THEN issue_runtime_for_run(p.agent_id, p.issue_id) END::uuid AS override_id
 ) selection
 CROSS JOIN LATERAL (
     SELECT CASE WHEN p.issue_id IS NOT NULL

@@ -1501,9 +1501,6 @@ func (q *Queries) MarkRuntimesOfflineByIDs(ctx context.Context, arg MarkRuntimes
 }
 
 const reassignAgentsToRuntime = `-- name: ReassignAgentsToRuntime :execrows
-WITH moved_issue_overrides AS (
-    UPDATE issue_runtime_override SET runtime_id = $1 WHERE runtime_id = $2
-)
 UPDATE agent a
 SET runtime_id = $1
 WHERE a.runtime_id = $2

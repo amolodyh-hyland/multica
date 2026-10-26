@@ -483,6 +483,7 @@ WITH target AS (
 ),
 cleared_runtime_override AS (
  DELETE FROM issue_runtime_override WHERE issue_id IN (SELECT target.id FROM target)
+ RETURNING issue_id
 ),
 cleared_wakeup_receipts AS (
  DELETE FROM issue_wakeup_receipt WHERE wakeup_id IN (SELECT id FROM issue_wakeup WHERE issue_id IN (SELECT target.id FROM target))
@@ -509,6 +510,7 @@ cleared_pr_exclusions AS (
     DELETE FROM issue_pull_request_exclusion WHERE issue_id IN (SELECT target.id FROM target)
 )
 DELETE FROM issue WHERE issue.id IN (SELECT target.id FROM target)
+  AND (SELECT count(*) FROM cleared_runtime_override) >= 0
 `
 
 type DeleteIssueParams struct {
@@ -532,6 +534,7 @@ type DeleteIssueParams struct {
 // when a caller passes a foreign issue_id with its own workspace_id (the issue
 // itself is correctly untouched, but the links are already gone) — the exact
 // cross-tenant leak the #1661 guard above exists to prevent.
+// Complete preference cleanup before issue deletion can cascade into tasks.
 func (q *Queries) DeleteIssue(ctx context.Context, arg DeleteIssueParams) error {
 	_, err := q.db.Exec(ctx, deleteIssue, arg.ID, arg.WorkspaceID)
 	return err

@@ -52,10 +52,10 @@ func (q *Queries) DeleteIssueRuntimeOverridesByRuntime(ctx context.Context, runt
 	return err
 }
 
-const getIssueRecoverySignalRuntime = `-- name: GetIssueRecoverySignalRuntime :one
+const getIssueAgentRuntime = `-- name: GetIssueAgentRuntime :one
 SELECT COALESCE(r.id, a.runtime_id)::uuid AS runtime_id
 FROM agent a
-JOIN issue i ON i.id = $1 AND i.workspace_id = a.workspace_id
+LEFT JOIN issue i ON i.id = $1 AND i.workspace_id = a.workspace_id
 LEFT JOIN issue_runtime_override o ON o.issue_id = i.id
   AND o.workspace_id = i.workspace_id AND o.agent_id = a.id
   AND i.assignee_type = 'agent' AND i.assignee_id = a.id
@@ -63,18 +63,52 @@ LEFT JOIN agent_runtime r ON r.id = o.runtime_id AND r.workspace_id = o.workspac
 WHERE a.id = $2
 `
 
-type GetIssueRecoverySignalRuntimeParams struct {
+type GetIssueAgentRuntimeParams struct {
 	IssueID pgtype.UUID `json:"issue_id"`
 	AgentID pgtype.UUID `json:"agent_id"`
 }
 
-// Signal creation holds the failed task lock. Taking profile locks here would
-// invert runtime teardown's profile/task order. Enqueue resolves again under locks.
-func (q *Queries) GetIssueRecoverySignalRuntime(ctx context.Context, arg GetIssueRecoverySignalRuntimeParams) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, getIssueRecoverySignalRuntime, arg.IssueID, arg.AgentID)
+// Admission and configuration may already hold issue/task locks. Taking profile
+// locks here would invert teardown's order. Queue writes resolve again under locks.
+func (q *Queries) GetIssueAgentRuntime(ctx context.Context, arg GetIssueAgentRuntimeParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getIssueAgentRuntime, arg.IssueID, arg.AgentID)
 	var runtime_id pgtype.UUID
 	err := row.Scan(&runtime_id)
 	return runtime_id, err
+}
+
+const getIssueRetryOwners = `-- name: GetIssueRetryOwners :one
+SELECT p.agent_id, p.issue_id, a.workspace_id, p.runtime_id AS parent_runtime_id,
+       a.runtime_id AS default_runtime_id, o.runtime_id AS override_runtime_id
+FROM agent_task_queue p
+JOIN agent a ON a.id = p.agent_id
+LEFT JOIN issue_runtime_override o ON o.issue_id = p.issue_id
+  AND o.agent_id = a.id AND o.workspace_id = a.workspace_id
+WHERE p.id = $1 AND p.issue_id IS NOT NULL
+`
+
+type GetIssueRetryOwnersRow struct {
+	AgentID           pgtype.UUID `json:"agent_id"`
+	IssueID           pgtype.UUID `json:"issue_id"`
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	ParentRuntimeID   pgtype.UUID `json:"parent_runtime_id"`
+	DefaultRuntimeID  pgtype.UUID `json:"default_runtime_id"`
+	OverrideRuntimeID pgtype.UUID `json:"override_runtime_id"`
+}
+
+// Include a dormant preference: reassignment can reactivate it while retrying.
+func (q *Queries) GetIssueRetryOwners(ctx context.Context, id pgtype.UUID) (GetIssueRetryOwnersRow, error) {
+	row := q.db.QueryRow(ctx, getIssueRetryOwners, id)
+	var i GetIssueRetryOwnersRow
+	err := row.Scan(
+		&i.AgentID,
+		&i.IssueID,
+		&i.WorkspaceID,
+		&i.ParentRuntimeID,
+		&i.DefaultRuntimeID,
+		&i.OverrideRuntimeID,
+	)
+	return i, err
 }
 
 const getIssueRuntimeOverride = `-- name: GetIssueRuntimeOverride :one
@@ -121,6 +155,22 @@ func (q *Queries) HasPendingPublicDelegationForIssueAgent(ctx context.Context, a
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const lockIssueForRecoverySignal = `-- name: LockIssueForRecoverySignal :one
+SELECT id FROM issue WHERE id = $1 AND workspace_id = $2 FOR NO KEY UPDATE
+`
+
+type LockIssueForRecoverySignalParams struct {
+	IssueID     pgtype.UUID `json:"issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockIssueForRecoverySignal(ctx context.Context, arg LockIssueForRecoverySignalParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockIssueForRecoverySignal, arg.IssueID, arg.WorkspaceID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const lockIssueForRuntimeSwitch = `-- name: LockIssueForRuntimeSwitch :one
@@ -170,6 +220,72 @@ func (q *Queries) LockIssueForRuntimeSwitch(ctx context.Context, arg LockIssueFo
 		&i.DuplicateOfIssueID,
 	)
 	return i, err
+}
+
+const lockIssueForTaskRetry = `-- name: LockIssueForTaskRetry :one
+SELECT id FROM issue WHERE id = $1 AND workspace_id = $2 FOR SHARE
+`
+
+type LockIssueForTaskRetryParams struct {
+	IssueID     pgtype.UUID `json:"issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockIssueForTaskRetry(ctx context.Context, arg LockIssueForTaskRetryParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockIssueForTaskRetry, arg.IssueID, arg.WorkspaceID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockIssueRetryRuntimes = `-- name: LockIssueRetryRuntimes :many
+SELECT id FROM agent_runtime
+WHERE id = ANY($1::uuid[]) ORDER BY id FOR KEY SHARE
+`
+
+func (q *Queries) LockIssueRetryRuntimes(ctx context.Context, ids []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, lockIssueRetryRuntimes, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockIssueRuntimeOverridesByRuntime = `-- name: LockIssueRuntimeOverridesByRuntime :many
+SELECT issue_id FROM issue_runtime_override
+WHERE runtime_id = $1 ORDER BY issue_id FOR UPDATE
+`
+
+func (q *Queries) LockIssueRuntimeOverridesByRuntime(ctx context.Context, runtimeID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, lockIssueRuntimeOverridesByRuntime, runtimeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var issue_id pgtype.UUID
+		if err := rows.Scan(&issue_id); err != nil {
+			return nil, err
+		}
+		items = append(items, issue_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const movePendingIssueAgentTasksToRuntime = `-- name: MovePendingIssueAgentTasksToRuntime :many
@@ -277,21 +393,18 @@ func (q *Queries) MovePendingIssueAgentTasksToRuntime(ctx context.Context, arg M
 	return items, nil
 }
 
-const resolveIssueTaskRuntime = `-- name: ResolveIssueTaskRuntime :one
-SELECT COALESCE(issue_runtime_for_run(a.id,$1),(SELECT binding.runtime_id FROM agent binding WHERE binding.id = a.id FOR SHARE))::uuid AS runtime_id
-FROM agent a WHERE a.id = $2
+const reassignIssueRuntimeOverrides = `-- name: ReassignIssueRuntimeOverrides :exec
+UPDATE issue_runtime_override SET runtime_id = $1 WHERE runtime_id = $2
 `
 
-type ResolveIssueTaskRuntimeParams struct {
-	IssueID pgtype.UUID `json:"issue_id"`
-	AgentID pgtype.UUID `json:"agent_id"`
+type ReassignIssueRuntimeOverridesParams struct {
+	NewRuntimeID pgtype.UUID `json:"new_runtime_id"`
+	OldRuntimeID pgtype.UUID `json:"old_runtime_id"`
 }
 
-func (q *Queries) ResolveIssueTaskRuntime(ctx context.Context, arg ResolveIssueTaskRuntimeParams) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, resolveIssueTaskRuntime, arg.IssueID, arg.AgentID)
-	var runtime_id pgtype.UUID
-	err := row.Scan(&runtime_id)
-	return runtime_id, err
+func (q *Queries) ReassignIssueRuntimeOverrides(ctx context.Context, arg ReassignIssueRuntimeOverridesParams) error {
+	_, err := q.db.Exec(ctx, reassignIssueRuntimeOverrides, arg.NewRuntimeID, arg.OldRuntimeID)
+	return err
 }
 
 const setIssueRuntimeOverride = `-- name: SetIssueRuntimeOverride :exec

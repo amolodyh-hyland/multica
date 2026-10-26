@@ -631,7 +631,7 @@ func (s *IssueWakeupService) authorize(ctx context.Context, q *db.Queries, ws, m
 	if !member.Valid || a.ArchivedAt.Valid {
 		return ErrWakeupForbidden
 	}
-	effective, err := q.ResolveIssueTaskRuntime(ctx, db.ResolveIssueTaskRuntimeParams{AgentID: a.ID, IssueID: issueID})
+	effective, err := q.GetIssueAgentRuntime(ctx, db.GetIssueAgentRuntimeParams{AgentID: a.ID, IssueID: issueID})
 	if err != nil {
 		return err
 	}

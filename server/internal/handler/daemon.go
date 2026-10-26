@@ -805,7 +805,8 @@ var errRuntimeMergeFenced = errors.New("runtime merge refused by the task-write 
 // as a single transaction.
 //
 // Order is load-bearing. The fence comes first — workspace row, then both runtime
-// rows FOR UPDATE — and tasks move next, because that statement carries the same
+// rows FOR UPDATE — then profiles and issue preferences, before moving tasks.
+// The task statement carries the same
 // fence predicate every task write uses and is the only step that can tell us the
 // target workspace is being torn down. Its verdict is separate from its row
 // count for exactly this reason: "0 tasks reassigned" is also what a legacy runtime
@@ -855,6 +856,16 @@ func (h *Handler) mergeLegacyRuntime(ctx context.Context, newRuntimeID, oldRunti
 		// One of them went away while we were queueing for the lock; the fence
 		// inside the reassignment would refuse anyway.
 		return errRuntimeMergeFenced
+	}
+
+	if _, err := qtx.ListUserAgentsByRuntimeForUpdate(ctx, oldRuntimeID); err != nil {
+		return fmt.Errorf("lock legacy runtime profiles: %w", err)
+	}
+	if _, err := qtx.LockIssueRuntimeOverridesByRuntime(ctx, oldRuntimeID); err != nil {
+		return fmt.Errorf("lock legacy issue runtimes: %w", err)
+	}
+	if err := qtx.ReassignIssueRuntimeOverrides(ctx, db.ReassignIssueRuntimeOverridesParams{OldRuntimeID: oldRuntimeID, NewRuntimeID: newRuntimeID}); err != nil {
+		return fmt.Errorf("reassign issue runtimes: %w", err)
 	}
 
 	reassignment, err := qtx.ReassignTasksToRuntime(ctx, db.ReassignTasksToRuntimeParams{

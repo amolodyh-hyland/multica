@@ -4911,7 +4911,7 @@ func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.
 
 	var task db.AgentTaskQueue
 	var retried *db.AgentTaskQueue
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runTaskRetryTx(ctx, taskID, wantRetry, func(qtx *db.Queries) error {
 		if err := lockChatSessionForTaskWrite(ctx, qtx, taskID); err != nil {
 			return err
 		}
@@ -5521,64 +5521,41 @@ func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentT
 	if s.TxStarter == nil {
 		return nil, errors.New("task auto-retry: transaction starter is required")
 	}
-	tx, err := s.TxStarter.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("task auto-retry: begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
-	qtx := s.Queries.WithTx(tx)
-	if err := guardIssueNotInTriage(ctx, qtx, parent.IssueID, OriginDerived); err != nil {
-		if errors.Is(err, ErrIssueInTriage) {
-			slog.Info("task auto-retry skipped: issue is in triage",
-				"parent_task_id", util.UUIDToString(parent.ID),
-				"issue_id", util.UUIDToString(parent.IssueID))
-			return nil, nil
+	var child db.AgentTaskQueue
+	err := s.runTaskRetryTx(ctx, parent.ID, true, func(qtx *db.Queries) error {
+		if err := guardIssueNotInTriage(ctx, qtx, parent.IssueID, OriginDerived); err != nil {
+			if errors.Is(err, ErrIssueInTriage) {
+				return pgx.ErrNoRows
+			}
+			return err
 		}
-		return nil, err
-	}
-	child, err := qtx.CreateRetryTask(ctx, db.CreateRetryTaskParams{
-		NewTaskID:            dbid.NewV7(),
-		ID:                   parent.ID,
-		FireAt:               retryFireAt,
-		MaxAttempts:          pgtype.Int4{Int32: retryAttemptCeiling(reason, parent.MaxAttempts), Valid: true},
-		RuntimeMcpOverlay:    runtimeMCPOverlay.Overlay,
-		RuntimeConnectedApps: runtimeMCPOverlay.ConnectedApps,
+		var err error
+		child, err = qtx.CreateRetryTask(ctx, db.CreateRetryTaskParams{
+			NewTaskID:            dbid.NewV7(),
+			ID:                   parent.ID,
+			FireAt:               retryFireAt,
+			MaxAttempts:          pgtype.Int4{Int32: retryAttemptCeiling(reason, parent.MaxAttempts), Valid: true},
+			RuntimeMcpOverlay:    runtimeMCPOverlay.Overlay,
+			RuntimeConnectedApps: runtimeMCPOverlay.ConnectedApps,
+		})
+		if err != nil {
+			return err
+		}
+		if err := transferPendingSourceContextToRetry(ctx, qtx, parent, child); err != nil {
+			return err
+		}
+		if err := qtx.CopyChannelTaskDelivery(ctx, db.CopyChannelTaskDeliveryParams{
+			ChildTaskID: child.ID, ParentTaskID: parent.ID,
+		}); err != nil {
+			return fmt.Errorf("copy auto-retry channel delivery: %w", err)
+		}
+		return nil
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		// Workspace torn down, or the pending slot was taken between the check
-		// above and this insert. Same contract as FailTask's path: no retry, no
-		// error.
-		slog.Info("task auto-retry not created: no row written",
-			"parent_task_id", util.UUIDToString(parent.ID),
-			"reason", reason,
-		)
 		return nil, nil
 	}
 	if err != nil {
-		slog.Warn("task auto-retry failed",
-			"parent_task_id", util.UUIDToString(parent.ID),
-			"reason", reason,
-			"error", err,
-		)
-		return nil, err
-	}
-	if err := transferPendingSourceContextToRetry(ctx, qtx, parent, child); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			slog.Info("task auto-retry skipped: source context already transferred or attached",
-				"parent_task_id", util.UUIDToString(parent.ID),
-				"source_context_retry_id", util.UUIDToString(child.ID),
-			)
-			return nil, nil
-		}
-		return nil, err
-	}
-	if err := qtx.CopyChannelTaskDelivery(ctx, db.CopyChannelTaskDeliveryParams{
-		ChildTaskID: child.ID, ParentTaskID: parent.ID,
-	}); err != nil {
-		return nil, fmt.Errorf("copy auto-retry channel delivery: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("task auto-retry: commit: %w", err)
+		return nil, fmt.Errorf("task auto-retry: %w", err)
 	}
 	slog.Info("task auto-retry enqueued",
 		"parent_task_id", util.UUIDToString(parent.ID),
@@ -6317,7 +6294,7 @@ func loadDelegatedFailureRecoveryTarget(ctx context.Context, q *db.Queries, fail
 	if agent.ArchivedAt.Valid || agent.WorkspaceID != issue.WorkspaceID {
 		return nil, nil
 	}
-	agent.RuntimeID, err = q.GetIssueRecoverySignalRuntime(ctx, db.GetIssueRecoverySignalRuntimeParams{
+	agent.RuntimeID, err = q.GetIssueAgentRuntime(ctx, db.GetIssueAgentRuntimeParams{
 		IssueID: issue.ID, AgentID: agent.ID,
 	})
 	if err != nil {
@@ -6354,6 +6331,28 @@ func (s *TaskService) ensureDelegatedFailureRecoveryComment(ctx context.Context,
 	var target *delegatedFailureRecoveryTarget
 	created := false
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		candidate, err := qtx.GetAgentTask(ctx, failedID)
+		if err != nil {
+			return fmt.Errorf("load failed task: %w", err)
+		}
+		preview, err := loadDelegatedFailureRecoveryTarget(ctx, qtx, candidate)
+		if err != nil || preview == nil {
+			return err
+		}
+		if _, err := qtx.LockWorkspaceForChatSessionCreate(ctx, preview.issue.WorkspaceID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			return err
+		}
+		// Comment creation writes the source issue. Lock it before the failed
+		// task, then revalidate eligibility under both locks.
+		if _, err := qtx.LockIssueForRecoverySignal(ctx, db.LockIssueForRecoverySignalParams{IssueID: preview.issue.ID, WorkspaceID: preview.issue.WorkspaceID}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			return err
+		}
 		failed, err := qtx.GetAgentTaskForDelegatedFailureUpdate(ctx, failedID)
 		if err != nil {
 			return fmt.Errorf("lock failed task: %w", err)
@@ -6361,6 +6360,9 @@ func (s *TaskService) ensureDelegatedFailureRecoveryComment(ctx context.Context,
 		target, err = loadDelegatedFailureRecoveryTarget(ctx, qtx, failed)
 		if err != nil || target == nil {
 			return err
+		}
+		if target.issue.ID != preview.issue.ID || target.issue.WorkspaceID != preview.issue.WorkspaceID {
+			return fmt.Errorf("recovery source issue changed")
 		}
 		comment, err := qtx.GetDelegatedFailureRecoveryComment(ctx, db.GetDelegatedFailureRecoveryCommentParams{
 			IssueID:      target.issue.ID,

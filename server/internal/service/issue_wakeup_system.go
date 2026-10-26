@@ -327,7 +327,7 @@ func resolveWakeTarget(ctx context.Context, q *db.Queries, issue db.Issue) (wake
 			return target, err
 		}
 		if err == nil && !agent.ArchivedAt.Valid {
-			agent.RuntimeID, err = q.ResolveIssueTaskRuntime(ctx, db.ResolveIssueTaskRuntimeParams{AgentID: agent.ID, IssueID: issue.ID})
+			agent.RuntimeID, err = q.GetIssueAgentRuntime(ctx, db.GetIssueAgentRuntimeParams{AgentID: agent.ID, IssueID: issue.ID})
 			if err != nil {
 				return target, err
 			}

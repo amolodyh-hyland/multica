@@ -17,6 +17,13 @@ DELETE FROM issue_runtime_override WHERE issue_id = @issue_id AND workspace_id =
 -- name: DeleteIssueRuntimeOverridesByRuntime :exec
 DELETE FROM issue_runtime_override WHERE runtime_id = $1;
 
+-- name: LockIssueRuntimeOverridesByRuntime :many
+SELECT issue_id FROM issue_runtime_override
+WHERE runtime_id = $1 ORDER BY issue_id FOR UPDATE;
+
+-- name: ReassignIssueRuntimeOverrides :exec
+UPDATE issue_runtime_override SET runtime_id = @new_runtime_id WHERE runtime_id = @old_runtime_id;
+
 -- name: CountExecutingIssueAgentTasks :one
 SELECT count(*) FROM agent_task_queue
 WHERE issue_id = @issue_id AND agent_id = @agent_id
@@ -29,21 +36,37 @@ SET runtime_id = @runtime_id, runtime_override_id=sqlc.narg('runtime_override_id
 WHERE issue_id = @issue_id AND agent_id = @agent_id AND status IN ('queued','deferred')
 RETURNING *;
 
--- name: ResolveIssueTaskRuntime :one
-SELECT COALESCE(issue_runtime_for_run(a.id,@issue_id),(SELECT binding.runtime_id FROM agent binding WHERE binding.id = a.id FOR SHARE))::uuid AS runtime_id
-FROM agent a WHERE a.id = @agent_id;
-
--- name: GetIssueRecoverySignalRuntime :one
--- Signal creation holds the failed task lock. Taking profile locks here would
--- invert runtime teardown's profile/task order. Enqueue resolves again under locks.
+-- name: GetIssueAgentRuntime :one
+-- Admission and configuration may already hold issue/task locks. Taking profile
+-- locks here would invert teardown's order. Queue writes resolve again under locks.
 SELECT COALESCE(r.id, a.runtime_id)::uuid AS runtime_id
 FROM agent a
-JOIN issue i ON i.id = @issue_id AND i.workspace_id = a.workspace_id
+LEFT JOIN issue i ON i.id = @issue_id AND i.workspace_id = a.workspace_id
 LEFT JOIN issue_runtime_override o ON o.issue_id = i.id
   AND o.workspace_id = i.workspace_id AND o.agent_id = a.id
   AND i.assignee_type = 'agent' AND i.assignee_id = a.id
 LEFT JOIN agent_runtime r ON r.id = o.runtime_id AND r.workspace_id = o.workspace_id
 WHERE a.id = @agent_id;
+
+-- name: GetIssueRetryOwners :one
+-- Include a dormant preference: reassignment can reactivate it while retrying.
+SELECT p.agent_id, p.issue_id, a.workspace_id, p.runtime_id AS parent_runtime_id,
+       a.runtime_id AS default_runtime_id, o.runtime_id AS override_runtime_id
+FROM agent_task_queue p
+JOIN agent a ON a.id = p.agent_id
+LEFT JOIN issue_runtime_override o ON o.issue_id = p.issue_id
+  AND o.agent_id = a.id AND o.workspace_id = a.workspace_id
+WHERE p.id = $1 AND p.issue_id IS NOT NULL;
+
+-- name: LockIssueRetryRuntimes :many
+SELECT id FROM agent_runtime
+WHERE id = ANY(@ids::uuid[]) ORDER BY id FOR KEY SHARE;
+
+-- name: LockIssueForTaskRetry :one
+SELECT id FROM issue WHERE id = @issue_id AND workspace_id = @workspace_id FOR SHARE;
+
+-- name: LockIssueForRecoverySignal :one
+SELECT id FROM issue WHERE id = @issue_id AND workspace_id = @workspace_id FOR NO KEY UPDATE;
 
 -- name: HasPendingPublicDelegationForIssueAgent :one
 SELECT EXISTS (

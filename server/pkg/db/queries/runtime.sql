@@ -506,9 +506,6 @@ WHERE workspace_id = @workspace_id
 
 -- name: ReassignAgentsToRuntime :execrows
 -- Re-points every agent referencing old_runtime_id at new_runtime_id.
-WITH moved_issue_overrides AS (
-    UPDATE issue_runtime_override SET runtime_id = @new_runtime_id WHERE runtime_id = @old_runtime_id
-)
 UPDATE agent a
 SET runtime_id = @new_runtime_id
 WHERE a.runtime_id = @old_runtime_id;
