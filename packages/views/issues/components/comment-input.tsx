@@ -3,6 +3,8 @@
 import { useRef, useState, useEffect, useMemo } from "react";
 import { cn } from "@multica/ui/lib/utils";
 import { ContentEditor, type ContentEditorRef, useFileDropZone, FileDropOverlay, useLazyEditor, useUploadGate, useComposerSubmit } from "../../editor";
+import { useComposerDictation } from "../../editor/use-composer-dictation";
+import { DictationControls } from "../../editor/dictation-controls";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
 import { SubmitButton } from "@multica/ui/components/common/submit-button";
 import { Button } from "@multica/ui/components/ui/button";
@@ -96,6 +98,7 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
       useCommentDraftStore.getState().getUploads(draftKey).length > 0,
     editorRef,
   });
+  const dictation = useComposerDictation({ editorRef, resetKey: draftKey, activate: lazy.activate, ready: lazy.ready });
   const { isDragOver, dropZoneProps } = useFileDropZone({
     onDrop: lazy.uploadOrQueue,
   });
@@ -168,6 +171,7 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
     // posted above it. Thread replies are the opposite — see ReplyInput.
     afterAccepted: () => (editorScrubbedRef.current ? "blur" : "none"),
     onSubmit: async (content) => {
+      if (dictation.isActive()) return false;
       editorScrubbedRef.current = false;
       const { suppressAgentIds, steerTaskIds } = routing;
       // A preview still catching up with an edited @mention can name a
@@ -299,7 +303,7 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
           </div>
         </div>
       )}
-      <div className="absolute bottom-1 left-2 right-28 min-w-0">
+      <div className={cn("absolute bottom-1 left-2 min-w-0", dictation.visible ? (dictation.busy ? "right-48" : "right-40") : "right-28")}>
         <CommentTriggerChips
           recipients={recipients}
           blocked={triggerPreview.blocked}
@@ -309,6 +313,7 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
         />
       </div>
       <div className="absolute bottom-1 right-1.5 flex items-center gap-1">
+        <DictationControls dictation={dictation} disabled={submitting} />
         <FileUploadButton
           size="sm"
           multiple
@@ -320,13 +325,13 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
             variant="destructive"
             className="rounded-full"
             onClick={submit}
-            disabled={!canSend || submitting || gate.uploading}
+            disabled={!canSend || submitting || dictation.busy || gate.uploading}
           >
             {t(($) => $.comment.restart_send)}
           </Button>
         ) : <SubmitButton
           onClick={submit}
-          disabled={!canSend}
+          disabled={!canSend || dictation.busy}
           loading={submitting}
           busy={gate.uploading}
           tooltip={gate.uploading

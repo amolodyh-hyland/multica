@@ -5,6 +5,8 @@ directories:
 files:
   - "!**/.vscode/*"
   - "!src/*"
+  - "!native/**"
+  - "!resources/dictation/**"
   - "!electron.vite.config.*"
   - "!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}"
   - "!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}"
@@ -36,6 +38,14 @@ protocols:
 asarUnpack:
   - resources/**
 mac:
+  extraResources:
+    - from: resources/dictation/multica-dictation
+      to: dictation/multica-dictation
+  binaries:
+    - Contents/Resources/dictation/multica-dictation
+  extendInfo:
+    NSMicrophoneUsageDescription: Dictate text into your draft using on-device speech recognition.
+    NSSpeechRecognitionUsageDescription: Convert speech to editable draft text on this Mac. Audio is never sent to a server.
   entitlementsInherit: build/entitlements.mac.plist
   target:
     - dmg
@@ -118,6 +128,11 @@ rpm:
   fpm:
     - "--rpm-rpmbuild-define=_build_id_links none"
 win:
+  extraResources:
+    - from: resources/dictation/windows-pcm-capture.cs
+      to: dictation/windows-pcm-capture.cs
+    - from: resources/dictation/windows-speech.ps1
+      to: dictation/windows-speech.ps1
   target:
     - nsis
   artifactName: multica-desktop-${version}-windows-${arch}.${ext}

@@ -4,6 +4,8 @@ import { composeAnnotatedReply, EMPTY_REPLY_ANNOTATIONS, hasReplyIntent } from "
 import { ReplyAnnotations } from "./reply-annotations";
 import { useRef, useState, useEffect, useMemo } from "react";
 import { ContentEditor, type ContentEditorRef, useFileDropZone, FileDropOverlay, useLazyEditor, useUploadGate, useComposerSubmit } from "../../editor";
+import { useComposerDictation } from "../../editor/use-composer-dictation";
+import { DictationControls } from "../../editor/dictation-controls";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
 import { SubmitButton } from "@multica/ui/components/common/submit-button";
 import { Button } from "@multica/ui/components/ui/button";
@@ -122,6 +124,7 @@ function ReplyInput({
       (draftKey ? useCommentDraftStore.getState().getUploads(draftKey).length > 0 : false),
     editorRef,
   });
+  const dictation = useComposerDictation({ editorRef, resetKey: `${issueId}:${parentId}:${draftKey ?? ""}`, activate: lazy.activate, ready: lazy.ready, disabled: targetMissing });
   const { isDragOver, dropZoneProps } = useFileDropZone({
     onDrop: lazy.uploadOrQueue,
   });
@@ -173,6 +176,7 @@ function ReplyInput({
     // if the user moved to another composer while the reply was in flight.
     afterAccepted: () => (editorScrubbedRef.current ? "refocus" : "none"),
     onSubmit: async (content) => {
+      if (dictation.isActive()) return false;
       editorScrubbedRef.current = false;
       const { suppressAgentIds, steerTaskIds } = routing;
       // A preview still catching up with an edited @mention can name a
@@ -239,7 +243,7 @@ function ReplyInput({
         ref={composerRef}
         className={cn(
           "relative min-w-0 flex-1 flex flex-col",
-          (!isEmpty || annotations.length > 0) && "pb-9",
+          (!isEmpty || annotations.length > 0 || dictation.busy) && "pb-9",
         )}
       >
         {attachmentsBlockSteer && <SteerAttachmentNotice />}
@@ -304,7 +308,7 @@ function ReplyInput({
             <p className="text-muted-foreground">{placeholderText}</p>
           </div>
         )}
-        <div className="absolute bottom-0 left-0 right-24 min-w-0">
+        <div className={cn("absolute bottom-0 left-0 min-w-0", dictation.visible ? (dictation.busy ? "right-40" : "right-32") : "right-24")}>
           <CommentTriggerChips
             recipients={recipients}
             blocked={triggerPreview.blocked}
@@ -314,7 +318,8 @@ function ReplyInput({
           />
         </div>
         <div className="absolute bottom-0 right-0 flex items-center gap-1">
-          <FileUploadButton
+          <DictationControls dictation={dictation} disabled={submitting || targetMissing} />
+        <FileUploadButton
             size="sm"
             multiple
             onSelect={(file) => lazy.uploadOrQueue([file])}
@@ -325,13 +330,13 @@ function ReplyInput({
               variant="destructive"
               className="rounded-full"
               onClick={submit}
-              disabled={!canSend || submitting || gate.uploading}
+              disabled={!canSend || submitting || dictation.busy || gate.uploading}
             >
               {t(($) => $.comment.restart_send)}
             </Button>
           ) : <SubmitButton
             onClick={submit}
-            disabled={!canSend}
+            disabled={!canSend || dictation.busy}
             loading={submitting}
             busy={gate.uploading}
             tooltip={gate.uploading

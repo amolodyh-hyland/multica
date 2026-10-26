@@ -30,6 +30,8 @@ import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useLocale, useTimeAgo } from "../../i18n";
+import { DictationControls } from "../../editor/dictation-controls";
+import { useComposerDictation } from "../../editor/use-composer-dictation";
 import { ContentEditor, type ContentEditorRef, ReadonlyContent, useFileDropZone, FileDropOverlay, Attachment as AttachmentRenderer, AttachmentDownloadProvider, useUploadGate, useComposerSubmit } from "../../editor";
 import { useCommentUploads } from "./use-comment-uploads";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
@@ -358,6 +360,7 @@ function useEditAttachmentState(
   issueId: string,
   entry: TimelineEntry,
   onEdit: (commentId: string, content: string, attachmentIds: string[], suppressAgentIds?: string[], contentBase?: string) => Promise<void>,
+  composerVisible = true,
 ) {
   const { t } = useT("issues");
   const { t: tEditor } = useT("editor");
@@ -375,6 +378,7 @@ function useEditAttachmentState(
   // the draft store keyed by the edit draft so scroll-out/close no longer drops
   // an in-flight upload.
   const draftKey = `edit:${issueId}:${entry.id}` as const;
+  const dictation = useComposerDictation({ editorRef, resetKey: draftKey, disabled: !editing || !composerVisible || isDeletedComment(entry) });
   // `gate` widens the editor gate with coordinator-owned placeholders — see
   // CommentInput.
   const { uploads, attachments: pendingAttachments, handleUpload, removeUpload, gate } =
@@ -475,6 +479,7 @@ function useEditAttachmentState(
     editorRef,
     uploadGate: gate,
     onSubmit: async (trimmed) => {
+      if (dictation.isActive()) return false;
       // A save racing a just-pressed Cancel must never reach the server.
       if (cancelledRef.current) return false;
       // Flush pending debounce before snapshotting — see CommentInput.
@@ -542,6 +547,7 @@ function useEditAttachmentState(
     saving,
     uploading: gate.uploading,
     onUploadingChange: gate.onUploadingChange,
+    dictation,
     uploadingLabel: tEditor(($) => $.upload.in_progress),
     editorRef,
     editorAttachments,
@@ -871,6 +877,7 @@ function CommentRow({
               />
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              <DictationControls dictation={edit.dictation} disabled={edit.saving} />
               <FileUploadButton
                 size="sm"
                 multiple
@@ -881,7 +888,7 @@ function CommentRow({
                 size="sm"
                 variant="outline"
                 onClick={edit.saveEdit}
-                disabled={edit.saving || edit.uploading}
+                disabled={edit.saving || edit.uploading || edit.dictation.busy}
                 aria-disabled={edit.uploading || undefined}
                 aria-busy={edit.uploading || undefined}
               >
@@ -1045,7 +1052,7 @@ function CommentCardImpl({
     [toggleCollapse, issueId, entry.id],
   );
 
-  const edit = useEditAttachmentState(issueId, entry, onEdit);
+  const edit = useEditAttachmentState(issueId, entry, onEdit, open);
 
   const isOwn = entry.actor_type === "member" && entry.actor_id === currentUserId;
   const receipts = commentSupplementReceipts(entry);
@@ -1404,6 +1411,7 @@ function CommentCardImpl({
                       draftContent={edit.content}
                       onActionChange={edit.setRecipientAction}
                     />
+                    <DictationControls dictation={edit.dictation} disabled={edit.saving} />
                     <FileUploadButton
                       size="sm"
                       multiple
@@ -1416,7 +1424,7 @@ function CommentCardImpl({
                       size="sm"
                       variant="outline"
                       onClick={edit.saveEdit}
-                      disabled={edit.saving || edit.uploading}
+                      disabled={edit.saving || edit.uploading || edit.dictation.busy}
                       aria-disabled={edit.uploading || undefined}
                       aria-busy={edit.uploading || undefined}
                     >

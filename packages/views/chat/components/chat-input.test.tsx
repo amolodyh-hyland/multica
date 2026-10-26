@@ -3,6 +3,8 @@ import { beforeEach, describe, it, expect, vi } from "vitest";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { UploadResult } from "@multica/core/hooks/use-file-upload";
+import type { DictationEngine } from "@multica/core/dictation";
+import { DictationProvider } from "../../platform/dictation-context";
 import type { DraftUpload } from "@multica/core/drafts";
 import enCommon from "../../locales/en/common.json";
 import enChat from "../../locales/en/chat.json";
@@ -117,6 +119,11 @@ vi.mock("../../editor", async () => ({
     }, [value]);
     useImperativeHandle(ref, () => ({
       getMarkdown: () => valueRef.current,
+      insertTextAtCursor: (text: string) => {
+        valueRef.current += text;
+        onUpdate?.(valueRef.current);
+        return true;
+      },
       clearContent: () => {
         editorState.cleared += 1;
         valueRef.current = "";
@@ -247,7 +254,7 @@ vi.mock("@multica/core/chat", () => {
 });
 
 import { ChatInput } from "./chat-input";
-import { useChatStore } from "@multica/core/chat";
+import { useChatStore, DRAFT_NEW_SESSION } from "@multica/core/chat";
 
 type ChatInputOnSend = React.ComponentProps<typeof ChatInput>["onSend"];
 type ChatInputCommit = Parameters<ChatInputOnSend>[2];
@@ -1649,5 +1656,44 @@ describe("ChatInput revoked-access placeholder", () => {
     renderInput({ agentName: "Multica" });
 
     expect(editorProps.last?.placeholder).toBe("Message Multica…");
+  });
+});
+
+
+describe("ChatInput dictation", () => {
+  it("blocks sends while dictating and leaves the transcript in the draft until an explicit send", async () => {
+    let finish!: (text: string) => void;
+    let options!: Parameters<DictationEngine["transcribe"]>[0];
+    const engine: DictationEngine = {
+      check: async () => ({ available: true }),
+      transcribe: (input) => { options = input; return new Promise<string>((resolve) => { finish = resolve; }); },
+      stop: vi.fn(async () => {}),
+    };
+    const factory = () => engine;
+    const onSend = vi.fn();
+    render(
+      <DictationProvider value={factory}>
+        <I18nProvider locale="en" resources={TEST_RESOURCES}>
+          <ChatInput onSend={onSend} agentName="Multica" />
+        </I18nProvider>
+      </DictationProvider>,
+    );
+    const record = await screen.findByRole("button", { name: enEditor.dictation.start });
+    await waitFor(() => expect(record).toBeEnabled());
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: "Draft: " } });
+    fireEvent.click(record);
+    act(() => options.onRecording());
+    expect(screen.getByRole("button", { name: enChat.input.send_tooltip })).toBeDisabled();
+    await act(async () => {
+      await (editorProps.last?.onSubmit as () => Promise<void>)();
+    });
+    expect(onSend).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: enEditor.dictation.stop }));
+    await act(async () => finish("spoken words"));
+    expect(onSend).not.toHaveBeenCalled();
+    expect(useChatStore.getState().inputDrafts[DRAFT_NEW_SESSION]).toBe("Draft: spoken words");
+    fireEvent.click(screen.getByRole("button", { name: enChat.input.send_tooltip }));
+    await waitFor(() => expect(onSend).toHaveBeenCalledOnce());
+    expect(onSend.mock.calls[0]?.[0]).toBe("Draft: spoken words");
   });
 });

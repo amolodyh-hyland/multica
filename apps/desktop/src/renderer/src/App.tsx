@@ -1,3 +1,5 @@
+import { DictationProvider } from "@multica/views/platform";
+import { desktopDictationEngineFactory } from "./platform/dictation-engine";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { CoreProvider } from "@multica/core/platform";
@@ -468,18 +470,20 @@ export default function App() {
           resources={resources}
           localeAdapter={localeAdapter}
         >
-          <DesktopAuthSessionBridge />
-          {windowContext.kind === "main" && <DiagnosticRouteReporter />}
-          {windowContext.kind === "main" && (
-            <DesktopClientUsageReporter
-              apiUrl={runtimeConfigResult.config.apiUrl}
-            />
-          )}
-          {windowContext.kind === "issue" ? (
-            <IssueWindowContent />
-          ) : (
-            <AppContent />
-          )}
+          <DictationProvider value={desktopDictationEngineFactory}>
+            <DesktopAuthSessionBridge />
+            {windowContext.kind === "main" && <DiagnosticRouteReporter />}
+            {windowContext.kind === "main" && (
+              <DesktopClientUsageReporter
+                apiUrl={runtimeConfigResult.config.apiUrl}
+              />
+            )}
+            {windowContext.kind === "issue" ? (
+              <IssueWindowContent />
+            ) : (
+              <AppContent />
+            )}
+          </DictationProvider>
         </CoreProvider>
       ) : (
         <BlockingRuntimeConfigError message={runtimeConfigResult.error.message} />

@@ -1,4 +1,23 @@
 {
+  "dictation": {
+    "stopping": "Stopping microphone…",
+    "start": "Dictate on this device",
+    "stop": "Stop dictation",
+    "cancel": "Cancel dictation",
+    "checking": "Checking local speech engine…",
+    "starting": "Waiting for microphone and speech access…",
+    "recording": "Recording on this device",
+    "transcribing": "Converting speech to text…",
+    "errors": {
+      "unsupported": "On-device dictation is supported on macOS and Windows.",
+      "unavailable": "No local speech engine is available for this language. Install a speech language pack in system settings, then reopen this composer.",
+      "permission_denied": "Allow microphone and speech access in system settings, then try again.",
+      "busy": "Another composer is using the microphone.",
+      "no_speech": "No speech was recognized. Try recording again.",
+      "timeout": "Dictation timed out. Try a shorter recording.",
+      "failed": "Dictation failed. Check your microphone and try again."
+    }
+  },
   "bubble_menu": {
     "bold": "Bold",
     "italic": "Italic",

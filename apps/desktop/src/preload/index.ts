@@ -1,3 +1,4 @@
+import { dictationAPI } from "./dictation";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { electronAPI } from "@electron-toolkit/preload";
 import type { RuntimeConfigResult } from "../shared/runtime-config";
@@ -101,6 +102,7 @@ function subscribeToMainRendererChannel<T>(
 }
 
 const desktopAPI = {
+  dictation: dictationAPI,
   /** App version + normalized OS. Read once at preload time so the renderer
    *  can use it synchronously when initializing the API client. */
   appInfo,
