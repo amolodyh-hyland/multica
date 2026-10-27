@@ -684,12 +684,7 @@ func TestDeleteAgentRuntime_OfflineInstanceWithUnfinishedTaskDoesNotPromiseClean
 		"fire_at": testutil.Raw("now() + interval '30 days'"),
 	})
 	targetID := newTestRuntime(t, "Review New Host", "online")
-	w := httptest.NewRecorder()
-	testHandler.UpdateAgent(w, withURLParam(newRequest("PATCH", "/api/agents/"+agentID,
-		map[string]any{"runtime_id": targetID}), "id", agentID))
-	if w.Code != http.StatusOK {
-		t.Fatalf("rebind: %d %s", w.Code, w.Body.String())
-	}
+	dbfx.Exec(t, `UPDATE agent SET runtime_id=$1 WHERE id=$2`, targetID, agentID)
 	dbfx.Exec(t, `UPDATE agent_runtime SET status='offline', last_seen_at=now()-interval '8 days' WHERE id=$1`, runtimeID)
 	var taskRuntime, taskStatus string
 	dbfx.QueryRow(t, `SELECT runtime_id::text, status FROM agent_task_queue WHERE id=$1`, taskID).Scan(&taskRuntime, &taskStatus)
@@ -708,7 +703,7 @@ func TestDeleteAgentRuntime_OfflineInstanceWithUnfinishedTaskDoesNotPromiseClean
 		}
 	}
 	for _, cascade := range []bool{false, true} {
-		w = httptest.NewRecorder()
+		w := httptest.NewRecorder()
 		if cascade {
 			r := newRequest("POST", "/api/runtimes/"+runtimeID+"/unbind-agents-and-delete", map[string]any{"expected_active_agent_ids": []string{}})
 			testHandler.UnbindAgentsAndDeleteRuntime(w, withURLParam(r, "runtimeId", runtimeID))

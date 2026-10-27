@@ -3904,3 +3904,11 @@ export const ProjectKnowledgeStatusResponseSchema = z.object({
     reason: z.string().default("unreadable"),
   }).strict()).max(8).default([]),
 }).strict();
+
+export const IssueRuntimeSchema = z.object({
+  issue_id: z.string(),
+  agent_id: z.string(),
+  runtime_id: z.string().nullable(),
+  effective_runtime_id: z.string().nullable(),
+});
+export type IssueRuntime = z.infer<typeof IssueRuntimeSchema>;

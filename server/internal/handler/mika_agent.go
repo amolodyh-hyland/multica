@@ -11,6 +11,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -144,7 +145,7 @@ func (h *Handler) resolveMikaAgent(w http.ResponseWriter, r *http.Request, works
 		return db.Agent{}, false, false
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start agent create transaction")
 		return db.Agent{}, false, false
@@ -284,7 +285,7 @@ func (h *Handler) getOrCreateMikaSession(ctx context.Context, agent db.Agent, wo
 	wsUUID := parseUUID(workspaceID)
 	creatorUUID := parseUUID(userID)
 
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		return db.ChatSession{}, err
 	}

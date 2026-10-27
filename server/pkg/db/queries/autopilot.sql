@@ -596,7 +596,7 @@ INSERT INTO agent_task_queue (
     id
 )
 SELECT
-    $1, $2, NULL, 'queued', $3, $4, sqlc.narg(trigger_summary),
+    @agent_id, (SELECT binding.runtime_id FROM agent binding WHERE binding.id = @agent_id FOR SHARE), NULL, 'queued', @priority, @autopilot_run_id, sqlc.narg(trigger_summary),
     sqlc.narg(originator_user_id),
     sqlc.narg(accountable_user_id),
     sqlc.narg(rule_version_id),
@@ -604,7 +604,7 @@ SELECT
     sqlc.narg(trigger_evidence_kind),
     sqlc.narg(trigger_evidence_ref_id),
     COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
-WHERE lock_task_owner_rows($1, NULL, $2)
+WHERE lock_task_owner_rows(@agent_id, NULL, @runtime_id::uuid)
 RETURNING *;
 
 -- name: GetAutopilotTaskByRun :one

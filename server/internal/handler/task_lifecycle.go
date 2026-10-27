@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -105,7 +106,7 @@ func (h *Handler) PinTaskSession(w http.ResponseWriter, r *http.Request) {
 	// comes first for the same reason it does in CancelTaskWithResult —
 	// chat_session -> agent_task_queue is the global order, and ErrNoRows simply
 	// means there is no session to lock or advance.
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Owners(params.ID))
 	if err != nil {
 		slog.Warn("pin-session failed to start tx", "task_id", taskID, "error", err)
 		writeError(w, http.StatusInternalServerError, "pin session failed")

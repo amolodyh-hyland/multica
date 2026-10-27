@@ -19,6 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
@@ -713,7 +714,7 @@ func (p runtimeWorkspaceAccessRevocationPlan) hasDependencies() bool {
 // turns it into the same confirmation response used by the disruptive path;
 // the confirmed endpoint will take a fresh locked snapshot before revoking.
 func (h *Handler) makeRuntimePrivateIfNoWorkspaceDependencies(ctx context.Context, rt db.AgentRuntime, member db.Member) (db.AgentRuntime, runtimeWorkspaceAccessRevocationPlan, bool, error) {
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(rt.WorkspaceID))
 	if err != nil {
 		return db.AgentRuntime{}, runtimeWorkspaceAccessRevocationPlan{}, false, fmt.Errorf("begin transaction: %w", err)
 	}
@@ -1088,7 +1089,7 @@ func (h *Handler) RevokeRuntimeWorkspaceAccess(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(rt.WorkspaceID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
 		return
@@ -1375,7 +1376,7 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(rt.WorkspaceID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete runtime")
 		return
@@ -1575,7 +1576,7 @@ func (h *Handler) UnbindAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.Re
 			"deleted_by", userID)
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(rt.WorkspaceID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
 		return

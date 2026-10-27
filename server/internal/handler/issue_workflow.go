@@ -20,6 +20,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/issueworkflow"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -473,7 +474,7 @@ func (h *Handler) CreateIssueWorkflow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(wsUUID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save workflow")
 		return
@@ -510,7 +511,7 @@ func (h *Handler) CreateIssueWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusBadRequest, "invalid_workflow", err.Error())
 		return
 	}
-	if status, msg := h.validateHandoffHandlers(ctx, r, workspaceID, steps, nil); status != 0 {
+	if status, msg := h.withQueries(qtx).validateHandoffHandlers(ctx, r, workspaceID, steps, nil); status != 0 {
 		writeErrorCode(w, status, "invalid_handoff", msg)
 		return
 	}
@@ -640,7 +641,7 @@ func (h *Handler) UpdateIssueWorkflow(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(wsUUID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save workflow")
 		return
@@ -705,7 +706,7 @@ func (h *Handler) UpdateIssueWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusBadRequest, "invalid_workflow", err.Error())
 		return
 	}
-	if status, msg := h.validateHandoffHandlers(ctx, r, workspaceID, steps, currentSteps); status != 0 {
+	if status, msg := h.withQueries(qtx).validateHandoffHandlers(ctx, r, workspaceID, steps, currentSteps); status != 0 {
 		writeErrorCode(w, status, "invalid_handoff", msg)
 		return
 	}
@@ -796,7 +797,7 @@ func (h *Handler) DeleteIssueWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(wsUUID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete workflow")
 		return
@@ -925,7 +926,7 @@ func (h *Handler) SetProjectWorkflow(w http.ResponseWriter, r *http.Request) {
 		targetID = id
 	}
 	ctx := r.Context()
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(wsUUID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to change workflow")
 		return
@@ -1077,7 +1078,7 @@ func (h *Handler) SetIssueWorkflowHandoff(w http.ResponseWriter, r *http.Request
 		}
 	}
 	ctx := r.Context()
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(wsUUID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save handoff")
 		return
@@ -1102,7 +1103,7 @@ func (h *Handler) SetIssueWorkflowHandoff(w http.ResponseWriter, r *http.Request
 		writeErrorCode(w, http.StatusBadRequest, "invalid_handoff", err.Error())
 		return
 	}
-	if status, msg := h.validateHandoffHandlers(ctx, r, workspaceID, []issueworkflow.Step{step}, def.Steps); status != 0 {
+	if status, msg := h.withQueries(qtx).validateHandoffHandlers(ctx, r, workspaceID, []issueworkflow.Step{step}, def.Steps); status != 0 {
 		writeErrorCode(w, status, "invalid_handoff", msg)
 		return
 	}

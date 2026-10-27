@@ -802,6 +802,7 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) {
           qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+          qc.invalidateQueries({ queryKey: [...issueKeys.all(wsId), "runtime"] });
           // Squad members status is derived per agent, so any agent
           // change (status flip, archive, runtime swap) needs to refresh the
           // per-squad members-status cache without refetching the static squad
@@ -906,6 +907,7 @@ export function useRealtimeSync(
           // refetch it when a daemon changes state even if its private runtime
           // is absent from this member's runtime list.
           qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+          qc.invalidateQueries({ queryKey: [...issueKeys.all(wsId), "runtime"] });
           // Runtime online/offline transitions move the derived status
           // for every agent that hosts on this runtime, which shifts the
           // working/idle/offline pill on the squad page.
@@ -1048,7 +1050,7 @@ export function useRealtimeSync(
       "issue:updated", "issue:created", "issue:deleted", "issue_attachments:changed", "issue_labels:changed", "issue_metadata:changed", "issue_properties:changed", "property:created", "property:updated", "inbox:new",
       "comment:created", "comment:updated", "comment:deleted",
       "comment:resolved", "comment:unresolved",
-      "activity:created",
+      "activity:created", "issue:runtime_changed",
       "reaction:added", "reaction:removed",
       "issue_reaction:added", "issue_reaction:removed",
       "subscriber:added", "subscriber:removed",
@@ -1265,6 +1267,16 @@ export function useRealtimeSync(
     const unsubCommentUnresolved = ws.on("comment:unresolved", (p) => {
       const { comment } = p as CommentUnresolvedPayload;
       if (comment?.issue_id) invalidateTimeline(comment.issue_id);
+    });
+
+    const unsubIssueRuntimeChanged = ws.on("issue:runtime_changed", (p) => {
+      const { issue_id } = p as { issue_id?: string };
+      if (!issue_id) return;
+      const wsId = getCurrentWsId();
+      if (wsId) qc.invalidateQueries({ queryKey: [...issueKeys.all(wsId), "runtime", issue_id] });
+      // This event carries no timeline row for a granular cache insert.
+      qc.invalidateQueries({ queryKey: issueKeys.timeline(issue_id) });
+      qc.invalidateQueries({ queryKey: issueKeys.tasks(issue_id) });
     });
 
     const unsubActivityCreated = ws.on("activity:created", (p) => {
@@ -1835,6 +1847,7 @@ export function useRealtimeSync(
       unsubCommentDeleted();
       unsubCommentResolved();
       unsubCommentUnresolved();
+      unsubIssueRuntimeChanged();
       unsubActivityCreated();
       unsubReactionAdded();
       unsubReactionRemoved();

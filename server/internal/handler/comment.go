@@ -20,6 +20,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -1849,7 +1850,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		// still pins the requested set: an attachment deleted while this waited
 		// is refused before the comment is committed, rather than the comment
 		// committing without it.
-		tx, beginErr := h.beginWakeupWrite(r.Context())
+		tx, beginErr := h.beginWakeupWrite(r.Context(), bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 		if beginErr != nil {
 			slog.Warn("create comment failed", append(logger.RequestAttrs(r), "error", beginErr, "issue_id", issueID)...)
 			writeError(w, http.StatusInternalServerError, "failed to create comment")
@@ -2747,10 +2748,14 @@ func (h *Handler) routeReplyToParentAuthor(ctx context.Context, issue db.Issue, 
 		ID:          parent.AuthorID,
 		WorkspaceID: issue.WorkspaceID,
 	})
-	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+	if err != nil || agent.ArchivedAt.Valid {
 		return commentAgentTrigger{}, false
 	}
 	if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.OriginatorUserID, uuidToString(issue.WorkspaceID)) {
+		return commentAgentTrigger{}, false
+	}
+	agent, err = service.ResolveIssueAgentRuntime(ctx, h.Queries, issue.ID, agent)
+	if err != nil || !agent.RuntimeID.Valid {
 		return commentAgentTrigger{}, false
 	}
 	hasPending, err := h.hasPendingTaskForIssueAndAgent(ctx, issue.ID, parent.AuthorID, opts)
@@ -2946,10 +2951,14 @@ func (h *Handler) routeConversationContinuationToAgent(ctx context.Context, issu
 		ID:          agentID,
 		WorkspaceID: issue.WorkspaceID,
 	})
-	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+	if err != nil || agent.ArchivedAt.Valid {
 		return commentAgentTrigger{}, false
 	}
 	if !h.canInvokeAgent(ctx, agent, "member", memberID, memberID, uuidToString(issue.WorkspaceID)) {
+		return commentAgentTrigger{}, false
+	}
+	agent, err = service.ResolveIssueAgentRuntime(ctx, h.Queries, issue.ID, agent)
+	if err != nil || !agent.RuntimeID.Valid {
 		return commentAgentTrigger{}, false
 	}
 	hasPending, err := h.hasPendingTaskForIssueAndAgent(ctx, issue.ID, agentID, opts)
@@ -3265,6 +3274,11 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 			blockTarget("agent", m.ID, ReasonTargetUnavailable)
 			continue
 		}
+		agent, err = service.ResolveIssueAgentRuntime(ctx, h.Queries, issue.ID, agent)
+		if err != nil {
+			blockTarget("agent", m.ID, ReasonInternalError)
+			continue
+		}
 		// One readiness verdict for every admission path (service.AgentReadiness).
 		// Only a BLOCKED verdict refuses the mention: an unbound agent has no
 		// machine to bring back (MUL-5559), and a machine whose CLI cannot run
@@ -3454,7 +3468,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		// lock before the attachment replacement, so two modern editors cannot
 		// interleave their CAS check and attachment selection. A body + attachment
 		// edit is one visible mutation and therefore bumps revision exactly once.
-		tx, beginErr := h.beginWakeupWrite(r.Context())
+		tx, beginErr := h.beginWakeupWrite(r.Context(), bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 		if beginErr != nil {
 			writeError(w, http.StatusInternalServerError, "failed to prepare comment edit")
 			return
@@ -3735,7 +3749,7 @@ func lockCommentAttachments(ctx context.Context, qtx *db.Queries, workspaceID, i
 // when the delete commits while this waits. Returns pgx.ErrNoRows when the
 // comment is gone or deleted.
 func (h *Handler) withLiveCommentLock(ctx context.Context, commentID, workspaceID pgtype.UUID, write func(*db.Queries) error) error {
-	tx, err := h.beginWakeupWrite(ctx)
+	tx, err := h.beginWakeupWrite(ctx, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		return err
 	}
@@ -3765,7 +3779,7 @@ var errTaskSupplementInFlight = errors.New("additional message is still being de
 // Returns pgx.ErrNoRows when the comment is already gone or already deleted.
 func (h *Handler) deleteComment(ctx context.Context, commentID, workspaceID pgtype.UUID) (commentDeletion, error) {
 	var out commentDeletion
-	tx, err := h.beginWakeupWrite(ctx)
+	tx, err := h.beginWakeupWrite(ctx, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		return out, err
 	}
@@ -4035,7 +4049,7 @@ func (h *Handler) ResolveComment(w http.ResponseWriter, r *http.Request) {
 	// resolving this one must clear any other resolution in the same thread. Both
 	// writes run in one tx — clearing the old resolution and setting the new one
 	// is atomic, so a crash can never leave two resolutions (or none) visible.
-	tx, err := h.beginWakeupWrite(r.Context())
+	tx, err := h.beginWakeupWrite(r.Context(), bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to resolve comment")
 		return

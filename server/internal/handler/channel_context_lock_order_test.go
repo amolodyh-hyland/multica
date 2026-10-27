@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -55,6 +56,13 @@ func (tx *contextLockTestTx) QueryRow(ctx context.Context, query string, args ..
 	}
 }
 
+func (tx *contextLockTestTx) Exec(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error) {
+	if tx.starter.observeBefore != "" && strings.Contains(query, tx.starter.observeBefore) {
+		close(tx.starter.observed)
+	}
+	return tx.Tx.Exec(ctx, query, args...)
+}
+
 type contextLockPauseRow struct {
 	pgx.Row
 	paused  chan struct{}
@@ -70,11 +78,8 @@ func (row *contextLockPauseRow) Scan(dest ...any) error {
 	return nil
 }
 
-// TestChannelContextLockOrder serializes the production enqueue and append
-// paths at the exact lock edge that previously formed an ABBA cycle. Enqueue
-// pauses while holding the target generation; a concurrent append then starts
-// its binding lock. Both must complete after enqueue is released, proving that
-// enqueue already owns binding before generation and append cannot invert it.
+// Enqueue holds the generation while append waits at the transaction prefix.
+// Append must acquire no conflicting binding/generation locks before enqueue commits.
 func TestChannelContextLockOrder(t *testing.T) {
 	if testHandler == nil {
 		t.Fatal("database-backed handler test fixture is required")
@@ -152,7 +157,7 @@ func TestChannelContextLockOrder(t *testing.T) {
 
 	bindingAttempted := make(chan struct{})
 	appendSession := engine.NewChatSession(queries, &contextLockTestStarter{
-		pool: testPool, observeBefore: "LockCurrentChannelChatSessionBindingBySession", observed: bindingAttempted,
+		pool: testPool, observeBefore: "pg_advisory_xact_lock", observed: bindingAttempted,
 	}, channel.Type("slack"), engine.SessionTitles{Direct: "Lock order test"})
 	appendResult := make(chan error, 1)
 	go func() {
@@ -162,7 +167,7 @@ func TestChannelContextLockOrder(t *testing.T) {
 		})
 		appendResult <- err
 	}()
-	waitContextLockSignal(t, bindingAttempted, "append did not attempt binding lock")
+	waitContextLockSignal(t, bindingAttempted, "append did not attempt transaction prefix")
 	release()
 
 	if err := waitContextLockResult(t, enqueueResult, "enqueue"); err != nil {

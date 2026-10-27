@@ -478,6 +478,10 @@ LIMIT 1;
 WITH target AS (
     SELECT issue.id FROM issue WHERE issue.id = $1 AND issue.workspace_id = $2
 ),
+cleared_runtime_override AS (
+ DELETE FROM issue_runtime_override WHERE issue_id IN (SELECT target.id FROM target)
+ RETURNING issue_id
+),
 cleared_wakeup_receipts AS (
  DELETE FROM issue_wakeup_receipt WHERE wakeup_id IN (SELECT id FROM issue_wakeup WHERE issue_id IN (SELECT target.id FROM target))
 ),
@@ -502,7 +506,9 @@ cleared_pr_automation AS (
 cleared_pr_exclusions AS (
     DELETE FROM issue_pull_request_exclusion WHERE issue_id IN (SELECT target.id FROM target)
 )
-DELETE FROM issue WHERE issue.id IN (SELECT target.id FROM target);
+-- Complete preference cleanup before issue deletion can cascade into tasks.
+DELETE FROM issue WHERE issue.id IN (SELECT target.id FROM target)
+  AND (SELECT count(*) FROM cleared_runtime_override) >= 0;
 
 -- name: ListOpenIssues :many
 -- See ListIssues for the semantics of involves_user_id (mirrors the 4-branch

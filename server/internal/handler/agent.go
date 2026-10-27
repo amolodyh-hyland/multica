@@ -28,6 +28,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/knowledge"
 	"github.com/multica-ai/multica/server/pkg/libraryimport"
@@ -1585,7 +1586,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Owners(wsUUID, runtimeUUID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start agent create transaction")
 		return
@@ -2289,8 +2290,10 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// retain the runtime-before-agent lock order used by access revocation.
 	updateQueries := h.Queries
 	var updateTx pgx.Tx
+	var switchedRuntime *db.AgentRuntime
+	var movedTasks []db.AgentTaskQueue
 	if req.RuntimeID != nil || replacePermissionTargets {
-		updateTx, err = h.TxStarter.Begin(r.Context())
+		updateTx, err = bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Owners(existing.ID, params.RuntimeID))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to start agent update transaction")
 			return
@@ -2307,7 +2310,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.RuntimeID != nil {
-		member, ok := h.workspaceMember(w, r, uuidToString(existing.WorkspaceID))
+		member, ok := h.withQueries(updateQueries).workspaceMember(w, r, uuidToString(existing.WorkspaceID))
 		if !ok {
 			return
 		}
@@ -2319,6 +2322,44 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		if !canUseRuntimeForAgent(member, runtime) {
 			writeError(w, http.StatusForbidden, "this runtime is private; only its owner can move agents onto it")
 			return
+		}
+		if runtime.Provider != targetProvider {
+			writeError(w, http.StatusConflict, "runtime provider changed; reload before switching runtime")
+			return
+		}
+		lockedAgent, err := updateQueries.GetAgentForUpdate(r.Context(), existing.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to lock agent")
+			return
+		}
+		if lockedAgent.RuntimeID != existing.RuntimeID || lockedAgent.OwnerID != existing.OwnerID {
+			writeError(w, http.StatusConflict, "agent changed; reload before switching runtime")
+			return
+		}
+		if runtime.Visibility == "private" && runtime.OwnerID != lockedAgent.OwnerID {
+			writeError(w, http.StatusForbidden, "this runtime is private; its owner must match the agent owner")
+			return
+		}
+		if runtime.ID != lockedAgent.RuntimeID {
+			active, err := updateQueries.CountRunningTasks(r.Context(), existing.ID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to check active tasks")
+				return
+			}
+			if active > 0 {
+				writeError(w, http.StatusConflict, "finish or cancel active tasks before switching runtime")
+				return
+			}
+			pinned, err := updateQueries.HasPendingPublicDelegationForAgent(r.Context(), existing.ID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to check pending delegations")
+				return
+			}
+			if pinned {
+				writeError(w, http.StatusConflict, "finish or cancel pending delegations before switching their confirmed runtime")
+				return
+			}
+			switchedRuntime = &runtime
 		}
 		params.RuntimeMode = pgtype.Text{String: runtime.RuntimeMode, Valid: true}
 	}
@@ -2352,9 +2393,11 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if updateTx != nil {
-		if err := updateTx.Commit(r.Context()); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to commit agent update")
+	if switchedRuntime != nil {
+		actorType, actorID := h.withQueries(updateQueries).resolveActor(r, requestUserID(r), uuidToString(existing.WorkspaceID))
+		movedTasks, err = recordAgentRuntimeSwitch(r.Context(), updateQueries, existing, *switchedRuntime, actorType, parseUUID(actorID))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to record runtime change")
 			return
 		}
 	}
@@ -2363,7 +2406,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// clear the field. COALESCE in UpdateAgent cannot set a column to NULL, so
 	// mcp_config, thinking_level, and service_tier use dedicated clear queries.
 	if shouldClearMcpConfig {
-		updated, err = h.Queries.ClearAgentMcpConfig(r.Context(), updated.ID)
+		updated, err = updateQueries.ClearAgentMcpConfig(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent mcp_config failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to clear mcp_config")
@@ -2371,7 +2414,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if shouldClearThinkingLevel {
-		updated, err = h.Queries.ClearAgentThinkingLevel(r.Context(), updated.ID)
+		updated, err = updateQueries.ClearAgentThinkingLevel(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent thinking_level failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to clear thinking_level")
@@ -2379,7 +2422,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if shouldClearServiceTier {
-		updated, err = h.Queries.ClearAgentServiceTier(r.Context(), updated.ID)
+		updated, err = updateQueries.ClearAgentServiceTier(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent service_tier failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to clear service_tier")
@@ -2387,7 +2430,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if shouldClearComposioAllowlist {
-		updated, err = h.Queries.ClearAgentComposioToolkitAllowlist(r.Context(), updated.ID)
+		updated, err = updateQueries.ClearAgentComposioToolkitAllowlist(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent composio_toolkit_allowlist failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to clear composio_toolkit_allowlist")
@@ -2395,6 +2438,16 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if updateTx != nil {
+		if err := updateTx.Commit(r.Context()); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to commit agent update")
+			return
+		}
+	}
+
+	for _, task := range movedTasks {
+		h.TaskService.NotifyTaskRuntimeChanged(r.Context(), task)
+	}
 	resp := h.agentToResponse(updated)
 	if err := h.enrichAgentResponseWithTargets(r.Context(), &resp, updated.ID); err != nil {
 		slog.Warn("update agent: load invocation targets for response failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)

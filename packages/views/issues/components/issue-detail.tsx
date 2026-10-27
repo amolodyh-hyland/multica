@@ -1,5 +1,7 @@
 "use client";
 
+import { IssueRuntimeControl } from "./issue-runtime-control";
+
 import {
   issueBehavesAs,
   issueBehavesAsAny,
@@ -329,6 +331,11 @@ function formatActivity(
 ): string {
   const details = (entry.details ?? {}) as Record<string, string>;
   switch (entry.action) {
+    case "runtime_changed":
+      return t(($) => $.runtime.changed, {
+        from: details.from_provider || t(($) => $.runtime.unbound),
+        to: details.to_provider || t(($) => $.runtime.unbound),
+      });
     case "created":
       return t(($) => $.activity.created);
     case "status_changed":
@@ -2674,6 +2681,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           <PropRow label={t(($) => $.detail.prop_assignee)}>
             <AssigneePicker assigneeType={issue.assignee_type} assigneeId={issue.assignee_id} onUpdate={handleUpdateField} align="start" />
           </PropRow>
+          <IssueRuntimeControl issue={issue} />
           <PropRow label={t(($) => $.detail.prop_project)}>
             <IssueProjectPicker
               projectId={issue.project_id}

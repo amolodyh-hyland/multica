@@ -86,6 +86,23 @@ describe("useRealtimeSync — comment activity cache coherence", () => {
     vi.clearAllMocks();
   });
 
+  it("refreshes an issue runtime selection and its history across tabs", () => {
+    const runtimeKey = [...issueKeys.all("ws-1"), "runtime", "issue-1", "profile"];
+    const otherRuntimeKey = [...issueKeys.all("ws-1"), "runtime", "issue-2", "profile"];
+    qc.setQueryData(runtimeKey, { runtime_id: "old" });
+    qc.setQueryData(otherRuntimeKey, { runtime_id: null });
+    qc.setQueryData(issueKeys.timeline("issue-1"), []);
+    qc.setQueryData(issueKeys.tasks("issue-1"), []);
+    const { ws, handlers } = createRecordingWs();
+    const { unmount } = renderHook(() => useRealtimeSync(ws, createStores()), { wrapper: createWrapper(qc) });
+    handlers["issue:runtime_changed"]?.({ issue_id: "issue-1" });
+    expect(qc.getQueryState(runtimeKey)?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(otherRuntimeKey)?.isInvalidated).toBe(false);
+    expect(qc.getQueryState(issueKeys.timeline("issue-1"))?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(issueKeys.tasks("issue-1"))?.isInvalidated).toBe(true);
+    unmount();
+  });
+
   it("invalidates the updated_at-sorted board but leaves the position board", () => {
     qc.setQueryData<ListIssuesCache>(updatedBoardKey, bucketed());
     qc.setQueryData<ListIssuesCache>(positionBoardKey, bucketed());

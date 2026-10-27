@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/entitlement"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -123,7 +124,7 @@ func (s *AutopilotService) createAutopilotRunWithQuota(
 		return run, false, err
 	}
 
-	tx, err := s.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		return db.AutopilotRun{}, false, fmt.Errorf("begin quota admission: %w", err)
 	}

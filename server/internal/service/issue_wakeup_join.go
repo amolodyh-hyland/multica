@@ -13,6 +13,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -138,9 +139,10 @@ func hasWaitingRun(ctx context.Context, q *db.Queries, issueID, agentID, runAs p
 // childDoneRunAs is who a child_done run for this agent runs as: whoever
 // caused the parent to exist, as a run the parent's own assignment would
 // start.
-func (s *IssueWakeupService) childDoneRunAs(ctx context.Context, issue db.Issue, agent db.Agent) (attribution.Result, error) {
-	attr := s.Tasks.attributionForIssueTask(ctx, issue, pgtype.UUID{}, attribution.SourceDelegation, pgtype.UUID{})
-	return s.Tasks.applyAttributionFallback(ctx, attr, agent)
+func (s *IssueWakeupService) childDoneRunAs(ctx context.Context, q *db.Queries, issue db.Issue, agent db.Agent) (attribution.Result, error) {
+	resolver := &TaskService{Queries: q}
+	attr := resolver.attributionForIssueTask(ctx, issue, pgtype.UUID{}, attribution.SourceDelegation, pgtype.UUID{})
+	return resolver.applyAttributionFallback(ctx, attr, agent)
 }
 
 // joinedWakeupNote is what the run is told about a rule that joined it.
@@ -199,7 +201,7 @@ func (s *IssueWakeupService) JoinWaitingWakeups(ctx context.Context, task db.Age
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	tx, err := s.Tasks.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter, bindingtx.Owners(task.ID))
 	if err != nil {
 		return task.Context, err
 	}
@@ -362,7 +364,7 @@ func (s *IssueWakeupService) mayJoin(ctx context.Context, q *db.Queries, issue d
 		if w.AgentID != task.AgentID || w.CreatedBy != task.OriginatorUserID || (w.Mode == "once" && w.LastTaskID.Valid) {
 			return "", false, nil
 		}
-		if err := s.authorize(ctx, q, w.WorkspaceID, w.CreatedBy, agent); err != nil {
+		if err := s.authorize(ctx, q, w.WorkspaceID, w.CreatedBy, w.IssueID, agent); err != nil {
 			if errors.Is(err, ErrWakeupForbidden) {
 				err = nil
 			}
@@ -377,7 +379,7 @@ func (s *IssueWakeupService) mayJoin(ctx context.Context, q *db.Queries, issue d
 	if err != nil || target.Agent.ID != task.AgentID {
 		return "", false, err
 	}
-	runAs, err := s.childDoneRunAs(ctx, issue, agent)
+	runAs, err := s.childDoneRunAs(ctx, q, issue, agent)
 	if err != nil || runAs.UserID != task.OriginatorUserID {
 		return "", false, err
 	}

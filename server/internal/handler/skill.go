@@ -23,6 +23,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/logger"
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"golang.org/x/sync/errgroup"
@@ -628,7 +629,7 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
 		return
@@ -723,7 +724,7 @@ func (h *Handler) DeleteSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
 		return
@@ -2641,7 +2642,7 @@ func (h *Handler) SetAgentSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
 		return
@@ -2697,7 +2698,7 @@ func (h *Handler) AddAgentSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
 		return

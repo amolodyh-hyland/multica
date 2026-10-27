@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/eventcontract"
@@ -288,7 +289,7 @@ func (s *IssueWakeupService) EditInstruction(ctx context.Context, issueID, id, m
 	if len(in.Instruction) == 0 || len(in.Instruction) > 12000 || in.Revision < 1 {
 		return fmt.Errorf("%w: instruction must be 1–12000 bytes and revision is required", ErrWakeupInput)
 	}
-	tx, err := s.Tasks.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter, bindingtx.Owners(issueID))
 	if err != nil {
 		return err
 	}
@@ -320,7 +321,7 @@ func (s *IssueWakeupService) EditInstruction(ctx context.Context, issueID, id, m
 	if err != nil {
 		return ErrWakeupForbidden
 	}
-	if err = s.authorize(ctx, q, issue.WorkspaceID, member, agent); err != nil {
+	if err = s.authorize(ctx, q, issue.WorkspaceID, member, issue.ID, agent); err != nil {
 		return err
 	}
 	if w.Revision != in.Revision || w.Instruction != in.ExpectedInstruction {
@@ -346,7 +347,7 @@ func (s *IssueWakeupService) Save(ctx context.Context, issueID, member, source, 
 
 func (s *IssueWakeupService) save(ctx context.Context, issueID, member, source, existingID pgtype.UUID, in WakeupInput, enable *WakeupEnableInput) (db.IssueWakeup, error) {
 	var out db.IssueWakeup
-	tx, err := s.Tasks.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter, bindingtx.Owners(issueID))
 	if err != nil {
 		return out, err
 	}
@@ -467,7 +468,7 @@ func (s *IssueWakeupService) save(ctx context.Context, issueID, member, source, 
 	if err != nil {
 		return out, ErrWakeupForbidden
 	}
-	if err = s.authorize(ctx, q, issue.WorkspaceID, member, agent); err != nil {
+	if err = s.authorize(ctx, q, issue.WorkspaceID, member, issue.ID, agent); err != nil {
 		return out, err
 	}
 	filterAgent, err := wakeupUUID(in.FilterAgentID)
@@ -627,8 +628,15 @@ func (s *IssueWakeupService) save(ctx context.Context, issueID, member, source, 
 	return out, nil
 }
 
-func (s *IssueWakeupService) authorize(ctx context.Context, q *db.Queries, ws, member pgtype.UUID, a db.Agent) error {
-	if !member.Valid || a.ArchivedAt.Valid || !a.RuntimeID.Valid {
+func (s *IssueWakeupService) authorize(ctx context.Context, q *db.Queries, ws, member, issueID pgtype.UUID, a db.Agent) error {
+	if !member.Valid || a.ArchivedAt.Valid {
+		return ErrWakeupForbidden
+	}
+	effective, err := q.GetIssueAgentRuntime(ctx, db.GetIssueAgentRuntimeParams{AgentID: a.ID, IssueID: issueID})
+	if err != nil {
+		return err
+	}
+	if !effective.Valid {
 		return ErrWakeupForbidden
 	}
 	if _, err := q.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{UserID: member, WorkspaceID: ws}); err != nil {
@@ -950,7 +958,7 @@ func (s *IssueWakeupService) systemRuleRunWaiting(ctx context.Context, q *db.Que
 	if err != nil || !target.Agent.ID.Valid {
 		return false, err
 	}
-	runAs, err := s.childDoneRunAs(ctx, issue, target.Agent)
+	runAs, err := s.childDoneRunAs(ctx, q, issue, target.Agent)
 	if err != nil {
 		return false, err
 	}
@@ -969,10 +977,10 @@ func (s *IssueWakeupService) dispatch(ctx context.Context, prev db.IssueWakeup) 
 		return readErr
 	}
 	var overlay runtimeMCPOverlayData
-	if candidate.ID.Valid && s.authorize(ctx, s.Tasks.Queries, prev.WorkspaceID, prev.CreatedBy, candidate) == nil {
+	if candidate.ID.Valid && s.authorize(ctx, s.Tasks.Queries, prev.WorkspaceID, prev.CreatedBy, prev.IssueID, candidate) == nil {
 		overlay = s.Tasks.buildRuntimeMCPOverlay(ctx, prev.CreatedBy, candidate)
 	}
-	tx, err := s.Tasks.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter, bindingtx.Workspaces(prev.WorkspaceID))
 	if err != nil {
 		return err
 	}
@@ -1019,7 +1027,7 @@ func (s *IssueWakeupService) dispatch(ctx context.Context, prev db.IssueWakeup) 
 	if agent.ID.Valid && agent.RuntimeID != candidate.RuntimeID {
 		return tx.Commit(ctx)
 	}
-	authErr := s.authorize(ctx, q, w.WorkspaceID, w.CreatedBy, agent)
+	authErr := s.authorize(ctx, q, w.WorkspaceID, w.CreatedBy, w.IssueID, agent)
 	if w.DisabledAt.Valid || !active || authErr != nil {
 		if authErr != nil && !errors.Is(authErr, ErrWakeupForbidden) {
 			return authErr
@@ -1383,7 +1391,7 @@ func qCleanupMissingWakeup(ctx context.Context, tx pgx.Tx, id pgtype.UUID) error
 // ordinary Stop control; closing a subscription never kills unrelated work.
 func (s *IssueWakeupService) Disable(ctx context.Context, issueID, id, member pgtype.UUID) (db.IssueWakeup, error) {
 	var out db.IssueWakeup
-	tx, err := s.Tasks.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter, bindingtx.Owners(issueID))
 	if err != nil {
 		return out, err
 	}
@@ -1463,7 +1471,7 @@ func (s *IssueWakeupService) CheckClaim(ctx context.Context, task db.AgentTaskQu
 			return ErrWakeupForbidden
 		}
 		agent, err := s.Tasks.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: task.AgentID, WorkspaceID: w.WorkspaceID})
-		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (agent.ArchivedAt.Valid || !agent.RuntimeID.Valid)) {
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (agent.ArchivedAt.Valid || !task.RuntimeID.Valid)) {
 			return ErrWakeupForbidden
 		}
 		return err
@@ -1478,5 +1486,5 @@ func (s *IssueWakeupService) CheckClaim(ctx context.Context, task db.AgentTaskQu
 	if err != nil {
 		return err
 	}
-	return s.authorize(ctx, s.Tasks.Queries, w.WorkspaceID, w.CreatedBy, agent)
+	return s.authorize(ctx, s.Tasks.Queries, w.WorkspaceID, w.CreatedBy, w.IssueID, agent)
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	publicapiv1 "github.com/multica-ai/multica/server/pkg/publicapi/v1"
 )
@@ -23,7 +24,7 @@ func (h *Handler) GetPublicDelegationResult(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	ctx := r.Context()
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(member.WorkspaceID))
 	if err != nil {
 		publicReadFailure(w, r)
 		return

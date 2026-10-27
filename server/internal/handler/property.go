@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/issueproperty"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -718,7 +719,7 @@ func (h *Handler) SetIssueProperty(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return fail(http.StatusBadRequest, err.Error())
 			}
-			if status, msg := h.resolveActorRefs(r, uuidToString(issue.WorkspaceID), refs); status != 0 {
+			if status, msg := h.withQueries(q).resolveActorRefs(r, uuidToString(issue.WorkspaceID), refs); status != 0 {
 				return fail(status, msg)
 			}
 		}
@@ -818,7 +819,7 @@ func (h *Handler) DeleteIssueProperty(w http.ResponseWriter, r *http.Request) {
 // definition creates/unarchives against each other (the 20-active cap and
 // MAX(position)+1 are read-then-write). Locks are transaction-scoped.
 func (h *Handler) withPropertyLock(r *http.Request, lockKeys []string, fn func(q *db.Queries) error) error {
-	tx, err := h.beginWakeupWrite(r.Context())
+	tx, err := h.beginWakeupWrite(r.Context(), bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 	if err != nil {
 		return err
 	}

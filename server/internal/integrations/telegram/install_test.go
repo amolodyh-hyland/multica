@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,8 +14,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/testutil"
 
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -247,4 +250,21 @@ func TestLiveBotOwnerConflictIsClassified(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (tx *fakeTelegramTx) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if sql != "SELECT pg_advisory_xact_lock($1,$2)" || len(args) != 2 || args[0] != bindingtx.Namespace {
+		return pgconn.CommandTag{}, fmt.Errorf("unexpected transaction SQL: %s", sql)
+	}
+	return pgconn.NewCommandTag("SELECT 1"), nil
+}
+
+func (tx *fakeTelegramTx) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
+	workspace := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
+	if len(args) > 0 {
+		if id, ok := args[0].(pgtype.UUID); ok {
+			workspace = id
+		}
+	}
+	return testutil.UUIDRows(workspace), nil
 }

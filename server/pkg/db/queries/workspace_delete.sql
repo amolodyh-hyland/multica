@@ -559,6 +559,9 @@ WITH deleted_wakeup_receipts AS (
 deleted_child_events AS (
  DELETE FROM issue_child_event WHERE workspace_id=$1
 ),
+deleted_runtime_overrides AS (
+    DELETE FROM issue_runtime_override WHERE workspace_id = $1
+),
 deleted_issues AS (
     DELETE FROM issue WHERE issue.workspace_id = $1
 ),

@@ -607,7 +607,7 @@ func main() {
 	analyticsClient := analytics.NewFromEnv()
 	defer analyticsClient.Close()
 
-	queries := db.New(pool)
+	queries := db.NewBinding(pool)
 	hub.SetAuthorizer(newScopeAuthorizer(queries))
 	// Order matters: subscriber listeners must register BEFORE notification listeners.
 	// The notification listener queries the subscriber table to determine recipients,
@@ -696,7 +696,7 @@ func main() {
 	})
 	var replicaQueries *db.Queries
 	if replicaPool != nil {
-		replicaQueries = db.New(replicaPool)
+		replicaQueries = db.NewBinding(replicaPool)
 	}
 	// Reuse the handler's primary Queries handle so replica routing does not
 	// create a second wrapper around the same primary pool.

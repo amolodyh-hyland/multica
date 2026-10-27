@@ -1,4 +1,13 @@
 {
+  "runtime": {
+    "changed": "changed the assigned agent’s provider from {{from}} to {{to}}",
+    "unbound": "unbound",
+    "label": "Provider / runtime",
+    "use_default": "Use profile default",
+    "hint": "Applies only to this issue’s assigned agent. Finish or cancel active runs before switching.",
+    "load_failed": "Could not load the runtime.",
+    "save_failed": "Could not save the runtime."
+  },
   "inline_run": {
     "label": "{{name}} run",
     "stop": "Stop",

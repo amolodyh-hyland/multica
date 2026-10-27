@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -175,7 +176,7 @@ func (h *Handler) CreateWorkspaceMcpServer(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create the MCP server")
 		return
@@ -285,7 +286,7 @@ func (h *Handler) DeleteWorkspaceMcpServer(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete the MCP server")
 		return
@@ -406,7 +407,7 @@ func (h *Handler) AddAgentMcpServer(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to add the MCP server")
 		return

@@ -78,6 +78,7 @@ export function AgentDetailInspector({
     [agent.id, onUpdate],
   );
 
+  const [switchingRuntime, setSwitchingRuntime] = useState(false);
   const [name, setName] = useState(agent.name);
   const [description, setDescription] = useState(agent.description ?? "");
 
@@ -241,27 +242,38 @@ export function AgentDetailInspector({
         <SettingsCard>
           <SettingsRow
             label={t(($) => $.inspector.prop_runtime)}
+            description={t(($) => $.inspector.runtime_switch_hint)}
             size="select-wide"
           >
             <RuntimePicker
               variant="field"
               showLabel={false}
               value={agent.runtime_id}
-              runtimes={runtimes}
+              runtimes={runtimes.filter(
+                (r) => r.visibility !== "private" || r.owner_id === agent.owner_id,
+              )}
               members={members}
               currentUserId={currentUserId}
-              canEdit={canEdit}
+              canEdit={canEdit && !switchingRuntime}
               // Model, thinking level, and service tier are runtime/model
               // native. Clear them together so the new runtime resolves its
               // own defaults instead of inheriting incompatible tokens.
-              onChange={(id) =>
-                update({
-                  runtime_id: id,
-                  model: "",
-                  thinking_level: "",
-                  service_tier: "",
-                })
-              }
+              onChange={async (id) => {
+                setSwitchingRuntime(true);
+                try {
+                  await update({
+                    runtime_id: id,
+                    model: "",
+                    thinking_level: "",
+                    service_tier: "",
+                    custom_args: [],
+                  });
+                } catch {
+                  // The page restores the previous fields and presents the error.
+                } finally {
+                  setSwitchingRuntime(false);
+                }
+              }}
             />
           </SettingsRow>
           <SettingsRow

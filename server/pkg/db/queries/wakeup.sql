@@ -173,14 +173,14 @@ SELECT * FROM agent_task_queue WHERE context->>'wakeup_id'= @wakeup_id::text AND
 -- that passes no id still inserts — it just gets a random v4, exactly as before.
 -- The same pattern is used by every INSERT listed in pkg/dbid's write table.
 INSERT INTO agent_task_queue (
-    agent_id, runtime_id, issue_id, status, priority, trigger_comment_id,
+    agent_id, runtime_id, runtime_override_id, issue_id, status, priority, trigger_comment_id,
     coalesced_comment_ids, trigger_summary, force_fresh_session, is_leader_task, handoff_note,
     squad_id, context, originator_user_id, accountable_user_id, runtime_mcp_overlay, runtime_connected_apps,
     originator_source, delegated_from_task_id, rule_version_id, rerun_of_task_id, trigger_evidence_kind, trigger_evidence_ref_id,
     workflow_step, id
 )
 SELECT
-    $1, $2, $3, 'queued', $4, sqlc.narg(trigger_comment_id),
+    @agent_id, COALESCE(issue_runtime_for_run(@agent_id,@issue_id),(SELECT binding.runtime_id FROM agent binding WHERE binding.id = @agent_id FOR SHARE)), issue_runtime_for_run(@agent_id,@issue_id), @issue_id, 'queued', @priority, sqlc.narg(trigger_comment_id),
     COALESCE(sqlc.narg(coalesced_comment_ids)::uuid[], '{}'),
     sqlc.narg(trigger_summary),
     COALESCE(sqlc.narg('force_fresh_session')::boolean, FALSE),
@@ -207,11 +207,12 @@ SELECT
     -- makes after someone else moved the issue is refused like the run's own
     -- would be. A wakeup a member registered starts from the issue's status.
     COALESCE(
-        (SELECT s.workflow_step FROM agent_task_queue s WHERE s.id = sqlc.narg(delegated_from_task_id) AND s.issue_id = $3),
-        (SELECT i.status FROM issue i WHERE i.id = $3)
+        (SELECT s.workflow_step FROM agent_task_queue s WHERE s.id = sqlc.narg(delegated_from_task_id) AND s.issue_id = @issue_id),
+        (SELECT i.status FROM issue i WHERE i.id = @issue_id)
     ),
     COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
-WHERE lock_task_owner_rows($1, $3, $2)
+WHERE lock_task_owner_rows(@agent_id, @issue_id, @runtime_id::uuid)
+  AND lock_task_owner_rows(@agent_id, @issue_id, COALESCE(issue_runtime_for_run(@agent_id, @issue_id), (SELECT binding.runtime_id FROM agent binding WHERE binding.id = @agent_id), @runtime_id::uuid))
 RETURNING *;
 
 -- name: LocklessWakeup :one

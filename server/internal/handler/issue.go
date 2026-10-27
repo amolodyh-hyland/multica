@@ -31,6 +31,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	agentpkg "github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -256,7 +257,7 @@ func (h *Handler) runWithIssueStatusGuard(ctx context.Context, workspaceID pgtyp
 	if !hasActor && (statusKey == "" || issuestatus.IsBuiltIn(statusKey)) {
 		return fn(h.Queries)
 	}
-	tx, err := h.beginWakeupWrite(ctx)
+	tx, err := h.beginWakeupWrite(ctx, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		return err
 	}
@@ -3679,7 +3680,7 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 	if h.TxStarter == nil {
 		return db.Issue{}, db.Issue{}, false, errors.New("atomic issue update requires transaction starter")
 	}
-	tx, err := h.beginWakeupWrite(ctx)
+	tx, err := h.beginWakeupWrite(ctx, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		return db.Issue{}, db.Issue{}, false, fmt.Errorf("begin atomic issue update: %w", err)
 	}
@@ -4321,10 +4322,14 @@ func (h *Handler) assigneeFallbackAgent(ctx context.Context, issue db.Issue, act
 		return db.Agent{}, false, false
 	}
 	agent, err := h.Queries.GetAgent(ctx, issue.AssigneeID)
-	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+	if err != nil || agent.ArchivedAt.Valid {
 		return db.Agent{}, false, false
 	}
 	if !h.canInvokeAgent(ctx, agent, actorType, actorID, opts.OriginatorUserID, uuidToString(issue.WorkspaceID)) {
+		return db.Agent{}, false, false
+	}
+	agent, err = service.ResolveIssueAgentRuntime(ctx, h.Queries, issue.ID, agent)
+	if err != nil || !agent.RuntimeID.Valid {
 		return db.Agent{}, false, false
 	}
 	// Coalescing queue: pending is still a valid route target, but callers
@@ -4381,6 +4386,10 @@ func (h *Handler) isAgentAssigneeReady(ctx context.Context, issue db.Issue) bool
 	}
 
 	agent, err := h.Queries.GetAgent(ctx, issue.AssigneeID)
+	if err != nil {
+		return false
+	}
+	agent, err = service.ResolveIssueAgentRuntime(ctx, h.Queries, issue.ID, agent)
 	if err != nil {
 		return false
 	}
@@ -4461,7 +4470,11 @@ func (h *Handler) deleteIssuesAndCollectAttachmentURLs(ctx context.Context, issu
 	sort.Slice(issues, func(i, j int) bool {
 		return uuidToString(issues[i].ID) < uuidToString(issues[j].ID)
 	})
-	tx, err := h.beginWakeupWrite(ctx)
+	ids := make([]pgtype.UUID, 0, len(issues))
+	for _, issue := range issues {
+		ids = append(ids, issue.WorkspaceID)
+	}
+	tx, err := h.beginWakeupWrite(ctx, bindingtx.Workspaces(ids))
 	if err != nil {
 		return issueDeleteResult{}, fmt.Errorf("begin issue delete: %w", err)
 	}

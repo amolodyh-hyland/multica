@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen } from "@testing-library/react";
+import { cleanup, screen, fireEvent } from "@testing-library/react";
 import type { Agent } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { AgentDetailInspector } from "./agent-detail-inspector";
@@ -25,7 +25,7 @@ vi.mock("./inspector/model-picker", () => ({
 }));
 
 vi.mock("./inspector/runtime-picker", () => ({
-  RuntimePicker: () => <div data-testid="runtime-picker" />,
+  RuntimePicker: ({ onChange, canEdit }: { onChange: (id: string) => void; canEdit: boolean }) => <button disabled={!canEdit} onClick={() => onChange("codex-runtime")}>Choose Codex</button>,
 }));
 
 vi.mock("./inspector/thinking-prop-row", () => ({
@@ -47,6 +47,14 @@ const agent = {
 describe("AgentDetailInspector labels", () => {
   afterEach(() => {
     cleanup();
+  });
+
+  it("switches the shared profile with fresh provider-native defaults", () => {
+    const onUpdate = vi.fn(async () => {});
+    renderWithI18n(<AgentDetailInspector agent={agent} runtime={null} runtimes={[]} members={[]} currentUserId="user-1" canEdit onUpdate={onUpdate} />);
+    fireEvent.click(screen.getByRole("button", { name: "Choose Codex" }));
+    expect(onUpdate).toHaveBeenCalledWith("agent-1", { runtime_id: "codex-runtime", model: "", thinking_level: "", service_tier: "", custom_args: [] });
+    expect(screen.getByText(/Changes the shared profile/)).toBeInTheDocument();
   });
 
   // Agent labels were removed from the product (MUL-5600). Label Settings no

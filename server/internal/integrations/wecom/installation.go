@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
@@ -169,33 +170,27 @@ func (s *InstallationService) Upsert(ctx context.Context, p InstallationParams) 
 		return Installation{}, errors.New("wecom: InstallationService requires a transaction starter")
 	}
 
-	tx, err := s.tx.Begin(ctx)
+	scope := bindingtx.ChannelSlot(p.WorkspaceID, channelTypeWecom, p.BotID).
+		WithPreparation(func(ctx context.Context, before pgx.Tx) error {
+			q := s.store.WithTx(before)
+			// The per-bot slot precedes workspace keys. No row lock or write
+			// is permitted here, and no workspace writer waits on this slot.
+			if err := q.Queries.LockChannelInstallationAppIDSlot(ctx, db.LockChannelInstallationAppIDSlotParams{
+				ChannelType: channelTypeWecom, AppID: p.BotID,
+			}); err != nil {
+				return fmt.Errorf("wecom: lock bot routing slot: %w", err)
+			}
+			if err := botSlotConflictErr(ctx, q, p); err != nil {
+				return err
+			}
+			return s.probe.Probe(ctx, p.BotID, p.Secret)
+		})
+	tx, err := bindingtx.Begin(ctx, s.tx, scope)
 	if err != nil {
 		return Installation{}, fmt.Errorf("wecom: begin install tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := s.store.WithTx(tx)
-
-	// The serialization boundary. Held until commit/rollback, so every step
-	// below sees one consistent answer for who owns this bot.
-	if err := qtx.Queries.LockChannelInstallationAppIDSlot(ctx, db.LockChannelInstallationAppIDSlotParams{
-		ChannelType: channelTypeWecom,
-		AppID:       p.BotID,
-	}); err != nil {
-		return Installation{}, fmt.Errorf("wecom: lock bot routing slot: %w", err)
-	}
-
-	// Who holds the slot right now — read inside the lock, before anything
-	// external happens.
-	if err := botSlotConflictErr(ctx, qtx, p); err != nil {
-		return Installation{}, err
-	}
-
-	// Nothing live is at stake now: the slot is free, revoked, orphaned, or
-	// already this caller's own. Prove control before the reclaim acts on it.
-	if err := s.probe.Probe(ctx, p.BotID, p.Secret); err != nil {
-		return Installation{}, err
-	}
 
 	sealed, err := s.box.Seal([]byte(p.Secret))
 	if err != nil {
@@ -315,6 +310,7 @@ func (s *InstallationService) Upsert(ctx context.Context, p InstallationParams) 
 		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
 			// A LIVE owner still holds the slot. Read the owner on the
 			// non-tx connection (this tx is now in aborted state) to name it.
+			_ = tx.Rollback(ctx)
 			return Installation{}, s.botOwnerConflictErr(ctx, p.WorkspaceID, p.BotID)
 		}
 		return Installation{}, fmt.Errorf("wecom: upsert installation: %w", err)

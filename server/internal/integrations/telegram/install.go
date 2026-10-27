@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
@@ -209,7 +210,7 @@ func newCredentialVerificationClient() *http.Client {
 // connected to a different live agent or workspace — refuse rather than
 // steal, with the accurate conflict message (same policy as Slack #4810).
 func (s *InstallService) persistInstall(ctx context.Context, p installPersist) (db.ChannelInstallation, error) {
-	tx, err := s.tx.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.tx, bindingtx.ChannelSlot(p.wsID, string(TypeTelegram), p.appIDKey))
 	if err != nil {
 		return db.ChannelInstallation{}, fmt.Errorf("begin install tx: %w", err)
 	}
@@ -236,6 +237,7 @@ func (s *InstallService) persistInstall(ctx context.Context, p installPersist) (
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+			_ = tx.Rollback(ctx)
 			return db.ChannelInstallation{}, s.liveOwnerConflictErr(ctx, p.wsID, p.appIDKey)
 		}
 		return db.ChannelInstallation{}, fmt.Errorf("upsert telegram installation: %w", err)

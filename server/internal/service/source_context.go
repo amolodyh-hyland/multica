@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
@@ -731,7 +732,7 @@ func (s *TaskService) CleanupAbandonedSourceContexts(ctx context.Context, limit 
 	if s == nil || s.TxStarter == nil || s.SourceContextStorage == nil || limit <= 0 {
 		return 0, nil
 	}
-	tx, err := s.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter, bindingtx.AllWorkspaces())
 	if err != nil {
 		return 0, fmt.Errorf("begin source context cleanup: %w", err)
 	}

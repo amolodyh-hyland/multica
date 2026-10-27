@@ -32,6 +32,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -344,7 +345,7 @@ func (h *Handler) upsertRuntimeWithProfile(
 	var row db.UpsertAgentRuntimeWithProfileRow
 	var profile db.RuntimeProfile
 
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		return row, profile, fmt.Errorf("begin profile runtime registration: %w", err)
 	}
@@ -805,7 +806,8 @@ var errRuntimeMergeFenced = errors.New("runtime merge refused by the task-write 
 // as a single transaction.
 //
 // Order is load-bearing. The fence comes first — workspace row, then both runtime
-// rows FOR UPDATE — and tasks move next, because that statement carries the same
+// rows FOR UPDATE — then profiles and issue preferences, before moving tasks.
+// The task statement carries the same
 // fence predicate every task write uses and is the only step that can tell us the
 // target workspace is being torn down. Its verdict is separate from its row
 // count for exactly this reason: "0 tasks reassigned" is also what a legacy runtime
@@ -830,7 +832,7 @@ var errRuntimeMergeFenced = errors.New("runtime merge refused by the task-write 
 // teardown cannot start deleting the target until this merge finishes, and any
 // failure rolls the whole merge back to its starting state.
 func (h *Handler) mergeLegacyRuntime(ctx context.Context, newRuntimeID, oldRuntimeID pgtype.UUID, legacyID, provider string) error {
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Owners(newRuntimeID, oldRuntimeID))
 	if err != nil {
 		return fmt.Errorf("begin merge tx: %w", err)
 	}
@@ -855,6 +857,16 @@ func (h *Handler) mergeLegacyRuntime(ctx context.Context, newRuntimeID, oldRunti
 		// One of them went away while we were queueing for the lock; the fence
 		// inside the reassignment would refuse anyway.
 		return errRuntimeMergeFenced
+	}
+
+	if _, err := qtx.ListUserAgentsByRuntimeForUpdate(ctx, oldRuntimeID); err != nil {
+		return fmt.Errorf("lock legacy runtime profiles: %w", err)
+	}
+	if _, err := qtx.LockIssueRuntimeOverridesByRuntime(ctx, oldRuntimeID); err != nil {
+		return fmt.Errorf("lock legacy issue runtimes: %w", err)
+	}
+	if err := qtx.ReassignIssueRuntimeOverrides(ctx, db.ReassignIssueRuntimeOverridesParams{OldRuntimeID: oldRuntimeID, NewRuntimeID: newRuntimeID}); err != nil {
+		return fmt.Errorf("reassign issue runtimes: %w", err)
 	}
 
 	reassignment, err := qtx.ReassignTasksToRuntime(ctx, db.ReassignTasksToRuntimeParams{
@@ -2130,7 +2142,7 @@ func (h *Handler) finalizeClaimDelivery(
 				return &service.ClaimDeliveryAuthzError{Reason: "error_delegation_invocation_not_allowed", Detail: "delegation invocation is no longer allowed"}
 			}
 		}
-		if agent.RuntimeID != task.RuntimeID {
+		if agent.RuntimeID != task.RuntimeID && (!task.RuntimeOverrideID.Valid || task.RuntimeOverrideID != task.RuntimeID) {
 			return &service.ClaimDeliveryAuthzError{
 				Reason: "error_agent_runtime_changed",
 				Detail: "agent runtime changed before delivery",
@@ -2441,7 +2453,7 @@ func rerunSourceMatchesTaskScope(task, source db.AgentTaskQueue) bool {
 // gone. Either way the failed attempt's working memory does not come back, so
 // the continuity gap is disclosed.
 func applyFreshSessionRetryWorkdir(task db.AgentTaskQueue, resp *AgentTaskResponse, daemonKeepsCheckoutWork bool) {
-	if daemonKeepsCheckoutWork && task.WorkDir.Valid {
+	if !task.NativeResumeDisabled && daemonKeepsCheckoutWork && task.WorkDir.Valid {
 		resp.PriorWorkDir = task.WorkDir.String
 	}
 	resp.PriorSessionResumeUnavailable = true
@@ -2543,7 +2555,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// changing task state, but Agent mutations do not stay locked through HTTP
 	// response assembly. Recheck the freshly loaded Agent here so a rebind or
 	// owner change that committed after the claim cannot reach the daemon.
-	if agent.RuntimeID != task.RuntimeID {
+	if agent.RuntimeID != task.RuntimeID && (!task.RuntimeOverrideID.Valid || task.RuntimeOverrideID != task.RuntimeID) {
 		slog.Warn("daemon claim: agent runtime changed before delivery; refusing dispatch",
 			"task_id", uuidToString(task.ID),
 			"agent_id", uuidToString(task.AgentID),
@@ -2656,6 +2668,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		RuntimeConfig:         runtimeConfig,
 		DisabledRuntimeSkills: disabledRuntimeSkillsFor(agent.DisabledRuntimeSkills, runtimeID, runtime.Provider),
 	}
+	if task.RuntimeOverrideID.Valid {
+		resp.Agent.Model = ""
+		resp.Agent.ThinkingLevel = ""
+		resp.Agent.ServiceTier = ""
+		resp.Agent.CustomArgs = nil
+	}
+
 	// System agents carry a product-owned instruction layer that ships with
 	// this binary instead of being copied into their row at creation. That
 	// is what makes it hot-updatable: editing the embedded file and
@@ -3019,12 +3038,14 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			resp.TriggerCommentContent = "The newest triggering comment is no longer available. Address every earlier comment included below."
 		}
 
-		// Resolve the prior agent session / workdir to resume.
-		if task.RerunOfTaskID.Valid {
+		// Retargeted attempts retain rerun provenance but cannot restore native
+		// state from it. ForceFreshSession also marks ordinary manual reruns
+		// for older servers, so retargeting has an explicit resume policy.
+		if task.RerunOfTaskID.Valid && !task.NativeResumeDisabled {
 			// Manual retry: resume precisely from the source task the user
 			// clicked, NOT the most-recent (agent, issue) row — a parallel task
 			// on the same issue must never hijack the resume (MUL-4869). The
-			// workdir is ALWAYS reused when it still exists; the session is
+			// workdir is reused when it still exists; the session is
 			// resumed only when the source failure did not poison the
 			// conversation AND the source ran on this runtime.
 			//
@@ -3073,7 +3094,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				)
 				resp.PriorSessionResumeUnavailable = true
 			}
-		} else if !task.ForceFreshSession {
+		} else if !task.ForceFreshSession && !task.NativeResumeDisabled {
 			// Non-rerun follow-up on the same issue: resume the most recent
 			// (agent, issue) session so the agent keeps the issue's conversation
 			// context across turns. The "Focus on THIS comment" guard in
@@ -3232,7 +3253,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			}
 		}
 		projectCtx.applyTo(&resp)
-		if !task.ForceFreshSession && !task.ChannelContextRevision.Valid {
+		if !task.ForceFreshSession && !task.NativeResumeDisabled && !task.ChannelContextRevision.Valid {
 			// Resume chat sessions only when the stored pointer was produced
 			// by the same runtime as the claiming task. When the chat_session
 			// pointer is missing (legacy NULL runtime_id), stale (last task
@@ -3290,7 +3311,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		// Input ownership is the claim's fail-closed boundary. Resume-history
 		// reads belong after it: a task that cannot load its input is preserved
 		// for redelivery and must not spend two more queries before returning.
-		if !task.ForceFreshSession {
+		if !task.ForceFreshSession && !task.NativeResumeDisabled {
 			contextRevision := pgtype.Int8{}
 			if task.ChannelContextRevision.Valid {
 				contextRevision = task.ChannelContextRevision

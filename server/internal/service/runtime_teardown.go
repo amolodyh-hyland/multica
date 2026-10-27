@@ -90,6 +90,15 @@ func TeardownRuntime(ctx context.Context, qtx *db.Queries, runtimeID pgtype.UUID
 		lockedAgentIDs[i] = agent.ID
 	}
 
+	// Retargeting locks the preference before queued tasks, including profiles
+	// whose shared default is elsewhere. Teardown must use that order too.
+	if _, err := qtx.LockIssueRuntimeOverridesByRuntime(ctx, runtimeID); err != nil {
+		return out, fmt.Errorf("lock issue runtime overrides: %w", err)
+	}
+	if err := qtx.DeleteIssueRuntimeOverridesByRuntime(ctx, runtimeID); err != nil {
+		return out, fmt.Errorf("clear issue runtime overrides: %w", err)
+	}
+
 	if opts.CancelNonTerminalTasks {
 		cancelled, err := qtx.CancelAgentTasksByRuntimeOrAgent(ctx, db.CancelAgentTasksByRuntimeOrAgentParams{
 			RuntimeIds: []pgtype.UUID{runtimeID},

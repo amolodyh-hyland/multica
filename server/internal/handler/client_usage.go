@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -111,7 +112,7 @@ func (h *Handler) UpsertClientUsage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var err error
-		tx, err = h.TxStarter.Begin(r.Context())
+		tx, err = bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(workspaceUUID))
 		if err != nil {
 			slog.Error("failed to begin client usage transaction", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to record client usage")

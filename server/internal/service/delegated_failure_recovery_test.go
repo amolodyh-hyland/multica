@@ -15,6 +15,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	dbfx "github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -369,7 +370,7 @@ func seedDelegatedFailureFixture(t *testing.T) (*delegatedFailureFixture, *TaskS
 		worker:        workerID,
 		sourceTrigger: sourceTriggerID,
 		sourceTask:    sourceTaskID,
-	}, NewTaskService(db.New(pool), pool, nil, events.New())
+	}, NewTaskService(db.NewBinding(pool), pool, nil, events.New())
 }
 
 func (f *delegatedFailureFixture) insertWorkerTask(t *testing.T, status, evidenceKind string, attempt, maxAttempts int32) pgtype.UUID {
@@ -1258,5 +1259,116 @@ func TestPendingDelegatedFailureSweepSkipsTriageSourceIssue(t *testing.T) {
 	}
 	if n := recoveryTasks(); n != 1 {
 		t.Fatalf("recovery tasks after accept = %d, want 1", n)
+	}
+}
+
+func TestDelegatedFailureRecoveryUsesIssueOverrideWithUnboundDefault(t *testing.T) {
+	ctx := context.Background()
+	f, svc := seedDelegatedFailureFixture(t)
+	fx := dbfx.New(f.pool, f.workspaceID, f.userID)
+	target := fx.Runtime(t, "recovery issue override")
+	fx.Exec(t, `UPDATE issue SET assignee_type='agent', assignee_id=$1 WHERE id=$2`, f.coordinator, f.issueID)
+	fx.InsertNoID(t, "issue_runtime_override", dbfx.Cols{"workspace_id": f.workspaceID, "issue_id": f.issueID, "agent_id": f.coordinator, "runtime_id": target, "updated_by": f.userID}, "issue_id=$1", f.issueID)
+	fx.Exec(t, `UPDATE agent SET runtime_id=NULL WHERE id=$1`, f.coordinator)
+	failedID := f.insertWorkerTask(t, "failed", "comment", 1, 2)
+	signal, created, err := svc.ensureDelegatedFailureRecoveryComment(ctx, failedID)
+	if err != nil || signal == nil || !created {
+		t.Fatalf("recovery signal with healthy override: created=%v target=%v error=%v", created, signal, err)
+	}
+	sweep, err := svc.RecoverPendingDelegatedFailures(ctx, 100)
+	if err != nil || sweep.Replayed != 1 {
+		t.Fatalf("override recovery sweep=%+v error=%v", sweep, err)
+	}
+	if n := fx.Count(t, `SELECT count(*) FROM agent_task_queue WHERE issue_id=$1 AND agent_id=$2 AND runtime_id=$3 AND runtime_override_id=$3 AND status='queued'`, f.issueID, f.coordinator, target); n != 1 {
+		t.Fatalf("healthy override received %d recovery runs", n)
+	}
+}
+
+type delegatedRecoveryLockedTxStarter struct {
+	tx pgx.Tx
+}
+
+func (s delegatedRecoveryLockedTxStarter) Begin(context.Context) (pgx.Tx, error) {
+	return s.tx, nil
+}
+
+func TestDelegatedFailureRecoveryConcurrentRuntimeTeardownPreservesOverrideSignal(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	f, svc := seedDelegatedFailureFixture(t)
+	fx := dbfx.New(f.pool, f.workspaceID, f.userID)
+	overrideID := fx.Runtime(t, "surviving recovery override")
+	fx.InsertNoID(t, "issue_runtime_override", dbfx.Cols{
+		"workspace_id": f.workspaceID, "issue_id": f.issueID, "agent_id": f.coordinator,
+		"runtime_id": overrideID, "updated_by": f.userID,
+	}, "issue_id=$1", f.issueID)
+	failedID := f.insertWorkerTask(t, "failed", "comment", 1, 2)
+	fx.Exec(t, `UPDATE agent_task_queue SET completed_at=now() WHERE id=$1 OR id=$2`, failedID, f.sourceTask)
+
+	teardownTx, err := bindingtx.Begin(ctx, f.pool, bindingtx.Workspaces(f.workspaceID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer teardownTx.Rollback(context.Background())
+	qtx := db.New(teardownTx)
+	runtimeID := util.MustParseUUID(f.runtimeID)
+	if _, err := qtx.LockAgentRuntime(ctx, runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	if agents, err := qtx.ListUserAgentsByRuntimeForUpdate(ctx, runtimeID); err != nil || len(agents) != 2 {
+		t.Fatalf("lock profiles count=%d error=%v", len(agents), err)
+	}
+	recoveryConn, err := f.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recoveryConn.Release()
+	recoveryTasks := NewTaskService(db.NewBinding(recoveryConn), recoveryConn, nil, svc.Bus)
+	recoveryDone := make(chan error, 1)
+	go func() {
+		target, created, err := recoveryTasks.ensureDelegatedFailureRecoveryComment(ctx, failedID)
+		if err == nil && (target == nil || !created || target.agent.RuntimeID != util.MustParseUUID(overrideID)) {
+			err = errors.New("recovery did not create a signal for the surviving override")
+		}
+		recoveryDone <- err
+	}()
+	if err := waitBindingPrefix(ctx, teardownTx, recoveryConn.Conn().PgConn().PID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := teardownTx.Exec(ctx, `SELECT id FROM agent_task_queue WHERE id=$1 FOR UPDATE NOWAIT`, failedID); err != nil {
+		t.Fatal(err)
+	}
+	teardownDone := make(chan error, 1)
+	_, err = TeardownRuntime(ctx, qtx, runtimeID, RuntimeTeardownOptions{CancelNonTerminalTasks: true})
+	if err == nil {
+		err = qtx.DeleteAgentRuntime(ctx, runtimeID)
+	}
+	if err == nil {
+		err = teardownTx.Commit(ctx)
+	}
+	teardownDone <- err
+	recoveryErr, teardownErr := <-recoveryDone, <-teardownDone
+	if recoveryErr != nil || teardownErr != nil {
+		t.Fatalf("concurrent recovery=%v teardown=%v; want both to commit", recoveryErr, teardownErr)
+	}
+	svc.TxStarter = f.pool
+	if n := fx.Count(t, `SELECT count(*) FROM agent_runtime WHERE id=$1`, f.runtimeID); n != 0 {
+		t.Fatal("default runtime survived teardown")
+	}
+	if n := fx.Count(t, `SELECT count(*) FROM agent WHERE id=$1 AND runtime_id IS NULL`, f.coordinator); n != 1 {
+		t.Fatal("coordinator default was not unbound")
+	}
+	if n := fx.Count(t, `SELECT count(*) FROM issue_runtime_override WHERE issue_id=$1 AND runtime_id=$2`, f.issueID, overrideID); n != 1 {
+		t.Fatal("healthy issue override did not survive teardown")
+	}
+	if n := fx.Count(t, `SELECT count(*) FROM comment WHERE source_task_id=$1 AND type=$2`, failedID, delegatedFailureRecoveryCommentType); n != 1 {
+		t.Fatal("recovery signal was not durable after teardown")
+	}
+	sweep, err := svc.RecoverPendingDelegatedFailures(ctx, 100)
+	if err != nil || sweep.Replayed != 1 {
+		t.Fatalf("recovery after teardown=%+v error=%v; want one replay", sweep, err)
+	}
+	if n := fx.Count(t, `SELECT count(*) FROM agent_task_queue WHERE issue_id=$1 AND agent_id=$2 AND runtime_id=$3 AND runtime_override_id=$3 AND status='queued'`, f.issueID, f.coordinator, overrideID); n != 1 {
+		t.Fatalf("surviving override received %d recovery runs, want one", n)
 	}
 }

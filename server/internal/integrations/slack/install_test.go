@@ -2,14 +2,17 @@ package slack
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/testutil"
 
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -115,7 +118,7 @@ func (f *fakeInstallQueries) SetChannelInstallationStatus(_ context.Context, _ d
 }
 
 // fakeTx is a no-op pgx.Tx: embedding the interface satisfies it, and the
-// install paths only ever call Commit / Rollback. committed records whether the
+// install paths call the transaction prefix plus Commit/Rollback. committed records whether the
 // install committed (the happy path) vs rolled back (a rejected install).
 type fakeTx struct {
 	pgx.Tx
@@ -136,4 +139,21 @@ func newTestInstallService(t *testing.T, q installQueries) *InstallService {
 		t.Fatalf("newInstallService: %v", err)
 	}
 	return svc
+}
+
+func (tx *fakeTx) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if sql != "SELECT pg_advisory_xact_lock($1,$2)" || len(args) != 2 || args[0] != bindingtx.Namespace {
+		return pgconn.CommandTag{}, fmt.Errorf("unexpected transaction SQL: %s", sql)
+	}
+	return pgconn.NewCommandTag("SELECT 1"), nil
+}
+
+func (tx *fakeTx) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
+	workspace := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
+	if len(args) > 0 {
+		if id, ok := args[0].(pgtype.UUID); ok {
+			workspace = id
+		}
+	}
+	return testutil.UUIDRows(workspace), nil
 }

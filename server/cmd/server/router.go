@@ -434,7 +434,7 @@ func seatCapacityExecutor(cloudURL string) seatcapacity.Executor {
 // callers that only need the HTTP handler (tests, the simple
 // NewRouter shim) discard the second value.
 func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analyticsClient analytics.Client, rdb redis.UniversalClient, opts RouterOptions) (chi.Router, *handler.Handler) {
-	queries := db.New(pool)
+	queries := db.NewBinding(pool)
 	emailSvc := service.NewEmailService()
 	daemonHub := opts.DaemonHub
 	if daemonHub == nil {
@@ -2071,6 +2071,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/", h.GetIssue)
 					r.Put("/", h.UpdateIssue)
 					r.Post("/move", h.MoveIssue)
+					r.Get("/runtime", h.GetIssueRuntime)
+					r.With(handler.RequireHumanActor).Put("/runtime", h.SetIssueRuntime)
 					r.Delete("/", h.DeleteIssue)
 					r.Post("/comments/trigger-preview", h.PreviewCommentTriggers)
 					r.Post("/comments", h.CreateComment)

@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -72,7 +73,7 @@ func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillC
 }
 
 func (h *Handler) createSkillWithFiles(ctx context.Context, input skillCreateInput) (SkillWithFilesResponse, error) {
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(input.WorkspaceID))
 	if err != nil {
 		return SkillWithFilesResponse{}, err
 	}
@@ -147,7 +148,7 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 		config = []byte("{}")
 	}
 
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(input.WorkspaceID))
 	if err != nil {
 		return SkillWithFilesResponse{}, err
 	}
