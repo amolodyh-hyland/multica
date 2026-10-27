@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 
 	"github.com/multica-ai/multica/server/internal/logger"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -211,7 +212,7 @@ func (h *Handler) UpdateAgentEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
 	if err != nil {
 		slog.Error("agent_env update: begin tx failed",
 			append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(agent.ID))...)

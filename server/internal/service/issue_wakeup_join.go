@@ -13,6 +13,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -199,7 +200,7 @@ func (s *IssueWakeupService) JoinWaitingWakeups(ctx context.Context, task db.Age
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	tx, err := s.Tasks.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
 	if err != nil {
 		return task.Context, err
 	}

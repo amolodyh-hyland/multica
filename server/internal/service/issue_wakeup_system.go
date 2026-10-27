@@ -15,6 +15,7 @@ import (
 	inboxwriter "github.com/multica-ai/multica/server/internal/inbox"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -159,7 +160,7 @@ func (s *IssueWakeupService) ProcessChildEvents(ctx context.Context, parentIDs .
 }
 
 func (s *IssueWakeupService) processChildEvents(ctx context.Context, parentID pgtype.UUID) error {
-	tx, err := s.Tasks.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
 	if err != nil {
 		return err
 	}
@@ -288,7 +289,7 @@ func (s *IssueWakeupService) BackfillChildDoneRules(ctx context.Context, limit i
 }
 
 func (s *IssueWakeupService) ensureRule(ctx context.Context, parent db.Issue) error {
-	tx, err := s.Tasks.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
 	if err != nil {
 		return err
 	}
@@ -406,7 +407,7 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 		return err
 	}
 	headSHA := s.Tasks.ResolveIssueReviewSHAParam(ctx, prev.IssueID)
-	tx, err := s.Tasks.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
 	if err != nil {
 		return err
 	}
@@ -721,7 +722,7 @@ type SystemWakeupInput struct {
 // runs that have not started.
 func (s *IssueWakeupService) UpdateChildDoneRule(ctx context.Context, issueID pgtype.UUID, in SystemWakeupInput) (db.IssueWakeup, error) {
 	var out db.IssueWakeup
-	tx, err := s.Tasks.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
 	if err != nil {
 		return out, err
 	}
@@ -792,7 +793,7 @@ func (s *IssueWakeupService) SetChildDoneDefault(ctx context.Context, workspaceI
 		return 0, nil
 	}
 	raw, _ := json.Marshal(patch)
-	tx, err := s.Tasks.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
 	if err != nil {
 		return 0, err
 	}

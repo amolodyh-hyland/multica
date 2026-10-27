@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -247,4 +249,11 @@ func TestLiveBotOwnerConflictIsClassified(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (tx *fakeTelegramTx) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if sql != "SELECT pg_advisory_xact_lock($1)" || len(args) != 1 || args[0] != bindingtx.LockKey {
+		return pgconn.CommandTag{}, fmt.Errorf("unexpected transaction SQL: %s", sql)
+	}
+	return pgconn.NewCommandTag("SELECT 1"), nil
 }

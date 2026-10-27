@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -56,7 +57,7 @@ func lockManagedWakeup(ctx context.Context, tx pgx.Tx, q *db.Queries, issueID, i
 // rule someone turned off, or one the platform stopped for a loop or burst,
 // must be turned on first.
 func (s *IssueWakeupService) Trigger(ctx context.Context, issueID, id, member pgtype.UUID) error {
-	tx, err := s.Tasks.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
 	if err != nil {
 		return err
 	}
@@ -106,7 +107,7 @@ func (s *IssueWakeupService) Trigger(ctx context.Context, issueID, id, member pg
 // have not started. Started runs keep the ordinary Stop control, and their
 // history stays in the run list.
 func (s *IssueWakeupService) Delete(ctx context.Context, issueID, id, member pgtype.UUID) error {
-	tx, err := s.Tasks.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
 	if err != nil {
 		return err
 	}
@@ -144,7 +145,7 @@ func (s *IssueWakeupService) CheckIn(ctx context.Context, issueID, id, taskID pg
 	if note == "" || utf8.RuneCountInString(note) > maxWakeupCheckinRunes {
 		return fmt.Errorf("%w: note must contain 1–%d characters", ErrWakeupInput, maxWakeupCheckinRunes)
 	}
-	tx, err := s.Tasks.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
 	if err != nil {
 		return err
 	}

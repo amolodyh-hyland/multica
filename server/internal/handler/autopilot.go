@@ -21,6 +21,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -875,7 +876,7 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create autopilot")
 		return
@@ -1158,7 +1159,7 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 		subscribers = validated
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update autopilot")
 		return
@@ -1368,7 +1369,7 @@ func (h *Handler) DeleteAutopilot(w http.ResponseWriter, r *http.Request) {
 	// deliveries, subscribers, and collaborators as execution history.
 	// Archiving is a substantive status change (MUL-4302 §3.4), so republish the
 	// rule version with this member as publisher, atomically with the archive.
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete autopilot")
 		return
@@ -1650,7 +1651,7 @@ func (h *Handler) CreateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Schedule create: write the trigger and republish the rule version atomically.
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create trigger")
 		return
@@ -1727,7 +1728,7 @@ func (h *Handler) createWebhookTriggerWithMintedToken(
 		if err != nil {
 			return db.AutopilotTrigger{}, err
 		}
-		tx, err := h.TxStarter.Begin(ctx)
+		tx, err := bindingtx.Begin(ctx, h.TxStarter)
 		if err != nil {
 			return db.AutopilotTrigger{}, err
 		}
@@ -1990,7 +1991,7 @@ func (h *Handler) UpdateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 
 	userID := uuidToString(actor.UserID)
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update trigger")
 		return
@@ -2087,7 +2088,7 @@ func (h *Handler) DeleteAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 	// Removing a trigger changes what fires — a substantive publish (MUL-4302 §3.4).
 	// Republish the rule version with this member as publisher, atomically with the
 	// delete.
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete trigger")
 		return

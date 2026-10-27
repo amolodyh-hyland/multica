@@ -15,6 +15,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -237,7 +238,7 @@ func (h *Handler) CreateIssueStatus(w http.ResponseWriter, r *http.Request) {
 // A non-empty second return is a caller error the handler reports as 400,
 // distinct from a nil-error success and from an infrastructure failure.
 func (h *Handler) createIssueStatusEntry(ctx context.Context, workspaceID pgtype.UUID, publicCategory string, arg db.CreateIssueStatusEntryParams) (db.IssueStatus, string, error) {
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter)
 	if err != nil {
 		return db.IssueStatus{}, "", err
 	}
@@ -410,7 +411,7 @@ func (h *Handler) ArchiveIssueStatus(w http.ResponseWriter, r *http.Request) {
 	// Count and archive under the EXCLUSIVE catalog lock. Custom-status writers
 	// re-resolve under its SHARED side, so no assignment can enter between the
 	// empty check and the archive commit. Migration is a separate user action.
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
 	if err != nil {
 		slog.Warn("ArchiveIssueStatus begin failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to archive issue status")
@@ -606,7 +607,7 @@ func (h *Handler) ReorderIssueStatuses(w http.ResponseWriter, r *http.Request) {
 		ids = append(ids, idUUID)
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
 	if err != nil {
 		slog.Warn("ReorderIssueStatuses begin failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to reorder issue statuses")

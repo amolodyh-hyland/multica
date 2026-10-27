@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/plugincontract"
 )
@@ -116,7 +117,7 @@ func (s *PluginService) publish(ctx context.Context, workspaceID, userID pgtype.
 		return PluginPackageSummary{}, &PluginError{Kind: PluginErrorIncompatible, Message: capabilityMessage(err), Err: err}
 	}
 
-	tx, err := s.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter)
 	if err != nil {
 		return PluginPackageSummary{}, &PluginError{Kind: PluginErrorUnavailable, Message: "begin publish", Err: err}
 	}
@@ -351,7 +352,7 @@ func (s *PluginService) DeletePackage(ctx context.Context, workspaceID pgtype.UU
 		return &PluginError{Kind: PluginErrorUnavailable, Message: "load plugin package", Err: err}
 	}
 
-	tx, err := s.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter)
 	if err != nil {
 		return &PluginError{Kind: PluginErrorUnavailable, Message: "begin delete", Err: err}
 	}

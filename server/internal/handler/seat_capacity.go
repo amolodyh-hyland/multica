@@ -43,7 +43,7 @@ func (h *Handler) lockSeatCapacityWorkspace(ctx context.Context, workspaceID uui
 	if err != nil {
 		return nil, nil, err
 	}
-	return db.New(lockedDB), unlock, nil
+	return db.NewBinding(lockedDB), unlock, nil
 }
 
 func capacityIntentParams(workspaceID, token uuid.UUID, action string, due time.Time) db.UpsertSeatCapacityIntentParams {

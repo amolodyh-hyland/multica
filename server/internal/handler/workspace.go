@@ -19,6 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -251,7 +252,7 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		issuePrefix = defaultIssuePrefixFromSlug(req.Slug)
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create workspace")
 		return
@@ -1116,7 +1117,7 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	// delete window would otherwise slip in a session nobody locked, and its
 	// restore would outlive the cascade the same way. Holding the workspace row
 	// FOR UPDATE blocks that insert on its workspace FK (FOR KEY SHARE).
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
 	if err != nil {
 		slog.Warn("begin workspace delete tx failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID)...)
 		writeError(w, http.StatusInternalServerError, "failed to delete workspace")

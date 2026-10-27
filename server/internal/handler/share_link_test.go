@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/middleware"
@@ -883,5 +886,52 @@ func TestCreateShareLink_ConcurrentCreatesSingleActive(t *testing.T) {
 	}
 	if active != 1 {
 		t.Fatalf("concurrent creates: expected exactly 1 active link, got %d", active)
+	}
+}
+
+type shareMemberConflictStarter struct{ base txStarter }
+
+func (s shareMemberConflictStarter) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := s.base.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return shareMemberConflictTx{Tx: tx}, nil
+}
+
+type shareMemberConflictTx struct{ pgx.Tx }
+
+func (tx shareMemberConflictTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if strings.Contains(sql, "-- name: CreateMember") {
+		return errRow{err: &pgconn.PgError{Code: "23505"}}
+	}
+	return tx.Tx.QueryRow(ctx, sql, args...)
+}
+
+func TestBindingPrefixShareJoinConflictReleasesBeforeCompensation(t *testing.T) {
+	clearShareLinksForTestWorkspace(t)
+	link := createTestShareLink(t, testWorkspaceID, "member", 5, 0)
+	user := createTestUserAndMember(t, "")
+	stub := &shareJoinCapacityStub{}
+	useSeatCapacity(t, stub)
+	h := *testHandler
+	h.TxStarter = shareMemberConflictStarter{base: testHandler.TxStarter}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	request := newRequest("POST", "/api/share-links/join", JoinByShareLinkRequest{Code: link.Code}).WithContext(ctx)
+	request.Header.Set("X-User-ID", user)
+	response := httptest.NewRecorder()
+	h.JoinByShareLink(response, request)
+	if response.Code != http.StatusConflict || ctx.Err() != nil {
+		t.Fatalf("status=%d context=%v body=%s", response.Code, ctx.Err(), response.Body.String())
+	}
+	if releases := stub.releases(); len(releases) != 1 {
+		t.Fatalf("compensation release calls=%v want one durable release", releases)
+	}
+	if n := dbfx.Count(t, `SELECT count(*) FROM seat_capacity_outbox WHERE workspace_id=$1 AND share_link_id=$2 AND user_id=$3`, link.WorkspaceID, link.ID, user); n != 0 {
+		t.Fatal("compensated intent did not commit")
+	}
+	if n := dbfx.Count(t, `SELECT count(*) FROM workspace_share_link WHERE id=$1 AND use_count=0`, link.ID); n != 1 {
+		t.Fatal("failed join consumed a share-link use")
 	}
 }

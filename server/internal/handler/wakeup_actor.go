@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -39,7 +40,7 @@ func (h *Handler) withWakeupActor(r *http.Request) *http.Request {
 }
 
 func (h *Handler) beginWakeupWrite(ctx context.Context) (pgx.Tx, error) {
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter)
 	if err != nil {
 		return nil, err
 	}

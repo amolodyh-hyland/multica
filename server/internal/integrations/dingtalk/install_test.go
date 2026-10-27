@@ -2,6 +2,7 @@ package dingtalk
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -143,7 +145,7 @@ func (f *fakeInstallQueries) SetChannelInstallationStatus(_ context.Context, _ d
 }
 
 // fakeTx is a no-op pgx.Tx: embedding the interface satisfies it, and the
-// install paths only ever call Commit / Rollback.
+// install paths call the transaction prefix plus Commit/Rollback.
 type fakeTx struct {
 	pgx.Tx
 	committed bool
@@ -163,4 +165,11 @@ func newTestInstallService(t *testing.T, q installQueries) *InstallService {
 		t.Fatalf("newInstallService: %v", err)
 	}
 	return svc
+}
+
+func (tx *fakeTx) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if sql != "SELECT pg_advisory_xact_lock($1)" || len(args) != 1 || args[0] != bindingtx.LockKey {
+		return pgconn.CommandTag{}, fmt.Errorf("unexpected transaction SQL: %s", sql)
+	}
+	return pgconn.NewCommandTag("SELECT 1"), nil
 }

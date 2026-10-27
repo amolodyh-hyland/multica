@@ -193,7 +193,7 @@ func (w *Worker) settleWithWorkspaceLimit(ctx context.Context, intent db.SeatCap
 	defer unlock()
 	lockedQueries := w.queries
 	if lockedDB != nil {
-		lockedQueries = db.New(lockedDB)
+		lockedQueries = db.NewBinding(lockedDB)
 	}
 	current, err := lockedQueries.GetClaimedSeatCapacityIntent(ctx, db.GetClaimedSeatCapacityIntentParams{
 		OperationToken: intent.OperationToken, Action: intent.Action, LeaseToken: intent.LeaseToken,

@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/eventcontract"
@@ -288,7 +289,7 @@ func (s *IssueWakeupService) EditInstruction(ctx context.Context, issueID, id, m
 	if len(in.Instruction) == 0 || len(in.Instruction) > 12000 || in.Revision < 1 {
 		return fmt.Errorf("%w: instruction must be 1–12000 bytes and revision is required", ErrWakeupInput)
 	}
-	tx, err := s.Tasks.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
 	if err != nil {
 		return err
 	}
@@ -346,7 +347,7 @@ func (s *IssueWakeupService) Save(ctx context.Context, issueID, member, source, 
 
 func (s *IssueWakeupService) save(ctx context.Context, issueID, member, source, existingID pgtype.UUID, in WakeupInput, enable *WakeupEnableInput) (db.IssueWakeup, error) {
 	var out db.IssueWakeup
-	tx, err := s.Tasks.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
 	if err != nil {
 		return out, err
 	}
@@ -979,7 +980,7 @@ func (s *IssueWakeupService) dispatch(ctx context.Context, prev db.IssueWakeup) 
 	if candidate.ID.Valid && s.authorize(ctx, s.Tasks.Queries, prev.WorkspaceID, prev.CreatedBy, prev.IssueID, candidate) == nil {
 		overlay = s.Tasks.buildRuntimeMCPOverlay(ctx, prev.CreatedBy, candidate)
 	}
-	tx, err := s.Tasks.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
 	if err != nil {
 		return err
 	}
@@ -1390,7 +1391,7 @@ func qCleanupMissingWakeup(ctx context.Context, tx pgx.Tx, id pgtype.UUID) error
 // ordinary Stop control; closing a subscription never kills unrelated work.
 func (s *IssueWakeupService) Disable(ctx context.Context, issueID, id, member pgtype.UUID) (db.IssueWakeup, error) {
 	var out db.IssueWakeup
-	tx, err := s.Tasks.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
 	if err != nil {
 		return out, err
 	}

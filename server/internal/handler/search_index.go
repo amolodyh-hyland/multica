@@ -16,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -246,16 +247,11 @@ func (h *Handler) RequireLocalSearchIndex(next http.Handler) http.Handler {
 // runSearchIndexRead runs fn in a read-only REPEATABLE READ transaction, so the
 // snapshot returned by pg_current_snapshot() is exactly the one fn reads under.
 func (h *Handler) runSearchIndexRead(ctx context.Context, fn func(q *db.Queries) error) error {
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.BeginReadOnly(ctx, h.TxStarter)
 	if err != nil {
 		return fmt.Errorf("begin search index tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	// Must be the first statement: the isolation level cannot change once the
-	// transaction has taken its snapshot.
-	if _, err := tx.Exec(ctx, "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"); err != nil {
-		return fmt.Errorf("set search index isolation: %w", err)
-	}
 	timeoutMs := int(searchIndexStatementLimit / time.Millisecond)
 	if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL statement_timeout = %d", timeoutMs)); err != nil {
 		return fmt.Errorf("set search index statement_timeout: %w", err)

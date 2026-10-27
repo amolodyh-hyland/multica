@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
@@ -169,7 +170,7 @@ func (s *InstallationService) Upsert(ctx context.Context, p InstallationParams) 
 		return Installation{}, errors.New("wecom: InstallationService requires a transaction starter")
 	}
 
-	tx, err := s.tx.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.tx)
 	if err != nil {
 		return Installation{}, fmt.Errorf("wecom: begin install tx: %w", err)
 	}

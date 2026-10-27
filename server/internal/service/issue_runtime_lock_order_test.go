@@ -3,15 +3,14 @@ package service
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	dbfx "github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -37,7 +36,7 @@ func TestIssueRuntimeWakeupConfigurationRecoveryTeardownLockOrder(t *testing.T) 
 			failedID := f.insertWorkerTask(t, "failed", "comment", 1, 2)
 			fx.Exec(t, `UPDATE agent_task_queue SET completed_at=now() WHERE id=$1 OR id=$2`, failedID, f.sourceTask)
 
-			editTx, err := f.pool.Begin(ctx)
+			editTx, err := bindingtx.Begin(ctx, f.pool)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -45,68 +44,55 @@ func TestIssueRuntimeWakeupConfigurationRecoveryTeardownLockOrder(t *testing.T) 
 			if _, err := db.New(editTx).LockWakeupIssue(ctx, issueID); err != nil {
 				t.Fatal(err)
 			}
-			recoveryTx, err := f.pool.Begin(ctx)
+			recoveryConn, err := f.pool.Acquire(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer recoveryTx.Rollback(context.Background())
-			if _, err := db.New(recoveryTx).GetAgentTaskForDelegatedFailureUpdate(ctx, failedID); err != nil {
-				t.Fatal(err)
-			}
-			teardownTx, err := f.pool.Begin(ctx)
+			defer recoveryConn.Release()
+			teardownConn, err := f.pool.Acquire(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer teardownTx.Rollback(context.Background())
-			qtx, runtimeID := db.New(teardownTx), util.MustParseUUID(f.runtimeID)
-			if _, err := qtx.LockAgentRuntime(ctx, runtimeID); err != nil {
-				t.Fatal(err)
-			}
-			if agents, err := qtx.ListUserAgentsByRuntimeForUpdate(ctx, runtimeID); err != nil || len(agents) != 2 {
-				t.Fatalf("lock coordinator and worker: count=%d error=%v", len(agents), err)
-			}
-			svc.TxStarter = delegatedRecoveryLockedTxStarter{tx: recoveryTx}
+			defer teardownConn.Release()
+			recoveryTasks := NewTaskService(db.NewBinding(recoveryConn), recoveryConn, nil, svc.Bus)
 			recoveryDone, teardownDone := make(chan error, 1), make(chan error, 1)
 			go func() {
-				target, created, err := svc.ensureDelegatedFailureRecoveryComment(ctx, failedID)
+				target, created, err := recoveryTasks.ensureDelegatedFailureRecoveryComment(ctx, failedID)
 				if err == nil && (target == nil || !created) {
 					err = fmt.Errorf("recovery signal missing: created=%v", created)
 				}
 				recoveryDone <- err
 			}()
 			go func() {
-				defer teardownTx.Rollback(context.Background())
-				_, err := TeardownRuntime(ctx, qtx, runtimeID, RuntimeTeardownOptions{CancelNonTerminalTasks: true})
+				tx, err := bindingtx.Begin(ctx, teardownConn)
+				if err != nil {
+					teardownDone <- err
+					return
+				}
+				defer tx.Rollback(context.Background())
+				q := db.New(tx)
+				_, err = TeardownRuntime(ctx, q, util.MustParseUUID(f.runtimeID), RuntimeTeardownOptions{CancelNonTerminalTasks: true})
 				if err == nil {
-					err = qtx.DeleteAgentRuntime(ctx, runtimeID)
+					err = q.DeleteAgentRuntime(ctx, util.MustParseUUID(f.runtimeID))
 				}
 				if err == nil {
-					err = teardownTx.Commit(ctx)
+					err = tx.Commit(ctx)
 				}
 				teardownDone <- err
 			}()
-			// Observe both wait edges through the idle edit connection, so the
-			// schedule uses exactly three connections and no timing assumptions.
-			waitEdge := func(blocked, blocker uint32) error {
-				for {
-					var waiting bool
-					if err := editTx.QueryRow(ctx, `SELECT $1::int=ANY(pg_blocking_pids($2::int))`, blocker, blocked).Scan(&waiting); err != nil {
-						return err
-					}
-					if waiting {
-						return nil
-					}
-					select {
-					case <-ctx.Done():
-						return ctx.Err()
-					case <-time.After(5 * time.Millisecond):
-					}
-				}
-			}
-			setupErr := waitEdge(recoveryTx.Conn().PgConn().PID(), editTx.Conn().PgConn().PID())
+			// Exactly three connections: both competing paths wait at the same
+			// advisory prefix, before they can own a profile or failed task.
+			setupErr := waitBindingPrefix(ctx, editTx, recoveryConn.Conn().PgConn().PID())
 			if setupErr == nil {
-				setupErr = waitEdge(teardownTx.Conn().PgConn().PID(), recoveryTx.Conn().PgConn().PID())
+				setupErr = waitBindingPrefix(ctx, editTx, teardownConn.Conn().PgConn().PID())
 			}
+			if setupErr == nil {
+				_, setupErr = editTx.Exec(ctx, `SELECT id FROM agent WHERE id=$1 FOR UPDATE NOWAIT`, f.coordinator)
+			}
+			if setupErr == nil {
+				_, setupErr = editTx.Exec(ctx, `SELECT id FROM agent_task_queue WHERE id=$1 FOR UPDATE NOWAIT`, failedID)
+			}
+
 			var editErr error
 			if setupErr != nil {
 				_ = editTx.Rollback(context.Background())
@@ -165,7 +151,7 @@ func TestIssueRuntimeFailureRetryConcurrentTeardown(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer failureConn.Release()
-	teardownTx, err := f.pool.Begin(ctx)
+	teardownTx, err := bindingtx.Begin(ctx, f.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,12 +253,12 @@ func TestIssueRuntimeAdvisoryReadsDoNotLockProfile(t *testing.T) {
 	}
 }
 
-func TestIssueRuntimeRecoveryWaitsForIssueBeforeTask(t *testing.T) {
+func TestIssueRuntimeRecoveryWaitsForPrefixBeforeTask(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	f, svc := seedDelegatedFailureFixture(t)
 	failedID := f.insertWorkerTask(t, "failed", "comment", 1, 2)
-	issueTx, err := f.pool.Begin(ctx)
+	issueTx, err := bindingtx.Begin(ctx, f.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,42 +298,23 @@ func TestIssueRuntimeRecoveryWaitsForIssueBeforeTask(t *testing.T) {
 	}
 }
 
-type issueOverrideCleanupProbe struct {
-	pgx.Tx
-	beforeCleanup chan struct{}
-	resume        chan struct{}
-	paused        bool
-}
-
-func (tx *issueOverrideCleanupProbe) pause(ctx context.Context) error {
-	if !tx.paused {
-		tx.paused = true
-		close(tx.beforeCleanup)
+func waitBindingPrefix(ctx context.Context, holder pgx.Tx, waitingPID uint32) error {
+	for {
+		var waiting bool
+		if err := holder.QueryRow(ctx, `SELECT $1::int=ANY(pg_blocking_pids($2::int)) AND EXISTS (
+            SELECT 1 FROM pg_locks WHERE pid=$2::int AND locktype='advisory' AND NOT granted
+        )`, holder.Conn().PgConn().PID(), waitingPID).Scan(&waiting); err != nil {
+			return err
+		}
+		if waiting {
+			return nil
+		}
 		select {
-		case <-tx.resume:
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-time.After(5 * time.Millisecond):
 		}
 	}
-	return nil
-}
-
-func (tx *issueOverrideCleanupProbe) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	if strings.Contains(sql, "-- name: LockIssueRuntimeOverridesByRuntime") {
-		if err := tx.pause(ctx); err != nil {
-			return nil, err
-		}
-	}
-	return tx.Tx.Query(ctx, sql, args...)
-}
-
-func (tx *issueOverrideCleanupProbe) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	if strings.Contains(sql, "-- name: DeleteIssueRuntimeOverridesByRuntime") {
-		if err := tx.pause(ctx); err != nil {
-			return pgconn.CommandTag{}, err
-		}
-	}
-	return tx.Tx.Exec(ctx, sql, args...)
 }
 
 func TestIssueRuntimeOverrideSwitchConcurrentTeardown(t *testing.T) {
@@ -365,35 +332,37 @@ func TestIssueRuntimeOverrideSwitchConcurrentTeardown(t *testing.T) {
 	}, "issue_id=$1", f.workerIssue)
 	taskID := f.insertWorkerTask(t, "queued", "comment", 1, 2)
 	fx.Exec(t, `UPDATE agent_task_queue SET runtime_override_id=$2 WHERE id=$1`, taskID, f.runtimeID)
-	teardownTx, err := f.pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer teardownTx.Rollback(context.Background())
-	beforeCleanup, resume := make(chan struct{}), make(chan struct{})
-	qtx := db.New(&issueOverrideCleanupProbe{Tx: teardownTx, beforeCleanup: beforeCleanup, resume: resume})
-	teardownDone := make(chan error, 1)
-	go func() {
-		defer teardownTx.Rollback(context.Background())
-		_, err := TeardownRuntime(ctx, qtx, util.MustParseUUID(f.runtimeID), RuntimeTeardownOptions{CancelNonTerminalTasks: true})
-		if err == nil {
-			err = qtx.DeleteAgentRuntime(ctx, util.MustParseUUID(f.runtimeID))
-		}
-		if err == nil {
-			err = teardownTx.Commit(ctx)
-		}
-		teardownDone <- err
-	}()
-	select {
-	case <-beforeCleanup:
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
-	}
-	switchTx, err := f.pool.Begin(ctx)
+	switchTx, err := bindingtx.Begin(ctx, f.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer switchTx.Rollback(context.Background())
+	teardownConn, err := f.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer teardownConn.Release()
+	teardownDone := make(chan error, 1)
+	go func() {
+		tx, err := bindingtx.Begin(ctx, teardownConn)
+		if err != nil {
+			teardownDone <- err
+			return
+		}
+		defer tx.Rollback(context.Background())
+		q := db.New(tx)
+		_, err = TeardownRuntime(ctx, q, util.MustParseUUID(f.runtimeID), RuntimeTeardownOptions{CancelNonTerminalTasks: true})
+		if err == nil {
+			err = q.DeleteAgentRuntime(ctx, util.MustParseUUID(f.runtimeID))
+		}
+		if err == nil {
+			err = tx.Commit(ctx)
+		}
+		teardownDone <- err
+	}()
+	if err := waitBindingPrefix(ctx, switchTx, teardownConn.Conn().PgConn().PID()); err != nil {
+		t.Fatal(err)
+	}
 	q := db.New(switchTx)
 	if _, err := q.LockAgentRuntimeForAccessChange(ctx, util.MustParseUUID(nextID)); err != nil {
 		t.Fatal(err)
@@ -407,9 +376,6 @@ func TestIssueRuntimeOverrideSwitchConcurrentTeardown(t *testing.T) {
 	if err := q.SetIssueRuntimeOverride(ctx, db.SetIssueRuntimeOverrideParams{IssueID: util.MustParseUUID(f.workerIssue), WorkspaceID: util.MustParseUUID(f.workspaceID), AgentID: util.MustParseUUID(f.worker), RuntimeID: util.MustParseUUID(nextID), UpdatedBy: util.MustParseUUID(f.userID)}); err != nil {
 		t.Fatal(err)
 	}
-	// The switch owns the preference row. Teardown must not already own the
-	// queued task when it next tries to remove that preference.
-	close(resume)
 	_, switchErr := q.MovePendingIssueAgentTasksToRuntime(ctx, db.MovePendingIssueAgentTasksToRuntimeParams{IssueID: util.MustParseUUID(f.workerIssue), AgentID: util.MustParseUUID(f.worker), RuntimeID: util.MustParseUUID(nextID), RuntimeOverrideID: util.MustParseUUID(nextID)})
 	if switchErr == nil {
 		switchErr = switchTx.Commit(ctx)

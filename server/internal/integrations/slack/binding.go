@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -98,7 +99,7 @@ func (s *BindingTokenService) RedeemAndBind(ctx context.Context, raw string, mul
 	if s.tx == nil {
 		return RedeemedBindingToken{}, errors.New("slack: BindingTokenService missing TxStarter")
 	}
-	tx, err := s.tx.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.tx)
 	if err != nil {
 		return RedeemedBindingToken{}, fmt.Errorf("begin tx: %w", err)
 	}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/channelmedia"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -26,7 +27,7 @@ func uid(b byte) pgtype.UUID {
 }
 
 // fakeTx satisfies pgx.Tx by embedding the (nil) interface; the ChatSession
-// service only calls Commit/Rollback, which we override as no-ops.
+// service calls the transaction prefix plus Commit/Rollback.
 type fakeTx struct {
 	pgx.Tx
 	commitErr  error
@@ -1411,4 +1412,18 @@ func TestAppendUserMessage_ReplyTargetSenderNullWhenAbsent(t *testing.T) {
 	if f.lastContextReply.LastSenderID.Valid {
 		t.Errorf("absent sender must be NULL; got %+v", f.lastContextReply.LastSenderID)
 	}
+}
+
+func (tx *fakeTx) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if sql != "SELECT pg_advisory_xact_lock($1)" || len(args) != 1 || args[0] != bindingtx.LockKey {
+		return pgconn.CommandTag{}, fmt.Errorf("unexpected transaction SQL: %s", sql)
+	}
+	return pgconn.NewCommandTag("SELECT 1"), nil
+}
+
+func (tx *recordingTx) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if sql != "SELECT pg_advisory_xact_lock($1)" || len(args) != 1 || args[0] != bindingtx.LockKey {
+		return pgconn.CommandTag{}, fmt.Errorf("unexpected transaction SQL: %s", sql)
+	}
+	return pgconn.NewCommandTag("SELECT 1"), nil
 }

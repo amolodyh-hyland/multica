@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -701,7 +702,7 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 		return
 	}
 
-	tx, err := s.tx.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.tx)
 	if err != nil {
 		s.cfg.Logger.Error("lark registration: begin tx",
 			"session_id", sess.id, "err", err)

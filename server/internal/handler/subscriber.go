@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -229,7 +230,7 @@ var errTargetNoLongerMember = errors.New("target user is no longer a workspace m
 func (h *Handler) unsubscribeSubtreeSerialized(
 	ctx context.Context, workspaceID string, rootID pgtype.UUID, userType, userID string,
 ) ([]pgtype.UUID, error) {
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter)
 	if err != nil {
 		return nil, err
 	}

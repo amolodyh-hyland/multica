@@ -28,6 +28,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/knowledge"
 	"github.com/multica-ai/multica/server/pkg/libraryimport"
@@ -1585,7 +1586,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start agent create transaction")
 		return
@@ -2292,7 +2293,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	var switchedRuntime *db.AgentRuntime
 	var movedTasks []db.AgentTaskQueue
 	if req.RuntimeID != nil || replacePermissionTargets {
-		updateTx, err = h.TxStarter.Begin(r.Context())
+		updateTx, err = bindingtx.Begin(r.Context(), h.TxStarter)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to start agent update transaction")
 			return

@@ -42,6 +42,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/llm"
@@ -424,7 +425,7 @@ type Handler struct {
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {
 	var executor dbExecutor
 	if candidate, ok := txStarter.(dbExecutor); ok {
-		executor = candidate
+		executor = bindingtx.Wrap(candidate)
 	}
 
 	if analyticsClient == nil {

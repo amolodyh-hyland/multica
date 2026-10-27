@@ -15,6 +15,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/inbox"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -64,7 +65,7 @@ func (s *AutopilotService) createAutopilotQuotaRejectionNotice(
 	source string,
 	params db.CreateAutopilotRunParams,
 ) ([]db.InboxItem, error) {
-	tx, err := s.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter)
 	if err != nil {
 		return nil, fmt.Errorf("begin quota rejection notice: %w", err)
 	}

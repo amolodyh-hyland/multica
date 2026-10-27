@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -494,7 +495,7 @@ func (h *Handler) DeleteRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	// the profile's runtimes. Keep this a 409 — the profile is the thing that
 	// defines those runtimes, so the user should retire the agents or move them
 	// deliberately instead of having them silently unbound in bulk.
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to begin transaction")
 		return

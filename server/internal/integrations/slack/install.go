@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
@@ -150,7 +151,7 @@ const pgUniqueViolation = "23505"
 // No chat-session retire is needed: a row's agent_id never changes (it is part
 // of the key), so existing sessions stay valid for the same agent.
 func (s *InstallService) persistInstall(ctx context.Context, p installPersist) (db.ChannelInstallation, error) {
-	tx, err := s.tx.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.tx)
 	if err != nil {
 		return db.ChannelInstallation{}, fmt.Errorf("begin install tx: %w", err)
 	}

@@ -2,66 +2,32 @@ package handler
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/testutil"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-type mergeOverrideProbeStarter struct {
-	base    service.TxStarter
-	reached chan struct{}
-	resume  chan struct{}
-}
-
-func (s mergeOverrideProbeStarter) Begin(ctx context.Context) (pgx.Tx, error) {
-	tx, err := s.base.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &mergeOverrideProbeTx{Tx: tx, reached: s.reached, resume: s.resume}, nil
-}
-
-type mergeOverrideProbeTx struct {
-	pgx.Tx
-	reached, resume chan struct{}
-	paused          bool
-}
-
-func (tx *mergeOverrideProbeTx) pause(ctx context.Context) error {
-	if !tx.paused {
-		tx.paused = true
-		close(tx.reached)
+func waitHandlerBindingPrefix(ctx context.Context, holder pgx.Tx, waitingPID uint32) error {
+	for {
+		var waiting bool
+		if err := holder.QueryRow(ctx, `SELECT $1::int=ANY(pg_blocking_pids($2::int)) AND EXISTS (
+   SELECT 1 FROM pg_locks WHERE pid=$2::int AND locktype='advisory' AND NOT granted
+  )`, holder.Conn().PgConn().PID(), waitingPID).Scan(&waiting); err != nil {
+			return err
+		}
+		if waiting {
+			return nil
+		}
 		select {
-		case <-tx.resume:
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-time.After(5 * time.Millisecond):
 		}
 	}
-	return nil
-}
-
-func (tx *mergeOverrideProbeTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	if strings.Contains(sql, "-- name: LockIssueRuntimeOverridesByRuntime") {
-		if err := tx.pause(ctx); err != nil {
-			return nil, err
-		}
-	}
-	return tx.Tx.Query(ctx, sql, args...)
-}
-
-func (tx *mergeOverrideProbeTx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	if strings.Contains(sql, "-- name: ReassignIssueRuntimeOverrides") || strings.Contains(sql, "-- name: ReassignAgentsToRuntime") {
-		if err := tx.pause(ctx); err != nil {
-			return pgconn.CommandTag{}, err
-		}
-	}
-	return tx.Tx.Exec(ctx, sql, args...)
 }
 
 func TestIssueRuntimeSwitchConcurrentLegacyMerge(t *testing.T) {
@@ -76,23 +42,25 @@ func TestIssueRuntimeSwitchConcurrentLegacyMerge(t *testing.T) {
 	setIssueRuntime(t, testHandler, issue, agent, old, 200)
 	task := dbfx.Task(t, agent, testutil.Cols{"issue_id": issue, "runtime_id": old, "runtime_override_id": old})
 	dbfx.Cleanup(t, `DELETE FROM issue_runtime_override WHERE issue_id=$1`, issue)
-	reached, resume := make(chan struct{}), make(chan struct{})
-	h := *testHandler
-	h.TxStarter = mergeOverrideProbeStarter{base: testHandler.TxStarter, reached: reached, resume: resume}
-	mergeDone := make(chan error, 1)
-	go func() {
-		mergeDone <- h.mergeLegacyRuntime(ctx, parseUUID(merged), parseUUID(old), "merge-lock-order-test", "claude")
-	}()
-	select {
-	case <-reached:
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
-	}
-	tx, err := testHandler.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, testHandler.TxStarter)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
+	mergeConn, err := testPool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mergeConn.Release()
+	h := *testHandler
+	h.Queries, h.TxStarter = db.NewBinding(mergeConn), mergeConn
+	mergeDone := make(chan error, 1)
+	go func() {
+		mergeDone <- h.mergeLegacyRuntime(ctx, parseUUID(merged), parseUUID(old), "merge-lock-order-test", "claude")
+	}()
+	if err := waitHandlerBindingPrefix(ctx, tx, mergeConn.Conn().PgConn().PID()); err != nil {
+		t.Fatal(err)
+	}
 	q := db.New(tx)
 	if _, err := q.LockAgentRuntimeForAccessChange(ctx, parseUUID(next)); err != nil {
 		t.Fatal(err)
@@ -106,7 +74,6 @@ func TestIssueRuntimeSwitchConcurrentLegacyMerge(t *testing.T) {
 	if err := q.SetIssueRuntimeOverride(ctx, db.SetIssueRuntimeOverrideParams{IssueID: parseUUID(issue), WorkspaceID: parseUUID(testWorkspaceID), AgentID: parseUUID(agent), RuntimeID: parseUUID(next), UpdatedBy: parseUUID(testUserID)}); err != nil {
 		t.Fatal(err)
 	}
-	close(resume)
 	_, switchErr := q.MovePendingIssueAgentTasksToRuntime(ctx, db.MovePendingIssueAgentTasksToRuntimeParams{IssueID: parseUUID(issue), AgentID: parseUUID(agent), RuntimeID: parseUUID(next), RuntimeOverrideID: parseUUID(next)})
 	if switchErr == nil {
 		switchErr = tx.Commit(ctx)
@@ -183,5 +150,60 @@ func TestIssueRuntimeEnqueueLocksAssignment(t *testing.T) {
 	}
 	if task.RuntimeID != parseUUID(override) || task.RuntimeOverrideID != parseUUID(override) {
 		t.Fatalf("enqueue lost consistent override authority: runtime=%v authority=%v", task.RuntimeID, task.RuntimeOverrideID)
+	}
+}
+
+func TestBindingPrefixOrdinaryEnqueueConcurrentLegacyMerge(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	old := dbfx.Runtime(t, "ordinary enqueue old runtime")
+	destination := dbfx.Runtime(t, "ordinary enqueue merged runtime")
+	agent := dbfx.Agent(t, "merge default profile", old)
+	issue := dbfx.Issue(t, "enqueue and merge", testutil.Cols{"assignee_type": "agent", "assignee_id": agent})
+	enqueueTx, err := bindingtx.Begin(ctx, testHandler.TxStarter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer enqueueTx.Rollback(context.Background())
+	// Establish the first conflicting legacy ownership-fence row without
+	// letting enqueue advance to the runtime yet.
+	if _, err := enqueueTx.Exec(ctx, `SELECT id FROM agent WHERE id=$1 FOR KEY SHARE`, agent); err != nil {
+		t.Fatal(err)
+	}
+	mergeConn, err := testPool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mergeConn.Release()
+	h := *testHandler
+	h.Queries, h.TxStarter = db.NewBinding(mergeConn), mergeConn
+	mergeDone := make(chan error, 1)
+	go func() {
+		mergeDone <- h.mergeLegacyRuntime(ctx, parseUUID(destination), parseUUID(old), "merge-enqueue-prefix-test", "claude")
+	}()
+	if err := waitHandlerBindingPrefix(ctx, enqueueTx, mergeConn.Conn().PgConn().PID()); err != nil {
+		t.Fatal(err)
+	}
+	// Merge must not own the runtime while waiting for enqueue's profile.
+	if _, err := enqueueTx.Exec(ctx, `SELECT id FROM agent_runtime WHERE id=$1 FOR UPDATE NOWAIT`, old); err != nil {
+		t.Fatal(err)
+	}
+	task, err := db.New(enqueueTx).CreateAgentTask(ctx, db.CreateAgentTaskParams{AgentID: parseUUID(agent), IssueID: parseUUID(issue), RuntimeID: parseUUID(old)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	enqueueErr := enqueueTx.Commit(ctx)
+	mergeErr := <-mergeDone
+	if enqueueErr != nil || mergeErr != nil {
+		t.Fatalf("enqueue=%v merge=%v; want both commits", enqueueErr, mergeErr)
+	}
+	if n := dbfx.Count(t, `SELECT count(*) FROM agent_runtime WHERE id=$1`, old); n != 0 {
+		t.Fatal("old runtime survived merge")
+	}
+	if n := dbfx.Count(t, `SELECT count(*) FROM agent WHERE id=$1 AND runtime_id=$2`, agent, destination); n != 1 {
+		t.Fatal("profile did not move")
+	}
+	if n := dbfx.Count(t, `SELECT count(*) FROM agent_task_queue WHERE id=$1 AND runtime_id=$2 AND runtime_override_id IS NULL AND status='queued'`, task.ID, destination); n != 1 {
+		t.Fatal("ordinary attempt was lost or gained override authority")
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -36,17 +37,13 @@ func (h *Handler) beginIssueTableSnapshot(ctx context.Context) (*Handler, pgx.Tx
 	if h.TxStarter == nil {
 		return nil, nil, errors.New("transaction starter is unavailable")
 	}
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.BeginReadOnly(ctx, h.TxStarter)
 	if err != nil {
-		return nil, nil, err
-	}
-	if _, err := tx.Exec(ctx, "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"); err != nil {
-		_ = tx.Rollback(context.Background())
 		return nil, nil, err
 	}
 	snapshot := *h
 	snapshot.DB = tx
-	snapshot.Queries = db.New(tx)
+	snapshot.Queries = db.NewBinding(tx)
 	return &snapshot, tx, nil
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/dbreader"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -395,7 +396,7 @@ func (m *Manager) finish(addr address) {
 // writes nothing) when the row's head has advanced past the snapshot's head
 // (acceptance criterion 1).
 func (m *Manager) applySnapshot(ctx context.Context, prID pgtype.UUID, snap *PRSnapshot) (bool, error) {
-	tx, err := m.pool.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, m.pool)
 	if err != nil {
 		return false, err
 	}

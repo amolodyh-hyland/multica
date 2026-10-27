@@ -29,6 +29,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -257,6 +258,15 @@ func TestUpsert_ConcurrentInstallDoesNotSubscribeBehindTheWinner(t *testing.T) {
 	loserProbe := &fakeProbe{}
 	winner := newProbeSvc(t, pool, winnerProbe)
 	loser := newProbeSvc(t, pool, loserProbe)
+	loserConn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer loserConn.Release()
+	loser.tx = loserConn
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(winnerProbe.release) }) }
+	defer release()
 
 	var wg sync.WaitGroup
 	winnerErr := make(chan error, 1)
@@ -286,12 +296,12 @@ func TestUpsert_ConcurrentInstallDoesNotSubscribeBehindTheWinner(t *testing.T) {
 	// rather than waited for: once it waits on the slot's lock it can get no
 	// further until the winner commits, so there is no chance left to give.
 	// Reaching the probe first ends the wait too, and is the failure below.
-	waitForSlotLockWaiter(t, ctx, pool, wcPrbBotFree, func() bool { return loserProbe.callCount() != 0 })
+	waitForSlotLockWaiter(t, ctx, pool, loserConn.Conn().PgConn().PID(), func() bool { return loserProbe.callCount() != 0 })
 	if n := loserProbe.callCount(); n != 0 {
 		t.Errorf("the racing install subscribed %d time(s) while another install held the bot's slot — that displaces the connection the winner is about to establish", n)
 	}
 
-	close(winnerProbe.release)
+	release()
 
 	if err := <-winnerErr; err != nil {
 		t.Fatalf("first install = %v, want success", err)
@@ -314,12 +324,9 @@ func TestUpsert_ConcurrentInstallDoesNotSubscribeBehindTheWinner(t *testing.T) {
 	}
 }
 
-// waitForSlotLockWaiter returns once some session is waiting on the bot's
-// routing-slot advisory lock (LockChannelInstallationAppIDSlot's two-key form,
-// which pg_locks reports as classid/objid with objsubid 2), or once overtaken
-// reports true. Keyed on this bot alone, so a concurrent test elsewhere in the
-// shared database cannot satisfy it.
-func waitForSlotLockWaiter(t *testing.T, ctx context.Context, pool *pgxpool.Pool, botID string, overtaken func() bool) {
+// Observe this install waiting at the canonical prefix before it can acquire
+// the bot slot or contact the provider. A waiter from another test cannot satisfy it.
+func waitForSlotLockWaiter(t *testing.T, ctx context.Context, pool *pgxpool.Pool, waitingPID uint32, overtaken func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for !overtaken() {
@@ -329,15 +336,16 @@ func waitForSlotLockWaiter(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 				SELECT 1 FROM pg_locks
 				WHERE locktype = 'advisory' AND NOT granted
 				  AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
-				  AND classid = hashtext($1)::oid AND objid = hashtext($2)::oid AND objsubid = 2
-			)`, channelTypeWecom, botID).Scan(&parked); err != nil {
-			t.Fatalf("observe the bot's slot lock: %v", err)
+				  AND pid=$1::int AND classid=($2::bigint >> 32)::oid
+ AND objid=($2::bigint & 4294967295)::oid AND objsubid=1
+			)`, waitingPID, bindingtx.LockKey).Scan(&parked); err != nil {
+			t.Fatalf("observe the transaction prefix: %v", err)
 		}
 		if parked {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("the racing install never reached the bot's slot lock")
+			t.Fatal("the racing install never reached the transaction prefix")
 		}
 		time.Sleep(5 * time.Millisecond)
 	}

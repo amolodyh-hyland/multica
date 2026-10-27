@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 )
 
 // searchStatementTimeout bounds every /search request at the Postgres level.
@@ -117,7 +118,7 @@ func runSearchQuery(
 	args []any,
 	rowsFn func(pgx.Rows) error,
 ) error {
-	tx, err := txStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, txStarter)
 	if err != nil {
 		return fmt.Errorf("begin search tx: %w", err)
 	}

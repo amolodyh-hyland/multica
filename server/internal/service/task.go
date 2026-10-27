@@ -28,6 +28,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
@@ -1674,7 +1675,7 @@ func (s *TaskService) enqueueQuickCreateTask(ctx context.Context, workspaceID, r
 	if capture == nil {
 		task, err = s.Queries.CreateQuickCreateTask(ctx, createParams)
 	} else {
-		tx, beginErr := s.TxStarter.Begin(ctx)
+		tx, beginErr := bindingtx.Begin(ctx, s.TxStarter)
 		if beginErr != nil {
 			return db.AgentTaskQueue{}, fmt.Errorf("begin quick-create source context tx: %w", beginErr)
 		}
@@ -1769,7 +1770,7 @@ func (s *TaskService) RetrySourceContextQuickCreate(ctx context.Context, workspa
 	}
 	overlay := s.buildRuntimeMCPOverlay(ctx, requesterID, agent)
 
-	tx, err := s.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter)
 	if err != nil {
 		return nil, fmt.Errorf("begin source context manual retry: %w", err)
 	}
@@ -1970,7 +1971,7 @@ func (s *TaskService) enqueueChatTask(
 	if s.TxStarter == nil {
 		return db.AgentTaskQueue{}, errors.New("chat task enqueue: transaction starter is required")
 	}
-	tx, err := s.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter)
 	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("begin chat task enqueue: %w", err)
 	}
@@ -4230,7 +4231,7 @@ func (s *TaskService) StartTaskForClaim(ctx context.Context, claim db.LockAgentT
 	if !claim.ID.Valid || !claim.RuntimeID.Valid || !claim.DispatchedAt.Valid {
 		return nil, fmt.Errorf("start task: incomplete claim")
 	}
-	tx, err := s.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter)
 	if err != nil {
 		return nil, fmt.Errorf("begin task start: %w", err)
 	}
@@ -6815,7 +6816,7 @@ func (s *TaskService) runInTx(ctx context.Context, fn func(*db.Queries) error) e
 	if s.TxStarter == nil {
 		return fn(s.Queries)
 	}
-	tx, err := s.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -7602,7 +7603,7 @@ func (s *TaskService) AutoUnresolveThreadOnReply(ctx context.Context, parent *db
 	}
 	// This follow-up write is a consequence of the reply's run, not a new
 	// system action. Preserve that lineage for event subscriptions as well.
-	tx, err := s.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter)
 	if err != nil {
 		slog.Warn("auto-unresolve transaction failed", "error", err)
 		return

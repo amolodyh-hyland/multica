@@ -16,6 +16,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
@@ -489,7 +490,7 @@ type runtimeGCResult struct {
 // observes that its runtime no longer exists.
 func gcRuntime(ctx context.Context, txStarter runtimeGCTxStarter, queries *db.Queries, runtimeID pgtype.UUID) (runtimeGCResult, error) {
 	var result runtimeGCResult
-	tx, err := txStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, txStarter)
 	if err != nil {
 		return result, fmt.Errorf("begin transaction: %w", err)
 	}

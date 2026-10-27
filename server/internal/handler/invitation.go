@@ -16,6 +16,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/seatcapacity"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -172,7 +173,7 @@ func (h *Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
 	}
 	var inv db.WorkspaceInvitation
 	if h.seatCapacityEnabled() {
-		tx, txErr := h.TxStarter.Begin(r.Context())
+		tx, txErr := bindingtx.Begin(r.Context(), h.TxStarter)
 		if txErr != nil {
 			h.compensateCapacityIntent(r.Context(), invitationID)
 			writeError(w, http.StatusInternalServerError, "failed to create invitation")
@@ -304,7 +305,7 @@ func (h *Handler) RevokeInvitation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to revoke invitation")
 		return
@@ -513,7 +514,7 @@ func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Use a transaction: mark accepted + create member atomically.
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to accept invitation")
 		return
@@ -661,7 +662,7 @@ func (h *Handler) DeclineInvitation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to decline invitation")
 		return

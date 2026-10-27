@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -57,7 +58,7 @@ func (h *Handler) CreatePublicDelegation(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	ctx := r.Context()
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter)
 	if err != nil {
 		publicReadFailure(w, r)
 		return

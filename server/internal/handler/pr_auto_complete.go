@@ -17,6 +17,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -254,7 +255,7 @@ func (h *Handler) maybeAutoCompleteIssue(ctx context.Context, workspaceID, issue
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter)
 	if err != nil {
 		slog.Warn("pr auto-complete: begin failed", "err", err)
 		return
@@ -547,7 +548,7 @@ func (h *Handler) UnlinkIssuePullRequest(w http.ResponseWriter, r *http.Request)
 		excludedBy = parsed
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to unlink pull request")
 		return

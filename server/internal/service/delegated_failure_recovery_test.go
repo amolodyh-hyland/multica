@@ -15,6 +15,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	dbfx "github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -369,7 +370,7 @@ func seedDelegatedFailureFixture(t *testing.T) (*delegatedFailureFixture, *TaskS
 		worker:        workerID,
 		sourceTrigger: sourceTriggerID,
 		sourceTask:    sourceTaskID,
-	}, NewTaskService(db.New(pool), pool, nil, events.New())
+	}, NewTaskService(db.NewBinding(pool), pool, nil, events.New())
 }
 
 func (f *delegatedFailureFixture) insertWorkerTask(t *testing.T, status, evidenceKind string, attempt, maxAttempts int32) pgtype.UUID {
@@ -1304,15 +1305,7 @@ func TestDelegatedFailureRecoveryConcurrentRuntimeTeardownPreservesOverrideSigna
 	failedID := f.insertWorkerTask(t, "failed", "comment", 1, 2)
 	fx.Exec(t, `UPDATE agent_task_queue SET completed_at=now() WHERE id=$1 OR id=$2`, failedID, f.sourceTask)
 
-	recoveryTx, err := f.pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer recoveryTx.Rollback(context.Background())
-	if _, err := db.New(recoveryTx).GetAgentTaskForDelegatedFailureUpdate(ctx, failedID); err != nil {
-		t.Fatal(err)
-	}
-	teardownTx, err := f.pool.Begin(ctx)
+	teardownTx, err := bindingtx.Begin(ctx, f.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1322,36 +1315,38 @@ func TestDelegatedFailureRecoveryConcurrentRuntimeTeardownPreservesOverrideSigna
 	if _, err := qtx.LockAgentRuntime(ctx, runtimeID); err != nil {
 		t.Fatal(err)
 	}
-	agents, err := qtx.ListUserAgentsByRuntimeForUpdate(ctx, runtimeID)
+	if agents, err := qtx.ListUserAgentsByRuntimeForUpdate(ctx, runtimeID); err != nil || len(agents) != 2 {
+		t.Fatalf("lock profiles count=%d error=%v", len(agents), err)
+	}
+	recoveryConn, err := f.pool.Acquire(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(agents) != 2 {
-		t.Fatalf("locked %d runtime profiles, want coordinator and worker", len(agents))
-	}
-	// Both connections now own the production locks: recovery's failed task
-	// and teardown's profiles. A locking runtime read here forms the cycle.
-	svc.TxStarter = delegatedRecoveryLockedTxStarter{tx: recoveryTx}
+	defer recoveryConn.Release()
+	recoveryTasks := NewTaskService(db.NewBinding(recoveryConn), recoveryConn, nil, svc.Bus)
 	recoveryDone := make(chan error, 1)
 	go func() {
-		target, created, err := svc.ensureDelegatedFailureRecoveryComment(ctx, failedID)
+		target, created, err := recoveryTasks.ensureDelegatedFailureRecoveryComment(ctx, failedID)
 		if err == nil && (target == nil || !created || target.agent.RuntimeID != util.MustParseUUID(overrideID)) {
 			err = errors.New("recovery did not create a signal for the surviving override")
 		}
 		recoveryDone <- err
 	}()
+	if err := waitBindingPrefix(ctx, teardownTx, recoveryConn.Conn().PgConn().PID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := teardownTx.Exec(ctx, `SELECT id FROM agent_task_queue WHERE id=$1 FOR UPDATE NOWAIT`, failedID); err != nil {
+		t.Fatal(err)
+	}
 	teardownDone := make(chan error, 1)
-	go func() {
-		defer teardownTx.Rollback(context.Background())
-		_, err := TeardownRuntime(ctx, qtx, runtimeID, RuntimeTeardownOptions{CancelNonTerminalTasks: true})
-		if err == nil {
-			err = qtx.DeleteAgentRuntime(ctx, runtimeID)
-		}
-		if err == nil {
-			err = teardownTx.Commit(ctx)
-		}
-		teardownDone <- err
-	}()
+	_, err = TeardownRuntime(ctx, qtx, runtimeID, RuntimeTeardownOptions{CancelNonTerminalTasks: true})
+	if err == nil {
+		err = qtx.DeleteAgentRuntime(ctx, runtimeID)
+	}
+	if err == nil {
+		err = teardownTx.Commit(ctx)
+	}
+	teardownDone <- err
 	recoveryErr, teardownErr := <-recoveryDone, <-teardownDone
 	if recoveryErr != nil || teardownErr != nil {
 		t.Fatalf("concurrent recovery=%v teardown=%v; want both to commit", recoveryErr, teardownErr)

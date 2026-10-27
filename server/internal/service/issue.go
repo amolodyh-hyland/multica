@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/issueworkflow"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -233,7 +234,7 @@ type IssueCreateResult struct {
 // required, RFC3339 date format, assignee pair sanity.
 func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts IssueCreateOpts) (IssueCreateResult, error) {
 	issueCountPolicy := ResolveIssueCountPolicy(ctx, s.Entitlements, p.WorkspaceID)
-	tx, err := s.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter)
 	if err != nil {
 		return IssueCreateResult{}, fmt.Errorf("begin tx: %w", err)
 	}

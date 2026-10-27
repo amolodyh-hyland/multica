@@ -9,6 +9,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -28,7 +29,7 @@ func isAssignmentRecipientType(assigneeType string) bool {
 // transaction: its eligibility checks and its write must sit inside one
 // serialization boundary (see subscribeDelegatedHuman).
 func registerSubscriberListeners(bus *events.Bus, pool *pgxpool.Pool) {
-	queries := db.New(pool)
+	queries := db.NewBinding(pool)
 	// issue:created — subscribe creator + assignee (if different)
 	bus.Subscribe(protocol.EventIssueCreated, func(e events.Event) {
 		payload, ok := e.Payload.(map[string]any)
@@ -217,7 +218,7 @@ func subscribeDelegatedHuman(bus *events.Bus, pool *pgxpool.Pool, queries *db.Qu
 	// correct here: the losing interleaving subscribes an issue that did not
 	// exist when the opt-out was written, so there is no row for a row lock to
 	// protect (MUL-5483 review round 7).
-	tx, err := pool.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, pool)
 	if err != nil {
 		slog.Error("delegated subscribe: begin failed", "issue_id", issueID, "error", err)
 		return

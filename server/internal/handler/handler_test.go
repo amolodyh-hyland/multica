@@ -59,7 +59,7 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 
-	queries := db.New(pool)
+	queries := db.NewBinding(pool)
 	hub := realtime.NewHub()
 	go hub.Run()
 	bus := events.New()
@@ -1037,7 +1037,7 @@ func TestScheduledAutopilotAllowsActiveDuplicateIssue(t *testing.T) {
 	w.JSON(&autopilot)
 	autopilotID = autopilot.ID
 
-	queries := db.New(testPool)
+	queries := db.NewBinding(testPool)
 	ap, err := queries.GetAutopilot(ctx, parseUUID(autopilotID))
 	if err != nil {
 		t.Fatalf("GetAutopilot: %v", err)
@@ -1120,7 +1120,7 @@ func TestAutopilotCreatedIssueCreatorIsAssigneeAgent(t *testing.T) {
 		}
 	})
 
-	queries := db.New(testPool)
+	queries := db.NewBinding(testPool)
 	ap, err := queries.GetAutopilot(ctx, parseUUID(autopilotID))
 	if err != nil {
 		t.Fatalf("GetAutopilot: %v", err)
@@ -1201,7 +1201,7 @@ func TestAutopilotCreateIssueAssociatesConfiguredProject(t *testing.T) {
 		t.Fatalf("autopilot project_id = %v, want %q", autopilot.ProjectID, projectID)
 	}
 
-	queries := db.New(testPool)
+	queries := db.NewBinding(testPool)
 	ap, err := queries.GetAutopilot(ctx, parseUUID(autopilotID))
 	if err != nil {
 		t.Fatalf("GetAutopilot: %v", err)
@@ -1271,7 +1271,7 @@ func TestAutopilotDispatchUsesCurrentProjectBinding(t *testing.T) {
 	w.JSON(&created)
 	autopilotID = created.ID
 
-	queries := db.New(testPool)
+	queries := db.NewBinding(testPool)
 	ap, err := queries.GetAutopilot(ctx, parseUUID(autopilotID))
 	if err != nil {
 		t.Fatalf("GetAutopilot: %v", err)

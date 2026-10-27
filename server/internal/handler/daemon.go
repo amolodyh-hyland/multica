@@ -32,6 +32,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -344,7 +345,7 @@ func (h *Handler) upsertRuntimeWithProfile(
 	var row db.UpsertAgentRuntimeWithProfileRow
 	var profile db.RuntimeProfile
 
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter)
 	if err != nil {
 		return row, profile, fmt.Errorf("begin profile runtime registration: %w", err)
 	}
@@ -831,7 +832,7 @@ var errRuntimeMergeFenced = errors.New("runtime merge refused by the task-write 
 // teardown cannot start deleting the target until this merge finishes, and any
 // failure rolls the whole merge back to its starting state.
 func (h *Handler) mergeLegacyRuntime(ctx context.Context, newRuntimeID, oldRuntimeID pgtype.UUID, legacyID, provider string) error {
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter)
 	if err != nil {
 		return fmt.Errorf("begin merge tx: %w", err)
 	}
