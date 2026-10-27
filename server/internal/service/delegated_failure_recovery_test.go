@@ -1305,7 +1305,7 @@ func TestDelegatedFailureRecoveryConcurrentRuntimeTeardownPreservesOverrideSigna
 	failedID := f.insertWorkerTask(t, "failed", "comment", 1, 2)
 	fx.Exec(t, `UPDATE agent_task_queue SET completed_at=now() WHERE id=$1 OR id=$2`, failedID, f.sourceTask)
 
-	teardownTx, err := bindingtx.Begin(ctx, f.pool)
+	teardownTx, err := bindingtx.Begin(ctx, f.pool, bindingtx.Workspaces(f.workspaceID))
 	if err != nil {
 		t.Fatal(err)
 	}

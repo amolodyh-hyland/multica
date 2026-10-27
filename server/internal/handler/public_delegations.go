@@ -58,7 +58,7 @@ func (h *Handler) CreatePublicDelegation(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	ctx := r.Context()
-	tx, err := bindingtx.Begin(ctx, h.TxStarter)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Owners(member.WorkspaceID, agentID, runtimeID))
 	if err != nil {
 		publicReadFailure(w, r)
 		return

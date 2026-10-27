@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/events"
 	inboxwriter "github.com/multica-ai/multica/server/internal/inbox"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
@@ -160,7 +163,10 @@ func (s *IssueWakeupService) ProcessChildEvents(ctx context.Context, parentIDs .
 }
 
 func (s *IssueWakeupService) processChildEvents(ctx context.Context, parentID pgtype.UUID) error {
-	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter, bindingtx.Owners(parentID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -289,7 +295,7 @@ func (s *IssueWakeupService) BackfillChildDoneRules(ctx context.Context, limit i
 }
 
 func (s *IssueWakeupService) ensureRule(ctx context.Context, parent db.Issue) error {
-	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter, bindingtx.Workspaces(parent.WorkspaceID))
 	if err != nil {
 		return err
 	}
@@ -406,8 +412,17 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 	if err != nil {
 		return err
 	}
+	var preparedAttr attribution.Result
+	var overlay runtimeMCPOverlayData
+	if target.Agent.ID.Valid {
+		preparedAttr, err = s.childDoneRunAs(ctx, s.Tasks.Queries, snapshot, target.Agent)
+		if err != nil {
+			return err
+		}
+		overlay = s.Tasks.buildRuntimeMCPOverlay(ctx, preparedAttr.UserID, target.Agent)
+	}
 	headSHA := s.Tasks.ResolveIssueReviewSHAParam(ctx, prev.IssueID)
-	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter, bindingtx.Workspaces(prev.WorkspaceID))
 	if err != nil {
 		return err
 	}
@@ -628,7 +643,7 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 		}
 		return commit()
 	}
-	attr, err := s.childDoneRunAs(ctx, issue, agent)
+	attr, err := s.childDoneRunAs(ctx, q, issue, agent)
 	if err != nil {
 		return err
 	}
@@ -658,7 +673,9 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 	if err = guardIssueNotInTriage(ctx, q, issue.ID, OriginDerived); err != nil {
 		return err
 	}
-	overlay := s.Tasks.buildRuntimeMCPOverlay(ctx, attr.UserID, agent)
+	if !reflect.DeepEqual(attr, preparedAttr) || agent.OwnerID != target.Agent.OwnerID || !slices.Equal(agent.ComposioToolkitAllowlist, target.Agent.ComposioToolkitAllowlist) {
+		return tx.Commit(ctx)
+	}
 	source, delegatedFrom, _, _ := attributionCreateParams(attr)
 	contextJSON, _ := json.Marshal(map[string]any{"wakeup_id": util.UUIDToString(w.ID), "wakeup_revision": w.Revision, "wakeup_evidence": evidence, "wakeup_system": SystemRuleChildDone})
 	task, err = q.CreateWakeupTask(ctx, db.CreateWakeupTaskParams{
@@ -722,7 +739,7 @@ type SystemWakeupInput struct {
 // runs that have not started.
 func (s *IssueWakeupService) UpdateChildDoneRule(ctx context.Context, issueID pgtype.UUID, in SystemWakeupInput) (db.IssueWakeup, error) {
 	var out db.IssueWakeup
-	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter, bindingtx.Owners(issueID))
 	if err != nil {
 		return out, err
 	}
@@ -793,7 +810,7 @@ func (s *IssueWakeupService) SetChildDoneDefault(ctx context.Context, workspaceI
 		return 0, nil
 	}
 	raw, _ := json.Marshal(patch)
-	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		return 0, err
 	}

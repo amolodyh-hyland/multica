@@ -85,7 +85,7 @@ func (h *Handler) CreateAgentBuilderSession(w http.ResponseWriter, r *http.Reque
 	flowID := uuid.NewString()
 	ownerUUID := parseUUID(userID)
 	model := strings.TrimSpace(req.Model)
-	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start agent builder session")
 		return
@@ -112,7 +112,7 @@ func (h *Handler) CreateAgentBuilderSession(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid runtime_id")
 		return
 	}
-	if !h.authorizeBuilderRuntime(w, r, workspaceID, runtime, "start") {
+	if !h.withQueries(qtx).authorizeBuilderRuntime(w, r, workspaceID, runtime, "start") {
 		return
 	}
 
@@ -309,7 +309,7 @@ func (h *Handler) SaveAgentBuilderDraft(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save agent builder draft")
 		return
@@ -467,7 +467,7 @@ func (h *Handler) SwitchAgentBuilderRuntime(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to switch agent builder runtime")
 		return
@@ -490,7 +490,7 @@ func (h *Handler) SwitchAgentBuilderRuntime(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid runtime_id")
 		return
 	}
-	if !h.authorizeBuilderRuntime(w, r, workspaceID, runtime, "switch") {
+	if !h.withQueries(qtx).authorizeBuilderRuntime(w, r, workspaceID, runtime, "switch") {
 		return
 	}
 

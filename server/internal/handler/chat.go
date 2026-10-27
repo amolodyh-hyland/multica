@@ -97,7 +97,7 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 	// created into a workspace whose delete is in progress and then be orphaned by
 	// the finalizer after the delete's sweep (#5219 create/delete protocol; see
 	// LockWorkspaceForChatSessionCreate).
-	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(workspaceUUID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
 		return
@@ -416,7 +416,7 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		tx, txErr := bindingtx.Begin(r.Context(), h.TxStarter)
+		tx, txErr := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(session.WorkspaceID))
 		if txErr != nil {
 			writeError(w, http.StatusInternalServerError, "failed to start transaction")
 			return
@@ -564,7 +564,7 @@ func (h *Handler) SetChatSessionArchived(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(session.WorkspaceID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
 		return
@@ -694,7 +694,7 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(session.WorkspaceID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
 		return
@@ -1684,7 +1684,7 @@ func (h *Handler) PrioritizeQueuedChatTask(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(session.WorkspaceID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start prioritize transaction")
 		return

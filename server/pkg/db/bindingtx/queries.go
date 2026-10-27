@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -28,24 +29,39 @@ var sqlComments = regexp.MustCompile(`(?m)--[^\n]*|(?s:/\*.*?\*/)`)
 var sqlStrings = regexp.MustCompile(`'(?:''|[^'])*'`)
 var lockingSQL = regexp.MustCompile(`(?i)\b(insert|update|delete|merge|truncate|pg_(?:try_)?advisory_\w+|lock_task_owner_rows|issue_runtime_for_run|for\s+(?:key\s+)?share)\b`)
 
-func (q *queries) transaction(ctx context.Context, sql string) (pgx.Tx, bool, error) {
-	if !lockingSQL.MatchString(sqlStrings.ReplaceAllString(sqlComments.ReplaceAllString(sql, ""), "''")) {
+var bindingSQL = regexp.MustCompile(`(?i)\b(agent|agent_runtime|agent_task_queue|issue|comment|chat_session|chat_message|issue_runtime_override|issue_wakeup)\b`)
+
+func (q *queries) transaction(ctx context.Context, sql string, args ...any) (pgx.Tx, bool, error) {
+	cleaned := sqlStrings.ReplaceAllString(sqlComments.ReplaceAllString(sql, ""), "''")
+	if !lockingSQL.MatchString(cleaned) {
 		return nil, false, nil
 	}
 	if tx, ok := q.DBTX.(pgx.Tx); ok {
-		_, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", LockKey)
-		return tx, false, err
+		return tx, false, nil
 	}
 	starter, ok := q.DBTX.(Starter)
 	if !ok {
 		return nil, false, errors.New("binding write requires a transaction starter")
 	}
-	tx, err := Begin(ctx, starter)
+	scope := Owners(args...)
+	scope.allowMissing = !bindingSQL.MatchString(cleaned)
+	scope.missingAll = bindingSQL.MatchString(cleaned)
+	if len(scope.owners) == 0 {
+		if bindingSQL.MatchString(cleaned) {
+			scope = AllWorkspaces()
+		} else {
+			scope = unscoped()
+		}
+	}
+	if strings.HasPrefix(sql, "-- name: CreateWorkspace ") {
+		scope = NewWorkspace()
+	}
+	tx, err := Begin(ctx, starter, scope)
 	return tx, true, err
 }
 
 func (q *queries) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	tx, own, err := q.transaction(ctx, sql)
+	tx, own, err := q.transaction(ctx, sql, args...)
 	if err != nil {
 		return pgconn.CommandTag{}, err
 	}
@@ -63,7 +79,7 @@ func (q *queries) Exec(ctx context.Context, sql string, args ...any) (pgconn.Com
 }
 
 func (q *queries) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	tx, own, err := q.transaction(ctx, sql)
+	tx, own, err := q.transaction(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +100,7 @@ func (q *queries) Query(ctx context.Context, sql string, args ...any) (pgx.Rows,
 }
 
 func (q *queries) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	tx, own, err := q.transaction(ctx, sql)
+	tx, own, err := q.transaction(ctx, sql, args...)
 	if err != nil {
 		return errorRow{err}
 	}

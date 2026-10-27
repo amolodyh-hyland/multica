@@ -99,7 +99,7 @@ func (h *Handler) SetIssueRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 		targetID = overrideID
 	}
-	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Owners(issue.ID, profile.ID, targetID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start runtime change")
 		return
@@ -116,7 +116,7 @@ func (h *Handler) SetIssueRuntime(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid runtime_id")
 			return
 		}
-		member, ok := h.workspaceMember(w, r, uuidToString(issue.WorkspaceID))
+		member, ok := h.withQueries(q).workspaceMember(w, r, uuidToString(issue.WorkspaceID))
 		if !ok {
 			return
 		}

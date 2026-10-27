@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/testutil"
 
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
@@ -141,8 +142,18 @@ func newTestInstallService(t *testing.T, q installQueries) *InstallService {
 }
 
 func (tx *fakeTx) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	if sql != "SELECT pg_advisory_xact_lock($1)" || len(args) != 1 || args[0] != bindingtx.LockKey {
+	if sql != "SELECT pg_advisory_xact_lock($1,$2)" || len(args) != 2 || args[0] != bindingtx.Namespace {
 		return pgconn.CommandTag{}, fmt.Errorf("unexpected transaction SQL: %s", sql)
 	}
 	return pgconn.NewCommandTag("SELECT 1"), nil
+}
+
+func (tx *fakeTx) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
+	workspace := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
+	if len(args) > 0 {
+		if id, ok := args[0].(pgtype.UUID); ok {
+			workspace = id
+		}
+	}
+	return testutil.UUIDRows(workspace), nil
 }

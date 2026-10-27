@@ -318,7 +318,7 @@ func (s *ChatSession) EnsureSession(ctx context.Context, in EnsureSessionInput) 
 }
 
 func (s *ChatSession) createSessionAndBinding(ctx context.Context, in EnsureSessionInput) (pgtype.UUID, error) {
-	tx, err := bindingtx.Begin(ctx, s.tx)
+	tx, err := bindingtx.Begin(ctx, s.tx, bindingtx.Workspaces(in.WorkspaceID))
 	if err != nil {
 		return pgtype.UUID{}, fmt.Errorf("begin tx: %w", err)
 	}
@@ -439,7 +439,7 @@ type StartSessionInput struct {
 // explicitly visible Chat, installs the next generation, and optionally writes
 // the command body as its first ordinary user message.
 func (s *ChatSession) StartSession(ctx context.Context, in StartSessionInput) (StartSessionResult, error) {
-	tx, err := bindingtx.Begin(ctx, s.tx)
+	tx, err := bindingtx.Begin(ctx, s.tx, bindingtx.Workspaces(in.WorkspaceID))
 	if err != nil {
 		return StartSessionResult{}, fmt.Errorf("begin start chat tx: %w", err)
 	}
@@ -644,7 +644,7 @@ const channelCommandMessageKind = "channel_command"
 // the dedup token mid-flight, in which case the whole transaction rolls back
 // (no chat_message lands).
 func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (AppendResult, error) {
-	tx, err := bindingtx.Begin(ctx, s.tx)
+	tx, err := bindingtx.Begin(ctx, s.tx, bindingtx.Owners(in.SessionID, in.InstallationID))
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("begin tx: %w", err)
 	}
@@ -843,7 +843,7 @@ func (s *ChatSession) MarkPendingFreshWithDedup(
 	dedupMessageID string,
 	claimToken pgtype.UUID,
 ) error {
-	tx, err := bindingtx.Begin(ctx, s.tx)
+	tx, err := bindingtx.Begin(ctx, s.tx, bindingtx.Owners(sessionID, installationID))
 	if err != nil {
 		return fmt.Errorf("begin fresh context tx: %w", err)
 	}
@@ -906,7 +906,7 @@ func (s *ChatSession) BindMediaRefs(ctx context.Context, in BindMediaInput) erro
 // to production adapters so the Router can publish and refine that title.
 func (s *ChatSession) BindMediaRefsWithResult(ctx context.Context, in BindMediaInput) (BindMediaResult, error) {
 	var result BindMediaResult
-	tx, err := bindingtx.Begin(ctx, s.tx)
+	tx, err := bindingtx.Begin(ctx, s.tx, bindingtx.Workspaces(in.WorkspaceID))
 	if err != nil {
 		return result, fmt.Errorf("begin media tx: %w", err)
 	}

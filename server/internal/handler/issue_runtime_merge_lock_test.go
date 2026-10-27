@@ -42,7 +42,7 @@ func TestIssueRuntimeSwitchConcurrentLegacyMerge(t *testing.T) {
 	setIssueRuntime(t, testHandler, issue, agent, old, 200)
 	task := dbfx.Task(t, agent, testutil.Cols{"issue_id": issue, "runtime_id": old, "runtime_override_id": old})
 	dbfx.Cleanup(t, `DELETE FROM issue_runtime_override WHERE issue_id=$1`, issue)
-	tx, err := bindingtx.Begin(ctx, testHandler.TxStarter)
+	tx, err := bindingtx.Begin(ctx, testHandler.TxStarter, bindingtx.Workspaces(testWorkspaceID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestBindingPrefixOrdinaryEnqueueConcurrentLegacyMerge(t *testing.T) {
 	destination := dbfx.Runtime(t, "ordinary enqueue merged runtime")
 	agent := dbfx.Agent(t, "merge default profile", old)
 	issue := dbfx.Issue(t, "enqueue and merge", testutil.Cols{"assignee_type": "agent", "assignee_id": agent})
-	enqueueTx, err := bindingtx.Begin(ctx, testHandler.TxStarter)
+	enqueueTx, err := bindingtx.Begin(ctx, testHandler.TxStarter, bindingtx.Workspaces(testWorkspaceID))
 	if err != nil {
 		t.Fatal(err)
 	}

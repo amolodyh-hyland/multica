@@ -118,7 +118,7 @@ func runSearchQuery(
 	args []any,
 	rowsFn func(pgx.Rows) error,
 ) error {
-	tx, err := bindingtx.Begin(ctx, txStarter)
+	tx, err := bindingtx.BeginReadOnly(ctx, txStarter, bindingtx.ReadCommitted)
 	if err != nil {
 		return fmt.Errorf("begin search tx: %w", err)
 	}

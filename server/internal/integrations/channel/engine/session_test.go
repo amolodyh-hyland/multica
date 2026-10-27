@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/testutil"
 
 	"github.com/multica-ai/multica/server/internal/channelmedia"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
@@ -380,7 +381,7 @@ func newTestSession(f SessionQueries) *ChatSession {
 func TestEnsureSession_CreateThenReuse(t *testing.T) {
 	f := newFake()
 	s := newTestSession(f)
-	in := EnsureSessionInput{InstallationID: uid(1), BindingKey: "chatA", ChatType: channel.ChatTypeP2P, Sender: uid(7)}
+	in := EnsureSessionInput{WorkspaceID: uid(2), InstallationID: uid(1), BindingKey: "chatA", ChatType: channel.ChatTypeP2P, Sender: uid(7)}
 
 	id1, err := s.EnsureSession(context.Background(), in)
 	if err != nil {
@@ -641,7 +642,7 @@ func TestEnsureSession_RaceUniqueViolation(t *testing.T) {
 	f.raceWinner = uid(99)
 	s := newTestSession(f)
 
-	id, err := s.EnsureSession(context.Background(), EnsureSessionInput{InstallationID: uid(1), BindingKey: "chatA", ChatType: channel.ChatTypeGroup})
+	id, err := s.EnsureSession(context.Background(), EnsureSessionInput{WorkspaceID: uid(2), InstallationID: uid(1), BindingKey: "chatA", ChatType: channel.ChatTypeGroup})
 	if err != nil {
 		t.Fatalf("EnsureSession on race: %v", err)
 	}
@@ -659,7 +660,7 @@ func TestEnsureSession_ThreadRootIsolation(t *testing.T) {
 	f := newFake()
 	s := newTestSession(f)
 	mk := func(key string) pgtype.UUID {
-		id, err := s.EnsureSession(context.Background(), EnsureSessionInput{
+		id, err := s.EnsureSession(context.Background(), EnsureSessionInput{WorkspaceID: uid(2),
 			InstallationID: uid(1), BindingKey: key, ChatType: channel.ChatTypeGroup,
 		})
 		if err != nil {
@@ -690,6 +691,7 @@ func TestEnsureSession_StoresBindingConfig(t *testing.T) {
 	f := newFake()
 	s := newTestSession(f)
 	if _, err := s.EnsureSession(context.Background(), EnsureSessionInput{
+		WorkspaceID:    uid(2),
 		InstallationID: uid(1), BindingKey: "C123:1111.0001", ChatType: channel.ChatTypeGroup,
 		BindingConfig: []byte(`{"channel_id":"C123"}`),
 	}); err != nil {
@@ -701,7 +703,7 @@ func TestEnsureSession_StoresBindingConfig(t *testing.T) {
 
 	// Empty BindingConfig defaults to the "{}" object (the column is NOT NULL).
 	f2 := newFake()
-	if _, err := newTestSession(f2).EnsureSession(context.Background(), EnsureSessionInput{
+	if _, err := newTestSession(f2).EnsureSession(context.Background(), EnsureSessionInput{WorkspaceID: uid(2),
 		InstallationID: uid(1), BindingKey: "chatA", ChatType: channel.ChatTypeP2P,
 	}); err != nil {
 		t.Fatalf("EnsureSession: %v", err)
@@ -1415,15 +1417,35 @@ func TestAppendUserMessage_ReplyTargetSenderNullWhenAbsent(t *testing.T) {
 }
 
 func (tx *fakeTx) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	if sql != "SELECT pg_advisory_xact_lock($1)" || len(args) != 1 || args[0] != bindingtx.LockKey {
+	if sql != "SELECT pg_advisory_xact_lock($1,$2)" || len(args) != 2 || args[0] != bindingtx.Namespace {
 		return pgconn.CommandTag{}, fmt.Errorf("unexpected transaction SQL: %s", sql)
 	}
 	return pgconn.NewCommandTag("SELECT 1"), nil
 }
 
 func (tx *recordingTx) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	if sql != "SELECT pg_advisory_xact_lock($1)" || len(args) != 1 || args[0] != bindingtx.LockKey {
+	if sql != "SELECT pg_advisory_xact_lock($1,$2)" || len(args) != 2 || args[0] != bindingtx.Namespace {
 		return pgconn.CommandTag{}, fmt.Errorf("unexpected transaction SQL: %s", sql)
 	}
 	return pgconn.NewCommandTag("SELECT 1"), nil
+}
+
+func (tx *fakeTx) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
+	workspace := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
+	if len(args) > 0 {
+		if id, ok := args[0].(pgtype.UUID); ok {
+			workspace = id
+		}
+	}
+	return testutil.UUIDRows(workspace), nil
+}
+
+func (tx *recordingTx) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
+	workspace := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
+	if len(args) > 0 {
+		if id, ok := args[0].(pgtype.UUID); ok {
+			workspace = id
+		}
+	}
+	return testutil.UUIDRows(workspace), nil
 }

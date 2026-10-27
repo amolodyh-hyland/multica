@@ -57,7 +57,7 @@ func lockManagedWakeup(ctx context.Context, tx pgx.Tx, q *db.Queries, issueID, i
 // rule someone turned off, or one the platform stopped for a loop or burst,
 // must be turned on first.
 func (s *IssueWakeupService) Trigger(ctx context.Context, issueID, id, member pgtype.UUID) error {
-	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter, bindingtx.Owners(issueID))
 	if err != nil {
 		return err
 	}
@@ -107,7 +107,7 @@ func (s *IssueWakeupService) Trigger(ctx context.Context, issueID, id, member pg
 // have not started. Started runs keep the ordinary Stop control, and their
 // history stays in the run list.
 func (s *IssueWakeupService) Delete(ctx context.Context, issueID, id, member pgtype.UUID) error {
-	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter, bindingtx.Owners(issueID))
 	if err != nil {
 		return err
 	}
@@ -145,7 +145,7 @@ func (s *IssueWakeupService) CheckIn(ctx context.Context, issueID, id, taskID pg
 	if note == "" || utf8.RuneCountInString(note) > maxWakeupCheckinRunes {
 		return fmt.Errorf("%w: note must contain 1–%d characters", ErrWakeupInput, maxWakeupCheckinRunes)
 	}
-	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter, bindingtx.Owners(issueID))
 	if err != nil {
 		return err
 	}

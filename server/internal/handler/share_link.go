@@ -118,7 +118,7 @@ func (h *Handler) CreateShareLink(w http.ResponseWriter, r *http.Request) {
 	// working link if the insert fails, and ignoring deactivation errors could
 	// leave multiple active links. The partial unique index on
 	// (workspace_id) WHERE is_active also fails closed on concurrent creates.
-	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create share link")
 		return
@@ -314,7 +314,7 @@ func (h *Handler) JoinByShareLink(w http.ResponseWriter, r *http.Request) {
 	// a conditional UPDATE that revalidates active/not-expired/below-max_uses
 	// and increments use_count in one statement, so concurrent joins cannot
 	// exceed max_uses and a join cannot race past a revocation/expiry.
-	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(linkPreview.WorkspaceID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to join workspace")
 		return

@@ -28,6 +28,22 @@ func TestBackendTransactionPrefixGuard(t *testing.T) {
 			if err != nil {
 				return err
 			}
+			var preparations []*ast.FuncLit
+			ast.Inspect(file, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if ok && sel.Sel.Name == "WithPreparation" {
+					for _, arg := range call.Args {
+						if cb, ok := arg.(*ast.FuncLit); ok {
+							preparations = append(preparations, cb)
+						}
+					}
+				}
+				return true
+			})
 			ast.Inspect(file, func(node ast.Node) bool {
 				call, ok := node.(*ast.CallExpr)
 				if !ok {
@@ -36,6 +52,17 @@ func TestBackendTransactionPrefixGuard(t *testing.T) {
 				sel, ok := call.Fun.(*ast.SelectorExpr)
 				if !ok {
 					return true
+				}
+				if sel.Sel.Name == "LockChannelInstallationAppIDSlot" {
+					prepared := false
+					for _, cb := range preparations {
+						if call.Pos() > cb.Pos() && call.End() < cb.End() {
+							prepared = true
+						}
+					}
+					if !prepared {
+						t.Errorf("%s: bot slot must precede workspace prefix in WithPreparation", fset.Position(call.Pos()))
+					}
 				}
 				if sel.Sel.Name == "Begin" || sel.Sel.Name == "BeginTx" {
 					if id, ok := sel.X.(*ast.Ident); ok && id.Name == "bindingtx" {

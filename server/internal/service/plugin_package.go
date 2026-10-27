@@ -117,7 +117,7 @@ func (s *PluginService) publish(ctx context.Context, workspaceID, userID pgtype.
 		return PluginPackageSummary{}, &PluginError{Kind: PluginErrorIncompatible, Message: capabilityMessage(err), Err: err}
 	}
 
-	tx, err := bindingtx.Begin(ctx, s.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		return PluginPackageSummary{}, &PluginError{Kind: PluginErrorUnavailable, Message: "begin publish", Err: err}
 	}
@@ -352,7 +352,7 @@ func (s *PluginService) DeletePackage(ctx context.Context, workspaceID pgtype.UU
 		return &PluginError{Kind: PluginErrorUnavailable, Message: "load plugin package", Err: err}
 	}
 
-	tx, err := bindingtx.Begin(ctx, s.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		return &PluginError{Kind: PluginErrorUnavailable, Message: "begin delete", Err: err}
 	}

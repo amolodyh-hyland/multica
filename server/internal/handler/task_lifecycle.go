@@ -106,7 +106,7 @@ func (h *Handler) PinTaskSession(w http.ResponseWriter, r *http.Request) {
 	// comes first for the same reason it does in CancelTaskWithResult —
 	// chat_session -> agent_task_queue is the global order, and ErrNoRows simply
 	// means there is no session to lock or advance.
-	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Owners(params.ID))
 	if err != nil {
 		slog.Warn("pin-session failed to start tx", "task_id", taskID, "error", err)
 		writeError(w, http.StatusInternalServerError, "pin session failed")

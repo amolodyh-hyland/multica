@@ -210,7 +210,7 @@ func newCredentialVerificationClient() *http.Client {
 // connected to a different live agent or workspace — refuse rather than
 // steal, with the accurate conflict message (same policy as Slack #4810).
 func (s *InstallService) persistInstall(ctx context.Context, p installPersist) (db.ChannelInstallation, error) {
-	tx, err := bindingtx.Begin(ctx, s.tx)
+	tx, err := bindingtx.Begin(ctx, s.tx, bindingtx.ChannelSlot(p.wsID, string(TypeTelegram), p.appIDKey))
 	if err != nil {
 		return db.ChannelInstallation{}, fmt.Errorf("begin install tx: %w", err)
 	}
@@ -237,6 +237,7 @@ func (s *InstallService) persistInstall(ctx context.Context, p installPersist) (
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+			_ = tx.Rollback(ctx)
 			return db.ChannelInstallation{}, s.liveOwnerConflictErr(ctx, p.wsID, p.appIDKey)
 		}
 		return db.ChannelInstallation{}, fmt.Errorf("upsert telegram installation: %w", err)

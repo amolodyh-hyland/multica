@@ -145,7 +145,7 @@ func (h *Handler) resolveMikaAgent(w http.ResponseWriter, r *http.Request, works
 		return db.Agent{}, false, false
 	}
 
-	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start agent create transaction")
 		return db.Agent{}, false, false
@@ -285,7 +285,7 @@ func (h *Handler) getOrCreateMikaSession(ctx context.Context, agent db.Agent, wo
 	wsUUID := parseUUID(workspaceID)
 	creatorUUID := parseUUID(userID)
 
-	tx, err := bindingtx.Begin(ctx, h.TxStarter)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		return db.ChatSession{}, err
 	}

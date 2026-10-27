@@ -289,7 +289,7 @@ func (s *IssueWakeupService) EditInstruction(ctx context.Context, issueID, id, m
 	if len(in.Instruction) == 0 || len(in.Instruction) > 12000 || in.Revision < 1 {
 		return fmt.Errorf("%w: instruction must be 1–12000 bytes and revision is required", ErrWakeupInput)
 	}
-	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter, bindingtx.Owners(issueID))
 	if err != nil {
 		return err
 	}
@@ -347,7 +347,7 @@ func (s *IssueWakeupService) Save(ctx context.Context, issueID, member, source, 
 
 func (s *IssueWakeupService) save(ctx context.Context, issueID, member, source, existingID pgtype.UUID, in WakeupInput, enable *WakeupEnableInput) (db.IssueWakeup, error) {
 	var out db.IssueWakeup
-	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter, bindingtx.Owners(issueID))
 	if err != nil {
 		return out, err
 	}
@@ -958,7 +958,7 @@ func (s *IssueWakeupService) systemRuleRunWaiting(ctx context.Context, q *db.Que
 	if err != nil || !target.Agent.ID.Valid {
 		return false, err
 	}
-	runAs, err := s.childDoneRunAs(ctx, issue, target.Agent)
+	runAs, err := s.childDoneRunAs(ctx, q, issue, target.Agent)
 	if err != nil {
 		return false, err
 	}
@@ -980,7 +980,7 @@ func (s *IssueWakeupService) dispatch(ctx context.Context, prev db.IssueWakeup) 
 	if candidate.ID.Valid && s.authorize(ctx, s.Tasks.Queries, prev.WorkspaceID, prev.CreatedBy, prev.IssueID, candidate) == nil {
 		overlay = s.Tasks.buildRuntimeMCPOverlay(ctx, prev.CreatedBy, candidate)
 	}
-	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter, bindingtx.Workspaces(prev.WorkspaceID))
 	if err != nil {
 		return err
 	}
@@ -1391,7 +1391,7 @@ func qCleanupMissingWakeup(ctx context.Context, tx pgx.Tx, id pgtype.UUID) error
 // ordinary Stop control; closing a subscription never kills unrelated work.
 func (s *IssueWakeupService) Disable(ctx context.Context, issueID, id, member pgtype.UUID) (db.IssueWakeup, error) {
 	var out db.IssueWakeup
-	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter, bindingtx.Owners(issueID))
 	if err != nil {
 		return out, err
 	}

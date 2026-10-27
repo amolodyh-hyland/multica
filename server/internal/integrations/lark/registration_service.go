@@ -702,7 +702,7 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 		return
 	}
 
-	tx, err := bindingtx.Begin(ctx, s.tx)
+	tx, err := bindingtx.Begin(ctx, s.tx, bindingtx.ChannelSlot(sess.workspaceID, channelTypeFeishu, res.ClientID))
 	if err != nil {
 		s.cfg.Logger.Error("lark registration: begin tx",
 			"session_id", sess.id, "err", err)
@@ -748,6 +748,7 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 		msg := err.Error()
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+			_ = tx.Rollback(ctx)
 			msg = s.liveOwnerConflictMessage(ctx, sess.workspaceID, res.ClientID)
 		}
 		s.markError(sess, RegistrationReasonInstallationConflict, msg)

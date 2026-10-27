@@ -366,7 +366,7 @@ func (s *PluginService) InstallPlugin(ctx context.Context, workspaceID, userID p
 		// A transaction even though it is one row: the skill resources land in
 		// the same commit. An installation whose skills half-arrived is worse
 		// than one that failed, because the missing half is invisible.
-		tx, txErr := bindingtx.Begin(ctx, s.TxStarter)
+		tx, txErr := bindingtx.Begin(ctx, s.TxStarter, bindingtx.Workspaces(workspaceID))
 		if txErr != nil {
 			return db.PluginInstallation{}, &PluginError{Kind: PluginErrorUnavailable, Message: "begin install", Err: txErr}
 		}
@@ -426,7 +426,7 @@ func (s *PluginService) InstallPlugin(ctx context.Context, workspaceID, userID p
 		return db.PluginInstallation{}, err
 	}
 
-	tx, err := bindingtx.Begin(ctx, s.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		return db.PluginInstallation{}, &PluginError{Kind: PluginErrorUnavailable, Message: "begin upgrade", Err: err}
 	}
@@ -590,7 +590,7 @@ func (s *PluginService) SetConfig(ctx context.Context, installation db.PluginIns
 
 	// Secrets and plain values are two tables with no foreign key between them,
 	// so one transaction is what keeps a saved form from landing half-applied.
-	tx, err := bindingtx.Begin(ctx, s.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter, bindingtx.Workspaces(installation.WorkspaceID))
 	if err != nil {
 		return db.PluginInstallation{}, &PluginError{Kind: PluginErrorUnavailable, Message: "begin configure", Err: err}
 	}
@@ -701,7 +701,7 @@ func (s *PluginService) SetEnabled(ctx context.Context, installation db.PluginIn
 	if installation.Enabled == enabled {
 		return installation, nil
 	}
-	tx, err := bindingtx.Begin(ctx, s.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter, bindingtx.Workspaces(installation.WorkspaceID))
 	if err != nil {
 		return db.PluginInstallation{}, &PluginError{Kind: PluginErrorUnavailable, Message: "begin plugin state update", Err: err}
 	}
@@ -729,7 +729,7 @@ func (s *PluginService) SetEnabled(ctx context.Context, installation db.PluginIn
 // share one transaction: a partial uninstall would strand rows nothing can
 // reach or clean up later.
 func (s *PluginService) Uninstall(ctx context.Context, installation db.PluginInstallation) error {
-	tx, err := bindingtx.Begin(ctx, s.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter, bindingtx.Workspaces(installation.WorkspaceID))
 	if err != nil {
 		return &PluginError{Kind: PluginErrorUnavailable, Message: "begin uninstall", Err: err}
 	}

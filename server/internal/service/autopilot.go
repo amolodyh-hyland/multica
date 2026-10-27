@@ -687,7 +687,7 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 	}
 	issueCountPolicy := ResolveIssueCountPolicy(ctx, s.Entitlements, ap.WorkspaceID)
 
-	tx, err := bindingtx.Begin(ctx, s.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter, bindingtx.Workspaces(ap.WorkspaceID))
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}

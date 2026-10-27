@@ -1675,7 +1675,7 @@ func (s *TaskService) enqueueQuickCreateTask(ctx context.Context, workspaceID, r
 	if capture == nil {
 		task, err = s.Queries.CreateQuickCreateTask(ctx, createParams)
 	} else {
-		tx, beginErr := bindingtx.Begin(ctx, s.TxStarter)
+		tx, beginErr := bindingtx.Begin(ctx, s.TxStarter, bindingtx.Workspaces(workspaceID))
 		if beginErr != nil {
 			return db.AgentTaskQueue{}, fmt.Errorf("begin quick-create source context tx: %w", beginErr)
 		}
@@ -1770,7 +1770,7 @@ func (s *TaskService) RetrySourceContextQuickCreate(ctx context.Context, workspa
 	}
 	overlay := s.buildRuntimeMCPOverlay(ctx, requesterID, agent)
 
-	tx, err := bindingtx.Begin(ctx, s.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		return nil, fmt.Errorf("begin source context manual retry: %w", err)
 	}
@@ -1971,7 +1971,7 @@ func (s *TaskService) enqueueChatTask(
 	if s.TxStarter == nil {
 		return db.AgentTaskQueue{}, errors.New("chat task enqueue: transaction starter is required")
 	}
-	tx, err := bindingtx.Begin(ctx, s.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter, bindingtx.Owners(chatSession.ID, chatSession.AgentID))
 	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("begin chat task enqueue: %w", err)
 	}
@@ -2360,7 +2360,7 @@ func (s *TaskService) SendDirectChatMessage(
 	attrSource, _, attrEvidenceKind, attrEvidenceRef := attributionCreateParams(attr)
 
 	var out DirectChatSendResult
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runInTx(ctx, bindingtx.Workspaces(session.WorkspaceID), func(qtx *db.Queries) error {
 		// Serialise this send against a concurrent runtime rebind of the same
 		// session (MUL-5163). The lock must be taken first and the agent re-read
 		// under it: the runtime_id the caller loaded can already be stale by the
@@ -2557,7 +2557,7 @@ type MikaOnboardingOpenResult struct {
 // old kickoff turn.
 func (s *TaskService) OpenMikaOnboardingChat(ctx context.Context, session db.ChatSession, kickoff, opening string) (*MikaOnboardingOpenResult, error) {
 	var out MikaOnboardingOpenResult
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runInTx(ctx, bindingtx.Workspaces(session.WorkspaceID), func(qtx *db.Queries) error {
 		// Same lock and lock ORDER as the send path, so an opening racing a
 		// first send or a runtime rebind serializes instead of deadlocking.
 		if _, err := qtx.LockChatSessionForRuntimeBind(ctx, session.ID); err != nil {
@@ -2640,7 +2640,7 @@ func (s *TaskService) CancelTasksForIssue(ctx context.Context, issueID pgtype.UU
 	// scan excludes a comment whose covering task is terminal and already holds
 	// the receipt. It would neither replay nor settle — it would sit in the
 	// partial index forever.
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runInTx(ctx, bindingtx.Owners(issueID), func(qtx *db.Queries) error {
 		var err error
 		cancelled, err = qtx.CancelAgentTasksByIssue(ctx, issueID)
 		if err != nil {
@@ -2691,7 +2691,7 @@ func distinctAgentIDs(cancelled []db.AgentTaskQueue) []pgtype.UUID {
 // Returns the cancelled rows so callers can report counts / log them.
 func (s *TaskService) CancelTasksForAgent(ctx context.Context, agentID pgtype.UUID) ([]db.AgentTaskQueue, error) {
 	var cancelled []db.AgentTaskQueue
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runInTx(ctx, bindingtx.Owners(agentID), func(qtx *db.Queries) error {
 		var err error
 		cancelled, err = qtx.CancelAgentTasksByAgent(ctx, agentID)
 		if err != nil {
@@ -2719,7 +2719,7 @@ func (s *TaskService) CancelTasksForAgent(ctx context.Context, agentID pgtype.UU
 // trigger FK; the returned rows let the handler re-route every surviving input.
 func (s *TaskService) CancelTasksByTriggerComment(ctx context.Context, commentID pgtype.UUID) ([]db.AgentTaskQueue, error) {
 	var cancelled []db.AgentTaskQueue
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runInTx(ctx, bindingtx.Owners(commentID), func(qtx *db.Queries) error {
 		var err error
 		cancelled, err = qtx.CancelAgentTasksByTriggerComment(ctx, commentID)
 		if err != nil {
@@ -2931,7 +2931,7 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 		if opts.QueueAction != "edit" && opts.QueueAction != "remove" {
 			return nil, errors.New("queue action must be edit or remove")
 		}
-		err = s.runInTx(ctx, func(qtx *db.Queries) error {
+		err = s.runInTx(ctx, bindingtx.Owners(taskID), func(qtx *db.Queries) error {
 			if _, err := qtx.LockChatSessionForTask(ctx, taskID); err != nil {
 				return fmt.Errorf("lock queued chat session: %w", err)
 			}
@@ -2956,7 +2956,7 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 		// across two statements, the `cancelled` status becomes visible to every
 		// other connection while the pointer still names the previous turn's
 		// session, and a queued follow-up can resume that older session.
-		err = s.runInTx(ctx, func(qtx *db.Queries) error {
+		err = s.runInTx(ctx, bindingtx.Owners(taskID), func(qtx *db.Queries) error {
 			if opts.authorize != nil {
 				if err := opts.authorize(ctx, qtx); err != nil {
 					return err
@@ -3038,7 +3038,7 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 // order; the agent lock then prevents ClaimTask from promoting a row mid-update.
 func (s *TaskService) CancelQueuedChatTasks(ctx context.Context, sessionID, agentID pgtype.UUID) error {
 	var tasks []db.AgentTaskQueue
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runInTx(ctx, bindingtx.Owners(sessionID, agentID), func(qtx *db.Queries) error {
 		if _, err := qtx.LockChatSessionForDelete(ctx, sessionID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil
@@ -3230,7 +3230,7 @@ func (s *TaskService) finalizeCancelledChatMessage(ctx context.Context, task db.
 		return nil
 	}
 	var cancelled *CancelledChatMessageResult
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runInTx(ctx, bindingtx.Owners(task.ID), func(qtx *db.Queries) error {
 		// Same protocol as every other terminal path: this transaction marks the
 		// task row and then writes chat_message rows, whose FK takes a KEY SHARE
 		// lock on the session — two rows again, so it takes the session first.
@@ -3363,7 +3363,7 @@ func (s *TaskService) FinalizeDeferredCancelledChat(ctx context.Context, taskID 
 		changed bool
 		settled bool
 	)
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runInTx(ctx, bindingtx.Owners(taskID), func(qtx *db.Queries) error {
 		// Lock the task's chat_session first. chat_draft_restore has no FK
 		// (MUL-3515), so the insert below takes no lock of its own on the
 		// session — without this, a workspace/agent/session delete that swept
@@ -3537,7 +3537,7 @@ func (s *TaskService) claimTask(ctx context.Context, agentID, runtimeID pgtype.U
 		s.maybeLogClaimSlow(agentID, outcome, start, getAgentMs, countRunningMs, claimAgentMs, reanchorMs, updateStatusMs, dispatchMs)
 	}()
 
-	err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	err := s.runInTx(ctx, bindingtx.Owners(agentID, runtimeID), func(qtx *db.Queries) error {
 		t0 := time.Now()
 		agent, err := qtx.GetAgentForClaimUpdate(ctx, agentID)
 		getAgentMs = time.Since(t0).Milliseconds()
@@ -3833,7 +3833,7 @@ func (s *TaskService) FinalizeTaskClaim(
 		return nil, fmt.Errorf("finalize task claim: expected at most one daemon token, got %d", len(daemonTokens))
 	}
 	receipt := task.DeliveredCommentIds
-	err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	err := s.runInTx(ctx, bindingtx.Owners(task.ID), func(qtx *db.Queries) error {
 		if authorize != nil {
 			if err := authorize(qtx, &token); err != nil {
 				return fmt.Errorf("authorize claim delivery: %w", err)
@@ -4231,7 +4231,7 @@ func (s *TaskService) StartTaskForClaim(ctx context.Context, claim db.LockAgentT
 	if !claim.ID.Valid || !claim.RuntimeID.Valid || !claim.DispatchedAt.Valid {
 		return nil, fmt.Errorf("start task: incomplete claim")
 	}
-	tx, err := bindingtx.Begin(ctx, s.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter, bindingtx.Owners(claim.ID))
 	if err != nil {
 		return nil, fmt.Errorf("begin task start: %w", err)
 	}
@@ -4422,7 +4422,7 @@ func (s *TaskService) CompleteTaskWithTransition(ctx context.Context, taskID pgt
 	// task inside the completion transaction below. It is broadcast (chat:done)
 	// only after the transaction commits.
 	var chatAssistantMsg *db.ChatMessage
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runInTx(ctx, bindingtx.Owners(taskID), func(qtx *db.Queries) error {
 		if err := lockChatSessionForTaskWrite(ctx, qtx, taskID); err != nil {
 			return err
 		}
@@ -4681,7 +4681,7 @@ func (s *TaskService) writeChatCompletionOutcome(ctx context.Context, qtx *db.Qu
 	// turn a real image/file response — NOT a no_response — and need a row to
 	// hang on. Count + bind run on qtx so message creation and binding are one
 	// atomic outcome.
-	wsUUID, _ := util.ParseUUID(s.ResolveTaskWorkspaceID(ctx, task))
+	wsUUID, _ := util.ParseUUID((&TaskService{Queries: qtx}).ResolveTaskWorkspaceID(ctx, task))
 	var pendingAttachments int64
 	if wsUUID.Valid {
 		n, err := qtx.CountUnboundChatAttachmentsForTask(ctx, db.CountUnboundChatAttachmentsForTaskParams{
@@ -5782,7 +5782,7 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, sourc
 		// Atomic with the cancel: a pending coordinator task can already hold a
 		// recovery receipt, and nothing downstream could repair a settlement
 		// that failed after this committed.
-		cerr := s.runInTx(ctx, func(qtx *db.Queries) error {
+		cerr := s.runInTx(ctx, bindingtx.Owners(issueID), func(qtx *db.Queries) error {
 			var err error
 			cancelled, err = qtx.CancelPendingTasksByIssueAndAgentInThread(ctx, db.CancelPendingTasksByIssueAndAgentInThreadParams{
 				ThreadCommentID: triggerCommentID,
@@ -5939,7 +5939,7 @@ func (s *TaskService) enqueueRerunTask(ctx context.Context, issue db.Issue, agen
 // FailTasksForOfflineRuntimes fails in-flight tasks whose runtime stayed
 // offline past the reconnect grace.
 func (s *TaskService) FailTasksForOfflineRuntimes(ctx context.Context, arg db.FailTasksForOfflineRuntimesParams) ([]db.AgentTaskQueue, error) {
-	return s.terminateTasksInTx(ctx, func(qtx *db.Queries) ([]db.AgentTaskQueue, error) {
+	return s.terminateTasksInTx(ctx, bindingtx.AllWorkspaces(), func(qtx *db.Queries) ([]db.AgentTaskQueue, error) {
 		return qtx.FailTasksForOfflineRuntimes(ctx, arg)
 	})
 }
@@ -5947,28 +5947,28 @@ func (s *TaskService) FailTasksForOfflineRuntimes(ctx context.Context, arg db.Fa
 // FailExpiredRuntimeReconnectRetries fails deferred retries that reached their
 // terminal reconnect deadline.
 func (s *TaskService) FailExpiredRuntimeReconnectRetries(ctx context.Context, arg db.FailExpiredRuntimeReconnectRetriesParams) ([]db.AgentTaskQueue, error) {
-	return s.terminateTasksInTx(ctx, func(qtx *db.Queries) ([]db.AgentTaskQueue, error) {
+	return s.terminateTasksInTx(ctx, bindingtx.AllWorkspaces(), func(qtx *db.Queries) ([]db.AgentTaskQueue, error) {
 		return qtx.FailExpiredRuntimeReconnectRetries(ctx, arg)
 	})
 }
 
 // FailStaleTasks fails claimed work whose runtime stopped reporting.
 func (s *TaskService) FailStaleTasks(ctx context.Context, arg db.FailStaleTasksParams) ([]db.AgentTaskQueue, error) {
-	return s.terminateTasksInTx(ctx, func(qtx *db.Queries) ([]db.AgentTaskQueue, error) {
+	return s.terminateTasksInTx(ctx, bindingtx.AllWorkspaces(), func(qtx *db.Queries) ([]db.AgentTaskQueue, error) {
 		return qtx.FailStaleTasks(ctx, arg)
 	})
 }
 
 // ExpireStaleQueuedTasks fails queued work whose runtime never came back.
 func (s *TaskService) ExpireStaleQueuedTasks(ctx context.Context, arg db.ExpireStaleQueuedTasksParams) ([]db.AgentTaskQueue, error) {
-	return s.terminateTasksInTx(ctx, func(qtx *db.Queries) ([]db.AgentTaskQueue, error) {
+	return s.terminateTasksInTx(ctx, bindingtx.AllWorkspaces(), func(qtx *db.Queries) ([]db.AgentTaskQueue, error) {
 		return qtx.ExpireStaleQueuedTasks(ctx, arg)
 	})
 }
 
 // RecoverOrphanedTasksForRuntime fails work a restarted daemon reports it lost.
 func (s *TaskService) RecoverOrphanedTasksForRuntime(ctx context.Context, runtimeID pgtype.UUID) ([]db.AgentTaskQueue, error) {
-	return s.terminateTasksInTx(ctx, func(qtx *db.Queries) ([]db.AgentTaskQueue, error) {
+	return s.terminateTasksInTx(ctx, bindingtx.Owners(runtimeID), func(qtx *db.Queries) ([]db.AgentTaskQueue, error) {
 		return qtx.RecoverOrphanedTasksForRuntime(ctx, runtimeID)
 	})
 }
@@ -5981,7 +5981,7 @@ func (s *TaskService) RecoverOrphanedTasksForRuntime(ctx context.Context, runtim
 // streams, and refresh chat state. The caller still publishes agent:archived;
 // non-chat tasks keep their existing behavior.
 func (s *TaskService) CancelTasksForArchivedAgent(ctx context.Context, agentID pgtype.UUID) ([]db.AgentTaskQueue, error) {
-	cancelled, err := s.terminateTasksInTx(ctx, func(qtx *db.Queries) ([]db.AgentTaskQueue, error) {
+	cancelled, err := s.terminateTasksInTx(ctx, bindingtx.Owners(agentID), func(qtx *db.Queries) ([]db.AgentTaskQueue, error) {
 		return qtx.CancelAgentTasksByAgent(ctx, agentID)
 	})
 	if err != nil {
@@ -5996,9 +5996,9 @@ func (s *TaskService) CancelTasksForArchivedAgent(ctx context.Context, agentID p
 	return cancelled, nil
 }
 
-func (s *TaskService) terminateTasksInTx(ctx context.Context, fail func(*db.Queries) ([]db.AgentTaskQueue, error)) ([]db.AgentTaskQueue, error) {
+func (s *TaskService) terminateTasksInTx(ctx context.Context, scope bindingtx.Scope, fail func(*db.Queries) ([]db.AgentTaskQueue, error)) ([]db.AgentTaskQueue, error) {
 	var failed []db.AgentTaskQueue
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runInTx(ctx, scope, func(qtx *db.Queries) error {
 		var err error
 		failed, err = fail(qtx)
 		if err != nil {
@@ -6331,7 +6331,7 @@ func canDispatchDelegatedFailureRecovery(ctx context.Context, q *db.Queries, iss
 func (s *TaskService) ensureDelegatedFailureRecoveryComment(ctx context.Context, failedID pgtype.UUID) (*delegatedFailureRecoveryTarget, bool, error) {
 	var target *delegatedFailureRecoveryTarget
 	created := false
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runInTx(ctx, bindingtx.Owners(failedID), func(qtx *db.Queries) error {
 		candidate, err := qtx.GetAgentTask(ctx, failedID)
 		if err != nil {
 			return fmt.Errorf("load failed task: %w", err)
@@ -6452,7 +6452,7 @@ func (s *TaskService) exhaustDelegatedFailureRecovery(ctx context.Context, targe
 	var exhaustedInbox db.InboxItem
 	created := false
 	inboxCreated := false
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runInTx(ctx, bindingtx.Workspaces(target.issue.WorkspaceID), func(qtx *db.Queries) error {
 		if _, err := qtx.AcknowledgeExhaustedDelegatedFailureRecovery(ctx, db.AcknowledgeExhaustedDelegatedFailureRecoveryParams{
 			CommentID:    target.comment.ID,
 			FailedTaskID: target.failed.ID,
@@ -6812,11 +6812,11 @@ func (s *TaskService) dispatchDelegatedFailureRecoveryComment(ctx context.Contex
 // runInTx executes fn inside a single DB transaction. If TxStarter is nil
 // (e.g. some tests construct TaskService directly), fn runs against the
 // regular Queries handle without transactional guarantees.
-func (s *TaskService) runInTx(ctx context.Context, fn func(*db.Queries) error) error {
+func (s *TaskService) runInTx(ctx context.Context, scope bindingtx.Scope, fn func(*db.Queries) error) error {
 	if s.TxStarter == nil {
 		return fn(s.Queries)
 	}
-	tx, err := bindingtx.Begin(ctx, s.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter, scope)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -7603,7 +7603,7 @@ func (s *TaskService) AutoUnresolveThreadOnReply(ctx context.Context, parent *db
 	}
 	// This follow-up write is a consequence of the reply's run, not a new
 	// system action. Preserve that lineage for event subscriptions as well.
-	tx, err := bindingtx.Begin(ctx, s.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		slog.Warn("auto-unresolve transaction failed", "error", err)
 		return

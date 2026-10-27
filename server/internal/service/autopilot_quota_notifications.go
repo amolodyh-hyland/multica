@@ -65,7 +65,7 @@ func (s *AutopilotService) createAutopilotQuotaRejectionNotice(
 	source string,
 	params db.CreateAutopilotRunParams,
 ) ([]db.InboxItem, error) {
-	tx, err := bindingtx.Begin(ctx, s.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		return nil, fmt.Errorf("begin quota rejection notice: %w", err)
 	}

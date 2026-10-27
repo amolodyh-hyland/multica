@@ -1586,7 +1586,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Owners(wsUUID, runtimeUUID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start agent create transaction")
 		return
@@ -2293,7 +2293,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	var switchedRuntime *db.AgentRuntime
 	var movedTasks []db.AgentTaskQueue
 	if req.RuntimeID != nil || replacePermissionTargets {
-		updateTx, err = bindingtx.Begin(r.Context(), h.TxStarter)
+		updateTx, err = bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Owners(existing.ID, params.RuntimeID))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to start agent update transaction")
 			return
@@ -2310,7 +2310,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.RuntimeID != nil {
-		member, ok := h.workspaceMember(w, r, uuidToString(existing.WorkspaceID))
+		member, ok := h.withQueries(updateQueries).workspaceMember(w, r, uuidToString(existing.WorkspaceID))
 		if !ok {
 			return
 		}
@@ -2394,7 +2394,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if switchedRuntime != nil {
-		actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(existing.WorkspaceID))
+		actorType, actorID := h.withQueries(updateQueries).resolveActor(r, requestUserID(r), uuidToString(existing.WorkspaceID))
 		movedTasks, err = recordAgentRuntimeSwitch(r.Context(), updateQueries, existing, *switchedRuntime, actorType, parseUUID(actorID))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to record runtime change")

@@ -65,6 +65,7 @@ func fixture(t *testing.T) (*pgxpool.Pool, *Service) {
 		}
 		exec(string(body))
 	}
+	exec("CREATE VIEW workspace AS SELECT DISTINCT workspace_id AS id FROM issue_status")
 	exec("INSERT INTO schema_migrations VALUES ('478_issue_status_category_expand')")
 	return pool, NewService(pool, StatusCategory{})
 }

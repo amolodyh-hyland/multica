@@ -283,6 +283,22 @@ func TestUpsert_ConcurrentInstallDoesNotSubscribeBehindTheWinner(t *testing.T) {
 		t.Fatal("the first install never reached the probe")
 	}
 
+	writerCtx, stopWriter := context.WithTimeout(ctx, time.Second)
+	writer, err := bindingtx.Begin(writerCtx, pool, bindingtx.Workspaces(wcPrbWS))
+	if err != nil {
+		stopWriter()
+		t.Fatalf("credential probe holds workspace prefix: %v", err)
+	}
+	if _, err = writer.Exec(writerCtx, "UPDATE workspace SET description=description WHERE id=$1", wcPrbWS); err == nil {
+		err = writer.Commit(writerCtx)
+	} else {
+		_ = writer.Rollback(context.Background())
+	}
+	stopWriter()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	loserErr := make(chan error, 1)
 	wg.Add(1)
 	go func() {
@@ -324,8 +340,8 @@ func TestUpsert_ConcurrentInstallDoesNotSubscribeBehindTheWinner(t *testing.T) {
 	}
 }
 
-// Observe this install waiting at the canonical prefix before it can acquire
-// the bot slot or contact the provider. A waiter from another test cannot satisfy it.
+// Observe the per-bot routing-slot wait before workspace acquisition or any
+// provider side effect. A waiter from another test cannot satisfy it.
 func waitForSlotLockWaiter(t *testing.T, ctx context.Context, pool *pgxpool.Pool, waitingPID uint32, overtaken func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -336,16 +352,15 @@ func waitForSlotLockWaiter(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 				SELECT 1 FROM pg_locks
 				WHERE locktype = 'advisory' AND NOT granted
 				  AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
-				  AND pid=$1::int AND classid=($2::bigint >> 32)::oid
- AND objid=($2::bigint & 4294967295)::oid AND objsubid=1
-			)`, waitingPID, bindingtx.LockKey).Scan(&parked); err != nil {
-			t.Fatalf("observe the transaction prefix: %v", err)
+				  AND pid=$1::int AND classid=hashtext($2)::oid AND objid=hashtext($3)::oid AND objsubid=2
+			)`, waitingPID, channelTypeWecom, wcPrbBotFree).Scan(&parked); err != nil {
+			t.Fatalf("observe the bot routing slot: %v", err)
 		}
 		if parked {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("the racing install never reached the transaction prefix")
+			t.Fatal("the racing install never reached the bot routing slot")
 		}
 		time.Sleep(5 * time.Millisecond)
 	}

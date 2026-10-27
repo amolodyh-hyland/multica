@@ -148,8 +148,11 @@ func (s *BindingTokenService) RedeemAndBind(ctx context.Context, raw string, mul
 	if s.tx == nil {
 		return RedeemedBindingToken{}, errors.New("lark: BindingTokenService missing TxStarter")
 	}
-	tx, err := bindingtx.Begin(ctx, s.tx)
+	tx, err := bindingtx.Begin(ctx, s.tx, bindingtx.Lookup("SELECT workspace_id FROM channel_binding_token WHERE token_hash=$1", hashToken(raw)))
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return RedeemedBindingToken{}, ErrBindingTokenInvalid
+		}
 		return RedeemedBindingToken{}, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx)

@@ -112,7 +112,7 @@ func (h *Handler) UpsertClientUsage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var err error
-		tx, err = bindingtx.Begin(r.Context(), h.TxStarter)
+		tx, err = bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(workspaceUUID))
 		if err != nil {
 			slog.Error("failed to begin client usage transaction", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to record client usage")

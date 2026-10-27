@@ -345,7 +345,7 @@ func (h *Handler) upsertRuntimeWithProfile(
 	var row db.UpsertAgentRuntimeWithProfileRow
 	var profile db.RuntimeProfile
 
-	tx, err := bindingtx.Begin(ctx, h.TxStarter)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		return row, profile, fmt.Errorf("begin profile runtime registration: %w", err)
 	}
@@ -832,7 +832,7 @@ var errRuntimeMergeFenced = errors.New("runtime merge refused by the task-write 
 // teardown cannot start deleting the target until this merge finishes, and any
 // failure rolls the whole merge back to its starting state.
 func (h *Handler) mergeLegacyRuntime(ctx context.Context, newRuntimeID, oldRuntimeID pgtype.UUID, legacyID, provider string) error {
-	tx, err := bindingtx.Begin(ctx, h.TxStarter)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Owners(newRuntimeID, oldRuntimeID))
 	if err != nil {
 		return fmt.Errorf("begin merge tx: %w", err)
 	}

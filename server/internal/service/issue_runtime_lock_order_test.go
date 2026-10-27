@@ -36,7 +36,7 @@ func TestIssueRuntimeWakeupConfigurationRecoveryTeardownLockOrder(t *testing.T) 
 			failedID := f.insertWorkerTask(t, "failed", "comment", 1, 2)
 			fx.Exec(t, `UPDATE agent_task_queue SET completed_at=now() WHERE id=$1 OR id=$2`, failedID, f.sourceTask)
 
-			editTx, err := bindingtx.Begin(ctx, f.pool)
+			editTx, err := bindingtx.Begin(ctx, f.pool, bindingtx.Workspaces(f.workspaceID))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -64,7 +64,7 @@ func TestIssueRuntimeWakeupConfigurationRecoveryTeardownLockOrder(t *testing.T) 
 				recoveryDone <- err
 			}()
 			go func() {
-				tx, err := bindingtx.Begin(ctx, teardownConn)
+				tx, err := bindingtx.Begin(ctx, teardownConn, bindingtx.Workspaces(f.workspaceID))
 				if err != nil {
 					teardownDone <- err
 					return
@@ -151,7 +151,7 @@ func TestIssueRuntimeFailureRetryConcurrentTeardown(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer failureConn.Release()
-	teardownTx, err := bindingtx.Begin(ctx, f.pool)
+	teardownTx, err := bindingtx.Begin(ctx, f.pool, bindingtx.Workspaces(f.workspaceID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +258,7 @@ func TestIssueRuntimeRecoveryWaitsForPrefixBeforeTask(t *testing.T) {
 	defer cancel()
 	f, svc := seedDelegatedFailureFixture(t)
 	failedID := f.insertWorkerTask(t, "failed", "comment", 1, 2)
-	issueTx, err := bindingtx.Begin(ctx, f.pool)
+	issueTx, err := bindingtx.Begin(ctx, f.pool, bindingtx.Workspaces(f.workspaceID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +332,7 @@ func TestIssueRuntimeOverrideSwitchConcurrentTeardown(t *testing.T) {
 	}, "issue_id=$1", f.workerIssue)
 	taskID := f.insertWorkerTask(t, "queued", "comment", 1, 2)
 	fx.Exec(t, `UPDATE agent_task_queue SET runtime_override_id=$2 WHERE id=$1`, taskID, f.runtimeID)
-	switchTx, err := bindingtx.Begin(ctx, f.pool)
+	switchTx, err := bindingtx.Begin(ctx, f.pool, bindingtx.Workspaces(f.workspaceID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +344,7 @@ func TestIssueRuntimeOverrideSwitchConcurrentTeardown(t *testing.T) {
 	defer teardownConn.Release()
 	teardownDone := make(chan error, 1)
 	go func() {
-		tx, err := bindingtx.Begin(ctx, teardownConn)
+		tx, err := bindingtx.Begin(ctx, teardownConn, bindingtx.Workspaces(f.workspaceID))
 		if err != nil {
 			teardownDone <- err
 			return

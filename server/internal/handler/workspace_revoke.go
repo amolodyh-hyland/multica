@@ -45,7 +45,7 @@ import (
 func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID, memberID, archivedBy pgtype.UUID) (revocationResult, error) {
 	var empty revocationResult
 
-	tx, err := bindingtx.Begin(ctx, h.TxStarter)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		return empty, err
 	}

@@ -41,7 +41,7 @@ func TestBindingPrefixCapturedQuickCreateConcurrentRetry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			captureTx, err := bindingtx.Begin(ctx, f.pool)
+			captureTx, err := bindingtx.Begin(ctx, f.pool, bindingtx.Workspaces(f.workspaceID))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -107,7 +107,7 @@ func TestBindingPrefixStandaloneWrites(t *testing.T) {
 				status = "cancelled"
 			}
 			taskID := f.insertWorkerTask(t, status, "comment", 1, 2)
-			holder, err := bindingtx.Begin(ctx, f.pool)
+			holder, err := bindingtx.Begin(ctx, f.pool, bindingtx.Workspaces(f.workspaceID))
 			if err != nil {
 				t.Fatal(err)
 			}

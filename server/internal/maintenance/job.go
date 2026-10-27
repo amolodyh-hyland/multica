@@ -193,7 +193,7 @@ func (s *Service) Create(ctx context.Context, r CreateRequest) (Job, error) {
 	}
 	// Keep creation identity stable even after operational options are tuned.
 	hash := fmt.Sprintf("%x", sha256.Sum256(asJSON([]any{r.Type, r.Version, r.Scope, dry, r.Options, params})))
-	tx, err := bindingtx.Begin(ctx, s.pool, bindingtx.TryLock)
+	tx, err := bindingtx.Begin(ctx, s.pool, bindingtx.AllWorkspaces(), bindingtx.TryLock)
 	if err != nil {
 		if errors.Is(err, bindingtx.ErrBusy) {
 			return Job{}, ErrBusy
@@ -266,7 +266,7 @@ func (s *Service) mutate(ctx context.Context, id string, revision int64, action 
 	if revision < 0 {
 		return Job{}, ErrInvalid
 	}
-	tx, err := bindingtx.Begin(ctx, s.pool, bindingtx.TryLock)
+	tx, err := bindingtx.Begin(ctx, s.pool, bindingtx.AllWorkspaces(), bindingtx.TryLock)
 	if err != nil {
 		if errors.Is(err, bindingtx.ErrBusy) {
 			return Job{}, ErrBusy
@@ -322,7 +322,7 @@ func (s *Service) mutate(ctx context.Context, id string, revision int64, action 
 			return j, e
 		}
 		// Savepoint lets failures retain diagnostics without retaining partial data.
-		batch, e := bindingtx.Begin(ctx, tx, bindingtx.TryLock)
+		batch, e := bindingtx.Begin(ctx, tx, bindingtx.AllWorkspaces(), bindingtx.TryLock)
 		if e != nil {
 			return j, e
 		}

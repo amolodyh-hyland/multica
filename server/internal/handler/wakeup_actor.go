@@ -39,8 +39,8 @@ func (h *Handler) withWakeupActor(r *http.Request) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), wakeupActorKey{}, wakeupActor{kind, id, task}))
 }
 
-func (h *Handler) beginWakeupWrite(ctx context.Context) (pgx.Tx, error) {
-	tx, err := bindingtx.Begin(ctx, h.TxStarter)
+func (h *Handler) beginWakeupWrite(ctx context.Context, scope bindingtx.Scope) (pgx.Tx, error) {
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func (h *Handler) beginWakeupWrite(ctx context.Context) (pgx.Tx, error) {
 func wakeupWrite[T any](h *Handler, r *http.Request, write func(*db.Queries) (T, error)) (T, error) {
 	var zero T
 	r = h.withWakeupActor(r)
-	tx, err := h.beginWakeupWrite(r.Context())
+	tx, err := h.beginWakeupWrite(r.Context(), bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 	if err != nil {
 		return zero, err
 	}

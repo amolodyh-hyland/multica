@@ -387,7 +387,7 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 		params.AvatarUrl = pgtype.Text{String: accepted, Valid: true}
 	}
 
-	tx, err := bindingtx.Begin(r.Context(), h.TxStarter)
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update squad")
 		return
@@ -425,7 +425,7 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// A non-admin creator may only promote an agent they can @-trigger.
-		if !h.memberCanWireAgent(r.Context(), member, newLeader, workspaceID) {
+		if !h.withQueries(qtx).memberCanWireAgent(r.Context(), member, newLeader, workspaceID) {
 			writeError(w, http.StatusForbidden, "you can only use an agent you have access to as leader")
 			return
 		}

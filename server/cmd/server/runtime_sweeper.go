@@ -490,7 +490,10 @@ type runtimeGCResult struct {
 // observes that its runtime no longer exists.
 func gcRuntime(ctx context.Context, txStarter runtimeGCTxStarter, queries *db.Queries, runtimeID pgtype.UUID) (runtimeGCResult, error) {
 	var result runtimeGCResult
-	tx, err := bindingtx.Begin(ctx, txStarter)
+	tx, err := bindingtx.Begin(ctx, txStarter, bindingtx.Owners(runtimeID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return result, nil
+	}
 	if err != nil {
 		return result, fmt.Errorf("begin transaction: %w", err)
 	}

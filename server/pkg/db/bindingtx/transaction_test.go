@@ -8,7 +8,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+var testUUID = pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
 
 type testTx struct {
 	pgx.Tx
@@ -22,9 +25,9 @@ func (t *testTx) Begin(context.Context) (pgx.Tx, error) {
 	return t, nil
 }
 func (t *testTx) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	if sql == "SELECT pg_advisory_xact_lock($1)" {
+	if sql == "SELECT pg_advisory_xact_lock($1,$2)" {
 		*t.events = append(*t.events, "prefix")
-		if len(args) != 1 || args[0] != LockKey {
+		if len(args) != 2 || args[0] != Namespace || args[1] != WorkspaceKey(testUUID) {
 			return pgconn.CommandTag{}, errors.New("wrong prefix key")
 		}
 		return pgconn.CommandTag{}, t.prefixErr
@@ -33,7 +36,7 @@ func (t *testTx) Exec(_ context.Context, sql string, args ...any) (pgconn.Comman
 	return pgconn.NewCommandTag("UPDATE 1"), nil
 }
 func (t *testTx) QueryRow(_ context.Context, sql string, _ ...any) pgx.Row {
-	if sql == "SELECT pg_try_advisory_xact_lock($1)" {
+	if sql == "SELECT pg_try_advisory_xact_lock($1,$2)" {
 		*t.events = append(*t.events, "try_prefix")
 		return boolRow{value: t.tryAcquired}
 	}
@@ -59,7 +62,7 @@ func (d testDB) Begin(ctx context.Context) (pgx.Tx, error) { return d.tx.Begin(c
 func TestBeginAcquiresPrefixBeforeCallerWork(t *testing.T) {
 	events := []string{}
 	tx := &testTx{events: &events}
-	got, err := Begin(context.Background(), tx)
+	got, err := Begin(context.Background(), tx, Workspaces(testUUID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +89,7 @@ func TestStandaloneWriteTransactionBoundary(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			events := []string{}
 			tx := &testTx{events: &events, scanErr: tc.scanErr, commitErr: tc.commitErr}
-			err := Wrap(testDB{tx: tx}).QueryRow(context.Background(), "UPDATE agent SET status='idle' RETURNING id").Scan()
+			err := Wrap(testDB{tx: tx}).QueryRow(context.Background(), "UPDATE agent SET status='idle' RETURNING id", testUUID).Scan()
 			wantErr := tc.scanErr
 			if tc.commitErr != nil {
 				wantErr = tc.commitErr
@@ -105,7 +108,7 @@ func TestPrefixFailureRollsBackWithoutWriting(t *testing.T) {
 	events := []string{}
 	injected := errors.New("prefix failed")
 	tx := &testTx{events: &events, prefixErr: injected}
-	_, err := Wrap(testDB{tx: tx}).Exec(context.Background(), "DELETE FROM agent_runtime")
+	_, err := Wrap(testDB{tx: tx}).Exec(context.Background(), "DELETE FROM agent_runtime", testUUID)
 	if !errors.Is(err, injected) {
 		t.Fatal(err)
 	}
@@ -117,10 +120,10 @@ func TestPrefixFailureRollsBackWithoutWriting(t *testing.T) {
 func TestCallerTransactionKeepsOriginalCommitBoundary(t *testing.T) {
 	events := []string{}
 	tx := &testTx{events: &events}
-	if _, err := Wrap(tx).Exec(context.Background(), "UPDATE agent SET status='idle'"); err != nil {
+	if _, err := Wrap(tx).Exec(context.Background(), "UPDATE agent SET status='idle'", testUUID); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(events, []string{"prefix", "write"}) {
+	if !reflect.DeepEqual(events, []string{"write"}) {
 		t.Fatal(events)
 	}
 }
@@ -191,7 +194,7 @@ func TestBeginNonblockingUsesSamePrefix(t *testing.T) {
 	for _, acquired := range []bool{true, false} {
 		events := []string{}
 		tx := &testTx{events: &events, tryAcquired: acquired}
-		_, err := Begin(context.Background(), tx, TryLock)
+		_, err := Begin(context.Background(), tx, Workspaces(testUUID), TryLock)
 		if acquired {
 			if err != nil || !reflect.DeepEqual(events, []string{"begin", "try_prefix"}) {
 				t.Fatalf("error=%v events=%v", err, events)
@@ -203,3 +206,8 @@ func TestBeginNonblockingUsesSamePrefix(t *testing.T) {
 		}
 	}
 }
+
+func (t *testTx) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	return &testRows{remaining: 1}, nil
+}
+func (r *testRows) Scan(dest ...any) error { *dest[0].(*pgtype.UUID) = testUUID; return nil }

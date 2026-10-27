@@ -218,7 +218,7 @@ func subscribeDelegatedHuman(bus *events.Bus, pool *pgxpool.Pool, queries *db.Qu
 	// correct here: the losing interleaving subscribes an issue that did not
 	// exist when the opt-out was written, so there is no row for a row lock to
 	// protect (MUL-5483 review round 7).
-	tx, err := bindingtx.Begin(ctx, pool)
+	tx, err := bindingtx.Begin(ctx, pool, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		slog.Error("delegated subscribe: begin failed", "issue_id", issueID, "error", err)
 		return

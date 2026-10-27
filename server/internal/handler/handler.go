@@ -1261,3 +1261,9 @@ func (h *Handler) loadInboxItemForUser(w http.ResponseWriter, r *http.Request, i
 	}
 	return item, true
 }
+
+func (h *Handler) withQueries(q *db.Queries) *Handler {
+	scoped := *h
+	scoped.Queries = q
+	return &scoped
+}

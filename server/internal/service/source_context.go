@@ -732,7 +732,7 @@ func (s *TaskService) CleanupAbandonedSourceContexts(ctx context.Context, limit 
 	if s == nil || s.TxStarter == nil || s.SourceContextStorage == nil || limit <= 0 {
 		return 0, nil
 	}
-	tx, err := bindingtx.Begin(ctx, s.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter, bindingtx.AllWorkspaces())
 	if err != nil {
 		return 0, fmt.Errorf("begin source context cleanup: %w", err)
 	}

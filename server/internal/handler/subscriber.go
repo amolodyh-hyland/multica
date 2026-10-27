@@ -230,7 +230,7 @@ var errTargetNoLongerMember = errors.New("target user is no longer a workspace m
 func (h *Handler) unsubscribeSubtreeSerialized(
 	ctx context.Context, workspaceID string, rootID pgtype.UUID, userType, userID string,
 ) ([]pgtype.UUID, error) {
-	tx, err := bindingtx.Begin(ctx, h.TxStarter)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		return nil, err
 	}

@@ -153,7 +153,7 @@ const pgUniqueViolation = "23505"
 // deleted) so the robot can move to the new agent; a LIVE owner trips the unique
 // index and is refused with an accurate conflict sentinel.
 func (s *InstallService) persistInstall(ctx context.Context, p installPersist) (db.ChannelInstallation, error) {
-	tx, err := bindingtx.Begin(ctx, s.tx)
+	tx, err := bindingtx.Begin(ctx, s.tx, bindingtx.ChannelSlot(p.wsID, string(TypeDingTalk), p.appIDKey))
 	if err != nil {
 		return db.ChannelInstallation{}, fmt.Errorf("begin install tx: %w", err)
 	}
@@ -213,6 +213,7 @@ func (s *InstallService) persistInstall(ctx context.Context, p installPersist) (
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+			_ = tx.Rollback(ctx)
 			return db.ChannelInstallation{}, s.liveOwnerConflictErr(ctx, p.wsID, p.appIDKey)
 		}
 		return db.ChannelInstallation{}, fmt.Errorf("upsert dingtalk installation: %w", err)

@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/foldersnapshot"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -1577,7 +1578,7 @@ func (h *Handler) withAttachmentOwnerLock(ctx context.Context, att db.Attachment
 var errAttachmentOwnerChanged = errors.New("attachment owner changed")
 
 func (h *Handler) attachmentOwnerLockAttempt(ctx context.Context, att db.Attachment, write func(*db.Queries) error) (db.Attachment, error) {
-	tx, err := h.beginWakeupWrite(ctx)
+	tx, err := h.beginWakeupWrite(ctx, bindingtx.Workspaces(att.WorkspaceID))
 	if err != nil {
 		return db.Attachment{}, err
 	}

@@ -124,7 +124,7 @@ func (s *AutopilotService) createAutopilotRunWithQuota(
 		return run, false, err
 	}
 
-	tx, err := bindingtx.Begin(ctx, s.TxStarter)
+	tx, err := bindingtx.Begin(ctx, s.TxStarter, bindingtx.Workspaces(workspaceID))
 	if err != nil {
 		return db.AutopilotRun{}, false, fmt.Errorf("begin quota admission: %w", err)
 	}

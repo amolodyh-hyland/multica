@@ -396,7 +396,7 @@ func (m *Manager) finish(addr address) {
 // writes nothing) when the row's head has advanced past the snapshot's head
 // (acceptance criterion 1).
 func (m *Manager) applySnapshot(ctx context.Context, prID pgtype.UUID, snap *PRSnapshot) (bool, error) {
-	tx, err := bindingtx.Begin(ctx, m.pool)
+	tx, err := bindingtx.Begin(ctx, m.pool, bindingtx.Owners(prID))
 	if err != nil {
 		return false, err
 	}

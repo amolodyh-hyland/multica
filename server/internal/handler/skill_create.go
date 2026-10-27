@@ -73,7 +73,7 @@ func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillC
 }
 
 func (h *Handler) createSkillWithFiles(ctx context.Context, input skillCreateInput) (SkillWithFilesResponse, error) {
-	tx, err := bindingtx.Begin(ctx, h.TxStarter)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(input.WorkspaceID))
 	if err != nil {
 		return SkillWithFilesResponse{}, err
 	}
@@ -148,7 +148,7 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 		config = []byte("{}")
 	}
 
-	tx, err := bindingtx.Begin(ctx, h.TxStarter)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(input.WorkspaceID))
 	if err != nil {
 		return SkillWithFilesResponse{}, err
 	}

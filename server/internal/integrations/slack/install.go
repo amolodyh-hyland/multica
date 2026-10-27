@@ -151,7 +151,7 @@ const pgUniqueViolation = "23505"
 // No chat-session retire is needed: a row's agent_id never changes (it is part
 // of the key), so existing sessions stay valid for the same agent.
 func (s *InstallService) persistInstall(ctx context.Context, p installPersist) (db.ChannelInstallation, error) {
-	tx, err := bindingtx.Begin(ctx, s.tx)
+	tx, err := bindingtx.Begin(ctx, s.tx, bindingtx.ChannelSlot(p.wsID, string(TypeSlack), p.appIDKey))
 	if err != nil {
 		return db.ChannelInstallation{}, fmt.Errorf("begin install tx: %w", err)
 	}
@@ -183,6 +183,7 @@ func (s *InstallService) persistInstall(ctx context.Context, p installPersist) (
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+			_ = tx.Rollback(ctx)
 			return db.ChannelInstallation{}, s.liveOwnerConflictErr(ctx, p.wsID, p.appIDKey)
 		}
 		return db.ChannelInstallation{}, fmt.Errorf("upsert slack installation: %w", err)

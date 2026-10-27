@@ -24,7 +24,7 @@ func (h *Handler) GetPublicDelegationResult(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	ctx := r.Context()
-	tx, err := bindingtx.Begin(ctx, h.TxStarter)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(member.WorkspaceID))
 	if err != nil {
 		publicReadFailure(w, r)
 		return
