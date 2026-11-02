@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -124,7 +123,6 @@ func saturatedBindingRequest(t *testing.T, endpoint func(*Handler) http.HandlerF
 func TestBindingWorkflowValidationWithSaturatedPool(t *testing.T) {
 	runtime := dbfx.Runtime(t, "workflow resources")
 	agent := dbfx.Agent(t, "workflow resource handler", runtime)
-	withFeatureFlag(t, testHandler, featureflags.ProjectWorkflowsV1, true)
 	resetDefaultWorkflow(t)
 	steps := statusSteps("backlog", "in_progress", "blocked")
 	steps[1]["handler"] = map[string]any{"type": "agent", "id": agent}

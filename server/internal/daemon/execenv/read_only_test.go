@@ -47,7 +47,7 @@ func TestReadOnlyNativeHomeIgnoresInheritedBypass(t *testing.T) {
 			t.Fatalf("inherited %s", file)
 		}
 	}
-	if err := hydrateReadOnlyAwareCodexSkills(home, true, nil, nil, slog.Default()); err != nil {
+	if _, err := hydrateReadOnlyAwareCodexSkills(home, true, nil, nil, slog.Default()); err != nil {
 		t.Fatal(err)
 	}
 	if err := prepareReadOnlyCodexHome(home, shared, "darwin"); err == nil {

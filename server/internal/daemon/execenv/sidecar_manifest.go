@@ -53,6 +53,25 @@ type sidecarManifest struct {
 	RootIdentity string                      `json:"rootIdentity,omitempty"`
 }
 
+// skillFiles returns the primary SKILL.md files we wrote directly under the
+// given skills parent. Supporting files named SKILL.md are not skill entries.
+func (m *sidecarManifest) skillFiles(skillsParent string) []string {
+	parent := filepath.Clean(skillsParent)
+	canonicalParent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, path := range m.Files {
+		if filepath.Base(path) == "SKILL.md" && filepath.Dir(filepath.Dir(path)) == canonicalParent {
+			// Ownership records use canonical paths. Keep the caller's workdir
+			// spelling for runtime discovery (e.g. /var versus /private/var).
+			paths = append(paths, filepath.Join(parent, filepath.Base(filepath.Dir(path)), "SKILL.md"))
+		}
+	}
+	return paths
+}
+
 type sidecarOwnership struct {
 	Generation string            `json:"generation"`
 	Identity   string            `json:"identity"`

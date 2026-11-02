@@ -83,14 +83,21 @@ export function useDeleteProjectResource(wsId: string, projectId: string) {
   return useMutation({
     mutationFn: (resourceId: string) =>
       api.deleteProjectResource(projectId, resourceId),
-    onSuccess: (_data, resourceId) => {
+    onSuccess: async (_data, resourceId) => {
+      // Reads started during DELETE may still contain the removed resource.
+      await qc.cancelQueries({
+        queryKey: projectResourceKeys.list(wsId, projectId),
+      });
       qc.setQueryData<ListProjectResourcesResponse>(
         projectResourceKeys.list(wsId, projectId),
-        (old) => old ? {
-          ...old,
-          resources: old.resources.filter((resource) => resource.id !== resourceId),
-          total: old.total - 1,
-        } : old,
+        (old) =>
+          old && old.resources.some((r) => r.id === resourceId)
+            ? {
+                ...old,
+                resources: old.resources.filter((r) => r.id !== resourceId),
+                total: old.total - 1,
+              }
+            : old,
       );
     },
     onSettled: () => {

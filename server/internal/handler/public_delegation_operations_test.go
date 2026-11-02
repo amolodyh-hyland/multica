@@ -463,7 +463,7 @@ func TestPublicDelegationExecutionTransitions(t *testing.T) {
 		t.Fatalf("claim: %v", err)
 	}
 	assertStatus("dispatched")
-	if _, err := testHandler.Queries.StartAgentTask(context.Background(), task.ID); err != nil {
+	if _, err := testHandler.Queries.StartAgentTaskWithSupplement(context.Background(), db.StartAgentTaskWithSupplementParams{TaskID: task.ID}); err != nil {
 		t.Fatal(err)
 	}
 	assertStatus("running")

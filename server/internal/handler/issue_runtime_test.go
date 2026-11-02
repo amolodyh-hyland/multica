@@ -428,7 +428,7 @@ func TestRuntimeSwitchDisablesManualRerunSourceResume(t *testing.T) {
 				source := dbfx.Task(t, profile, testutil.Cols{"runtime_id": sourceRuntime, "issue_id": issue, "status": "completed", "session_id": "historical-native-session", "work_dir": "/tmp/historical-rerun-directory"})
 				dbfx.Cleanup(t, `DELETE FROM agent_task_queue WHERE issue_id=$1`, issue)
 				dbfx.Cleanup(t, `DELETE FROM issue_runtime_override WHERE issue_id=$1`, issue)
-				rerun, err := testHandler.TaskService.RerunIssue(context.Background(), parseUUID(issue), parseUUID(source), pgtype.UUID{}, parseUUID(testUserID), nil)
+				rerun, err := testHandler.TaskService.RerunIssue(context.Background(), parseUUID(issue), parseUUID(source), pgtype.UUID{}, parseUUID(testUserID), false, nil)
 				if err != nil || rerun == nil {
 					t.Fatalf("rerun=%v error=%v", rerun, err)
 				}
@@ -482,5 +482,20 @@ func TestRuntimeSwitchDisablesManualRerunSourceResume(t *testing.T) {
 
 			})
 		}
+	}
+}
+
+func TestIssueRuntimeRejectsQoderCloudOverrides(t *testing.T) {
+	for _, providers := range [][2]string{{"claude", "qoder_cloud"}, {"qoder_cloud", "claude"}} {
+		t.Run(providers[0]+"_to_"+providers[1], func(t *testing.T) {
+			base := dbfx.Runtime(t, "base runtime", testutil.Cols{"provider": providers[0]})
+			target := dbfx.Runtime(t, "target runtime", testutil.Cols{"provider": providers[1]})
+			agent := dbfx.Agent(t, "cloud-bound profile", base)
+			issue := dbfx.Issue(t, "cloud override refusal", testutil.Cols{"assignee_type": "agent", "assignee_id": agent})
+			setIssueRuntime(t, testHandler, issue, agent, target, http.StatusBadRequest)
+			if count := dbfx.Count(t, `SELECT count(*) FROM issue_runtime_override WHERE issue_id=$1`, issue); count != 0 {
+				t.Fatal("unsupported cloud override was saved")
+			}
+		})
 	}
 }

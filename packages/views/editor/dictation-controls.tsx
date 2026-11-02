@@ -1,7 +1,7 @@
 "use client";
 
 import { useId } from "react";
-import { Loader2, Mic, Square, X } from "lucide-react";
+import { Loader2, Mic, Square, X } from "@multica/ui/icons";
 import { Button } from "@multica/ui/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@multica/ui/components/ui/tooltip";
 import { useT } from "../i18n";

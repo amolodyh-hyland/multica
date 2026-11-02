@@ -13,8 +13,8 @@ import {
   FileVideo,
   Folder,
   ImageIcon,
-  type LucideIcon,
-} from "lucide-react";
+  type IconComponent,
+} from "@multica/ui/icons";
 import { getPreviewKind } from "./preview";
 import { FOLDER_SNAPSHOT_EXTENSION, FOLDER_SNAPSHOT_TYPE } from "@multica/core/attachments";
 
@@ -42,7 +42,7 @@ export function isDocumentFile(contentType: string, filename: string): boolean {
   return DOCUMENT_EXTENSIONS.has(extensionOf(filename));
 }
 
-export function fileIcon(contentType: string, filename: string): LucideIcon {
+export function fileIcon(contentType: string, filename: string): IconComponent {
   if (contentType === FOLDER_SNAPSHOT_TYPE || filename.endsWith(FOLDER_SNAPSHOT_EXTENSION)) return Folder;
   const ext = extensionOf(filename);
   if (SPREADSHEET_EXTENSIONS.has(ext)) return FileSpreadsheet;
