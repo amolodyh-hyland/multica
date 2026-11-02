@@ -73,3 +73,23 @@ it("does not enable editing when the saved state cannot be loaded", async () => 
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not load the runtime.");
   expect(mocks.set).not.toHaveBeenCalled();
 });
+
+it("offers an explicitly shared private runtime to the assigned profile owner", async () => {
+  client.setQueryData(["runtimes", "workspace", "list"], [
+    { id: "shared", visibility: "private", owner_id: "other", shared_with: ["owner"] },
+    { id: "private-other", visibility: "private", owner_id: "other", shared_with: [] },
+  ] as AgentRuntime[]);
+  renderControl();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Switch to Codex" })).toBeEnabled());
+  expect(screen.getByTestId("choices").textContent).toBe("shared");
+});
+
+it("keeps Qoder Cloud Agents out of native runtime overrides", async () => {
+  client.setQueryData(["runtimes", "workspace", "list"], [
+    { id: "claude", provider: "claude", visibility: "private", owner_id: "owner" },
+    { id: "cloud", provider: "qoder_cloud", visibility: "public", owner_id: "owner" },
+  ] as AgentRuntime[]);
+  renderControl();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Switch to Codex" })).toBeEnabled());
+  expect(screen.getByTestId("choices").textContent).toBe("claude");
+});

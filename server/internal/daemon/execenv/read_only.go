@@ -36,9 +36,9 @@ func prepareReadOnlyCodexHome(home, sharedHome, goos string) error {
 	return os.WriteFile(filepath.Join(home, "config.toml"), []byte(readOnlyCodexHomeConfig()), 0o600)
 }
 
-func hydrateReadOnlyAwareCodexSkills(home string, readOnly bool, skills []SkillContextForEnv, disabled []RuntimeSkillRefForEnv, logger *slog.Logger) error {
+func hydrateReadOnlyAwareCodexSkills(home string, readOnly bool, skills []SkillContextForEnv, disabled []RuntimeSkillRefForEnv, logger *slog.Logger) ([]string, error) {
 	if readOnly {
-		return nil
+		return nil, nil
 	}
 	return hydrateCodexSkills(home, skills, disabled, logger)
 }

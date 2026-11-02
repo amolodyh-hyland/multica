@@ -56,7 +56,7 @@ func TestIssueRuntimeSwitchConcurrentLegacyMerge(t *testing.T) {
 	h.Queries, h.TxStarter = db.NewBinding(mergeConn), mergeConn
 	mergeDone := make(chan error, 1)
 	go func() {
-		mergeDone <- h.mergeLegacyRuntime(ctx, parseUUID(merged), parseUUID(old), "merge-lock-order-test", "claude")
+		mergeDone <- h.mergeLegacyRuntime(ctx, parseUUID(merged), parseUUID(old), "merge-lock-order-test", "claude", parseUUID(testUserID))
 	}()
 	if err := waitHandlerBindingPrefix(ctx, tx, mergeConn.Conn().PgConn().PID()); err != nil {
 		t.Fatal(err)
@@ -179,7 +179,7 @@ func TestBindingPrefixOrdinaryEnqueueConcurrentLegacyMerge(t *testing.T) {
 	h.Queries, h.TxStarter = db.NewBinding(mergeConn), mergeConn
 	mergeDone := make(chan error, 1)
 	go func() {
-		mergeDone <- h.mergeLegacyRuntime(ctx, parseUUID(destination), parseUUID(old), "merge-enqueue-prefix-test", "claude")
+		mergeDone <- h.mergeLegacyRuntime(ctx, parseUUID(destination), parseUUID(old), "merge-enqueue-prefix-test", "claude", parseUUID(testUserID))
 	}()
 	if err := waitHandlerBindingPrefix(ctx, enqueueTx, mergeConn.Conn().PgConn().PID()); err != nil {
 		t.Fatal(err)

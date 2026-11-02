@@ -111,14 +111,12 @@ type Task struct {
 	ProjectWorkflow               *ProjectWorkflowData     `json:"project_workflow,omitempty"`
 	ThreadName                    string                   `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
 	Agent                         *AgentData               `json:"agent,omitempty"`
+	ModelOverride                 string                   `json:"model_override,omitempty"` // claim-time snapshot of the agent's persistent OpenClaw model override
 	ConnectedApps                 []ConnectedAppData       `json:"connected_apps,omitempty"` // per-run app capabilities mounted through runtime MCP overlays
 	Repos                         []RepoData               `json:"repos,omitempty"`
-	ProjectID                     string                   `json:"project_id,omitempty"`          // active project for this task, when present
-	ProjectTitle                  string                   `json:"project_title,omitempty"`       // human-readable project title for context injection
-	ProjectDescription            string                   `json:"project_description,omitempty"` // durable project-level context injected into the brief
-	PrivateLibraryManifest        *libraryimport.Selection `json:"private_library_manifest,omitempty"`
-	KnowledgeManifest             *knowledge.Selection     `json:"knowledge_manifest,omitempty"`
-	ProjectInstructions           string                   `json:"project_instructions,omitempty"`
+	ProjectID                     string                   `json:"project_id,omitempty"`                       // active project for this task, when present
+	ProjectTitle                  string                   `json:"project_title,omitempty"`                    // human-readable project title for context injection
+	ProjectDescription            string                   `json:"project_description,omitempty"`              // durable project-level context injected into the brief
 	ProjectResources              []ProjectResourceData    `json:"project_resources,omitempty"`                // project-scoped resources to expose to the agent
 	IsLeaderTask                  bool                     `json:"is_leader_task,omitempty"`                   // true when executing in the squad-leader coordinator role
 	LeaderRoleResolved            bool                     `json:"leader_role_resolved,omitempty"`             // server capability: IsLeaderTask/SquadID authoritatively answer "is this a leader run". Absent on servers predating it — those before #4951 never sent is_leader_task at all, later ones send it without this guarantee — so taskIsSquadLeader falls back to the briefing marker for both (MUL-5811)
@@ -132,6 +130,8 @@ type Task struct {
 	TriggerCommentContent         string                   `json:"trigger_comment_content,omitempty"`          // content of the triggering comment
 	TriggerAuthorType             string                   `json:"trigger_author_type,omitempty"`              // "agent" or "member" — author kind for the triggering comment
 	TriggerAuthorName             string                   `json:"trigger_author_name,omitempty"`              // display name of the triggering comment author
+	TriggerCommentEditedAt        string                   `json:"trigger_comment_edited_at,omitempty"`        // MUL-8218: set when the trigger comment was edited after the resumed session's run started, so the resumed history may quote an earlier version. Empty on old servers / unedited comments
+	TriggerCommentRevision        int64                    `json:"trigger_comment_revision,omitempty"`         // MUL-8218: current revision of the trigger comment; sent alongside TriggerCommentEditedAt
 	NewCommentCount               int                      `json:"new_comment_count,omitempty"`                // issue-wide comments since this agent's last run (excludes its own and the injected trigger); 0/omitted for old daemons or cold start
 	NewCommentsSince              string                   `json:"new_comments_since,omitempty"`               // RFC3339 anchor (last run's started_at) the count is measured from; empty on cold start
 	NewCommentsDeltaKnown         bool                     `json:"new_comments_delta_known,omitempty"`         // the server actually computed the issue-wide delta this claim (both reads succeeded). A zero NewCommentCount means "nothing was said" only when this is true; otherwise the zero is a failed read, a cold start, or an old server, and the prompt must not present it as the comment scan's answer (MUL-6984)
@@ -155,18 +155,21 @@ type Task struct {
 	AutopilotDescription          string                   `json:"autopilot_description,omitempty"`            // autopilot description used as task prompt
 	AutopilotSource               string                   `json:"autopilot_source,omitempty"`                 // manual, schedule, webhook, or api
 	AutopilotTriggerPayload       json.RawMessage          `json:"autopilot_trigger_payload,omitempty"`        // optional trigger payload for webhook/api runs
-	DelegationID                  string                   `json:"delegation_id,omitempty"`
-	DelegationTitle               string                   `json:"delegation_title,omitempty"`
-	DelegationInstructions        string                   `json:"delegation_instructions,omitempty"`
-	QuickCreatePrompt             string                   `json:"quick_create_prompt,omitempty"`         // user's natural-language input for quick-create tasks
-	QuickCreatePriority           string                   `json:"quick_create_priority,omitempty"`       // explicit priority selected in quick-create
-	QuickCreateDueDate            string                   `json:"quick_create_due_date,omitempty"`       // explicit calendar due date selected in quick-create
-	QuickCreateAttachmentIDs      []string                 `json:"quick_create_attachment_ids,omitempty"` // attachments uploaded in the quick-create prompt and bound by issue create
-	QuickCreateSourceContext      json.RawMessage          `json:"quick_create_source_context,omitempty"` // immutable historical context, separate from the new instruction
+	QuickCreatePrompt             string                   `json:"quick_create_prompt,omitempty"`              // user's natural-language input for quick-create tasks
+	QuickCreatePriority           string                   `json:"quick_create_priority,omitempty"`            // explicit priority selected in quick-create
+	QuickCreateDueDate            string                   `json:"quick_create_due_date,omitempty"`            // explicit calendar due date selected in quick-create
+	QuickCreateAttachmentIDs      []string                 `json:"quick_create_attachment_ids,omitempty"`      // attachments uploaded in the quick-create prompt and bound by issue create
+	QuickCreateSourceContext      json.RawMessage          `json:"quick_create_source_context,omitempty"`      // immutable historical context, separate from the new instruction
 	WakeupID                      string                   `json:"wakeup_id,omitempty"`
 	WakeupSystemRule              string                   `json:"wakeup_system_rule,omitempty"` // a platform rule (e.g. child_done) started the run
 	WakeupJoined                  string                   `json:"wakeup_joined,omitempty"`      // wakeups that joined this run instead of queuing their own
 	HandoffNote                   string                   `json:"handoff_note,omitempty"`       // legacy assignment handoff instruction; rendered only in the per-turn prompt
+	PrivateLibraryManifest        *libraryimport.Selection `json:"private_library_manifest,omitempty"`
+	KnowledgeManifest             *knowledge.Selection     `json:"knowledge_manifest,omitempty"`
+	ProjectInstructions           string                   `json:"project_instructions,omitempty"`
+	DelegationID                  string                   `json:"delegation_id,omitempty"`
+	DelegationTitle               string                   `json:"delegation_title,omitempty"`
+	DelegationInstructions        string                   `json:"delegation_instructions,omitempty"`
 
 	SquadID               string `json:"squad_id,omitempty"`                // when the picker was a squad, the squad's UUID; Agent is still the resolved leader
 	SquadName             string `json:"squad_name,omitempty"`              // display name for the picker squad, used in prompt text
@@ -219,6 +222,8 @@ type CoalescedCommentData struct {
 	AuthorName string `json:"author_name,omitempty"`
 	Content    string `json:"content"`
 	CreatedAt  string `json:"created_at,omitempty"`
+	EditedAt   string `json:"edited_at,omitempty"` // MUL-8218: set when this comment was edited after the resumed session's run started; empty on old servers / unedited comments
+	Revision   int64  `json:"revision,omitempty"`  // MUL-8218: current revision, sent alongside EditedAt
 }
 
 // AgentData holds agent details returned by the claim endpoint.

@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
@@ -120,7 +121,24 @@ func (h *Handler) SetIssueRuntime(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		if !canUseRuntimeForAgent(member, target) || (target.Visibility == "private" && target.OwnerID != profile.OwnerID) {
+		if overrideID.Valid {
+			if target.Provider == "qoder_cloud" {
+				writeError(w, http.StatusBadRequest, "Qoder Cloud Agents do not support issue runtime overrides")
+				return
+			}
+			if profile.RuntimeID.Valid {
+				baseRuntime, err := q.GetAgentRuntime(r.Context(), profile.RuntimeID)
+				if err != nil {
+					writeError(w, http.StatusConflict, "profile runtime changed; reload before switching runtime")
+					return
+				}
+				if baseRuntime.Provider == "qoder_cloud" {
+					writeError(w, http.StatusBadRequest, "Qoder Cloud Agents do not support issue runtime overrides")
+					return
+				}
+			}
+		}
+		if !canUseRuntimeForAgent(member, target) || !service.RuntimeAllowsUser(target, profile.OwnerID) {
 			writeError(w, http.StatusForbidden, "this runtime does not permit the assigned agent and member")
 			return
 		}

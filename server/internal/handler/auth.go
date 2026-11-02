@@ -58,6 +58,7 @@ const devVerificationCodeEnv = "MULTICA_DEV_VERIFICATION_CODE"
 var supportedLanguages = map[string]struct{}{
 	"en":      {},
 	"zh-Hans": {},
+	"zh-Hant": {},
 	"ko":      {},
 	"ja":      {},
 	"fr":      {},
@@ -759,6 +760,10 @@ func (h *Handler) IssueCliToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if isMachineCredentialActor(r) {
+		writeError(w, http.StatusForbidden, "this endpoint is only available to human actors")
+		return
+	}
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return

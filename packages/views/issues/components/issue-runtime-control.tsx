@@ -5,6 +5,7 @@ import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { issueRuntimeOptions, useSetIssueRuntime } from "@multica/core/issues";
 import { useAgentPermissions } from "@multica/core/permissions";
+import { isRuntimeUsableForUser } from "@multica/core/runtimes";
 import { runtimeListOptions } from "@multica/core/runtimes/queries";
 import {
   agentListOptions,
@@ -35,6 +36,7 @@ export function IssueRuntimeControl({ issue }: { issue: Issue }) {
   const mutation = useSetIssueRuntime(wsId, issue.id, agent?.id ?? "");
 
   if (!agent || !canEdit.allowed) return null;
+  if (runtimes.find((r) => r.id === agent.runtime_id)?.provider === "qoder_cloud") return null;
   const state = runtime.data?.agent_id === agent.id ? runtime.data : null;
   const change = async (id: string | null) => {
     try {
@@ -46,7 +48,7 @@ export function IssueRuntimeControl({ issue }: { issue: Issue }) {
   // Private destinations must permit the profile's owner as well as the
   // member editing the issue. The server repeats this check under locks.
   const choices = runtimes.filter(
-    (r) => r.visibility !== "private" || r.owner_id === agent.owner_id,
+    (r) => r.provider !== "qoder_cloud" && isRuntimeUsableForUser(r, agent.owner_id),
   );
 
   return (

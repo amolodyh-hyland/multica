@@ -505,6 +505,9 @@ cleared_pr_automation AS (
 ),
 cleared_pr_exclusions AS (
     DELETE FROM issue_pull_request_exclusion WHERE issue_id IN (SELECT target.id FROM target)
+),
+cleared_unread AS (
+    DELETE FROM issue_unread WHERE issue_id IN (SELECT target.id FROM target)
 )
 -- Complete preference cleanup before issue deletion can cascade into tasks.
 DELETE FROM issue WHERE issue.id IN (SELECT target.id FROM target)
