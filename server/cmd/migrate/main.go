@@ -151,6 +151,7 @@ var concurrentIndexCleanups = map[string]string{
 	"593_task_knowledge_session_index":                          "idx_task_knowledge_session",
 	"589_public_delegation_identity_index":                      "public_delegation_identity_idx",
 	"588_public_delegation_id_index":                            "public_delegation_id_idx",
+	"606_agent_task_queue_runtime_active_index":                 "idx_agent_task_queue_runtime_active",
 	"604_wecom_install_session_begin_rate_idx":                  "idx_wecom_install_session_begin_rate",
 	"603_wecom_install_session_agent_pending_idx":               "idx_wecom_install_session_agent_pending",
 	"602_wecom_install_session_request_idx":                     "idx_wecom_install_session_request",

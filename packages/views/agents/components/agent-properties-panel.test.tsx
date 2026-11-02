@@ -104,6 +104,7 @@ function renderPanel(
 ) {
   const onUpdate = vi.fn(async () => {});
   const onEditAccess = vi.fn();
+  const onOpenSettings = vi.fn();
   renderWithI18n(
     <QueryClientProvider
       client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
@@ -119,10 +120,11 @@ function renderPanel(
         canEdit={canEdit}
         onUpdate={onUpdate}
         onEditAccess={onEditAccess}
+        onOpenSettings={onOpenSettings}
       />
     </QueryClientProvider>,
   );
-  return { onUpdate, onEditAccess };
+  return { onUpdate, onEditAccess, onOpenSettings };
 }
 
 function activityToday(total: number, completed: number, failed: number): AgentActivity {
@@ -152,7 +154,7 @@ describe("AgentPropertiesPanel", () => {
       "Properties",
       "Status",
       "Owner",
-      "Runtime",
+      "Provider / runtime",
       "Harness",
       "Model",
       "Access",
@@ -223,6 +225,13 @@ describe("AgentPropertiesPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^Access: .+\. Change access$/ }));
     expect(onEditAccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the full settings from All settings", () => {
+    const { onOpenSettings } = renderPanel(claude);
+
+    fireEvent.click(screen.getByRole("button", { name: "All settings" }));
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });
 
   it("counts the last 7 days of runs with their success rate", () => {
