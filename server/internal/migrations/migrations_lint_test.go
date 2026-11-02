@@ -40,6 +40,8 @@ func TestMigrationNumericPrefixesAreUnique(t *testing.T) {
 		"602_issue_runtime_override":                 "602_wecom_install_session_request_idx",
 		"603_issue_runtime_override_issue_index":     "603_wecom_install_session_agent_pending_idx",
 		"604_issue_runtime_override_resolution":      "604_wecom_install_session_begin_rate_idx",
+		"605_agent_runtime_max_concurrent_tasks":     "605_task_native_resume_disabled",
+		"606_agent_task_queue_runtime_active_index":  "606_issue_runtime_assignment_lock",
 	}
 	stemByNumber := make(map[int]string)
 	for _, file := range files {
