@@ -152,7 +152,7 @@ function MainCanvas({
           role="status"
         >
           <div className="flex flex-col items-center gap-4">
-            <MulticaIcon className="size-8 animate-pulse" />
+            <MulticaIcon mode="think" size={40} />
             <p className="text-body text-muted-foreground">{loadingLabel}</p>
           </div>
         </div>

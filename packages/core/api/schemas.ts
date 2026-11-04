@@ -2119,6 +2119,7 @@ const TaskUsageSchema = z.object({
   cache_read_tokens: z.number().default(0),
   cache_write_tokens: z.number().default(0),
   cost_usd_ticks: z.number().optional(),
+  credits_micros: z.number().optional().catch(undefined),
 }).loose();
 
 export const AgentTaskSchema = z.object({
@@ -2793,6 +2794,9 @@ export const UserSchema = z.object({
   language: z.string().nullable().default(null),
   profile_description: z.string().default(""),
   timezone: z.string().nullable().default(null),
+  // No default: absence is the "server cannot track" signal. A malformed
+  // value degrades to that state instead of discarding the whole user.
+  whats_new_seen_version: z.string().nullable().optional().catch(undefined),
   created_at: z.string().default(""),
   updated_at: z.string().default(""),
 }).loose();
@@ -2840,6 +2844,8 @@ export const IssueUnreadPageSchema = z
           issue_id: z.string(),
           outcome: z.string(),
           agent_id: z.string().nullish().transform((v) => v ?? null),
+          task_id: z.string().nullish().transform((v) => v ?? null),
+          comment_id: z.string().nullish().transform((v) => v ?? null),
           created_at: z.string(),
         })
         .loose(),
