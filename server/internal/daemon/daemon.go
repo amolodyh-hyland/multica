@@ -2075,8 +2075,26 @@ func (d *Daemon) RunWithHealthListener(ctx context.Context, healthLn net.Listene
 	return d.run(ctx, healthLn)
 }
 
+func (d *Daemon) prepareZcodeProviderSnapshots(ctx context.Context) (context.Context, error) {
+	if d.cfg.BundleReadOnly {
+		return ctx, nil
+	}
+	profileDir, err := cli.ProfileDir(d.cfg.Profile)
+	if err != nil {
+		return ctx, err
+	}
+	if n := agent.CleanupStaleZcodeProviderSnapshots(profileDir); n > 0 {
+		d.logger.Info("removed stale ZCode provider credential snapshots", "count", n)
+	}
+	return agent.WithZcodeProviderSnapshotProfile(ctx, profileDir), nil
+}
+
 func (d *Daemon) run(ctx context.Context, healthLn net.Listener) error {
 	var err error
+	ctx, err = d.prepareZcodeProviderSnapshots(ctx)
+	if err != nil {
+		return err
+	}
 	// Wrap context so handleUpdate can cancel the daemon for restart.
 	ctx, cancel := context.WithCancel(ctx)
 	d.cancelFunc = cancel
@@ -6595,6 +6613,7 @@ var runtimeDisplayNameOverrides = map[string]string{
 	"qwenpaw":    "QwenPaw",
 	"mcode":      "MiniMax Code",
 	"muse":       "Muse Code",
+	"zcode":      "ZCode",
 	"zeroclaw":   "ZeroClaw",
 }
 
@@ -8826,6 +8845,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// the daemon cannot record either (#9404).
 	if env.LocalWorktree != nil {
 		promptOptions = append(promptOptions, WithWorktreeBranch(env.LocalWorktree.Branch, env.LocalWorktree.BaseCommit))
+		// The branch block's rule for uncommitted files has one exception,
+		// decided by the same predicate Finalize uses (#9788 review).
+		if env.LocalWorktree.CommitsAllLeftovers() {
+			promptOptions = append(promptOptions, WithWorktreeCommitsAllLeftovers())
+		}
 	}
 	prompt := BuildPrompt(task, provider, promptOptions...)
 
