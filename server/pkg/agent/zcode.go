@@ -136,7 +136,7 @@ func (b *zcodeBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 	if err := requireNodeForZcodeScript(lookedUp); err != nil {
 		return nil, err
 	}
-	runtimeEnv, cleanupConfig, err := prepareZcodeRuntimeEnv(lookedUp, buildEnv(b.cfg.Env))
+	runtimeEnv, cleanupConfig, err := prepareZcodeRuntimeEnv(ctx, lookedUp, buildEnv(b.cfg.Env))
 	if err != nil {
 		return nil, err
 	}

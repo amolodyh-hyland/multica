@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 const (
@@ -59,13 +61,13 @@ func readZcodeConfig(path string, into any) error {
 }
 
 // prepareZcodeRuntimeEnv adapts Desktop's enabled API-key connections into a
-// private, process-owned native provider repository snapshot under the process
-// temp dir (multica-zcode-providers-*). It reads Desktop's enabled connections
-// to build that snapshot, but never edits Desktop's repositories or converts
+// private, process-owned native provider repository snapshot under the daemon's
+// profile directory (or the process temp dir for callers without a profile).
+// It reads Desktop's enabled connections to build that snapshot, but never
+// edits Desktop's repositories or converts
 // Start Plan identity tokens into API keys. Explicit native repositories remain
-// authoritative. Call CleanupStaleZcodeProviderSnapshots on daemon startup so
-// crash leftovers do not linger.
-func prepareZcodeRuntimeEnv(executable string, env []string) ([]string, func(), error) {
+// authoritative. A lease protects the snapshot until session cleanup.
+func prepareZcodeRuntimeEnv(ctx context.Context, executable string, env []string) ([]string, func(), error) {
 	noop := func() {}
 	if zcodeEnvValue(env, zcodePersonalConfigEnv) != "" {
 		return zcodeRuntimeEnv(executable, env), noop, nil
@@ -188,42 +190,102 @@ func prepareZcodeRuntimeEnv(executable string, env []string) ([]string, func(), 
 	if err != nil {
 		return nil, noop, fmt.Errorf("encode process-owned ZCode provider repository: %w", err)
 	}
-	temp, err := os.MkdirTemp("", zcodeProvidersTempPrefix)
+	file, cleanup, err := writeZcodeProviderSnapshot(ctx, data)
 	if err != nil {
-		return nil, noop, err
-	}
-	cleanup := func() { _ = os.RemoveAll(temp) }
-	file := filepath.Join(temp, "providers.json")
-	if err := os.WriteFile(file, data, 0o600); err != nil {
-		cleanup()
 		return nil, noop, err
 	}
 	env = zcodeRuntimeEnv(executable, env)
 	return append(env, zcodePersonalConfigEnv+"="+file), cleanup, nil
 }
 
-// CleanupStaleZcodeProviderSnapshots removes orphaned process-private provider
-// repository directories left under the process temp dir when a prior daemon
-// exited without running the per-session cleanup defer (crash / SIGKILL).
-// Best-effort: failures to remove individual matches are ignored; the count of
-// removed directories is returned for logging.
-func CleanupStaleZcodeProviderSnapshots() int {
-	matches, err := filepath.Glob(filepath.Join(os.TempDir(), zcodeProvidersTempPrefix+"*"))
+type zcodeSnapshotProfileKey struct{}
+
+// WithZcodeProviderSnapshotProfile scopes snapshots and crash cleanup to one daemon profile.
+func WithZcodeProviderSnapshotProfile(ctx context.Context, profileDir string) context.Context {
+	return context.WithValue(ctx, zcodeSnapshotProfileKey{}, profileDir)
+}
+
+func zcodeProviderSnapshotRoot(profileDir string) string {
+	return filepath.Join(profileDir, "zcode-provider-snapshots")
+}
+
+func writeZcodeProviderSnapshot(ctx context.Context, data []byte) (string, func(), error) {
+	noop := func() {}
+	root := os.TempDir()
+	if profileDir, _ := ctx.Value(zcodeSnapshotProfileKey{}).(string); profileDir != "" {
+		root = zcodeProviderSnapshotRoot(profileDir)
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			return "", noop, err
+		}
+	}
+	temp, err := os.MkdirTemp(root, ".preparing-")
+	if err != nil {
+		return "", noop, err
+	}
+	leasePath := filepath.Join(temp, "lease")
+	if err := os.WriteFile(leasePath, nil, 0o600); err != nil {
+		_ = os.RemoveAll(temp)
+		return "", noop, err
+	}
+	lease, locked, err := tryLockPiSessionFile(leasePath)
+	if err != nil || !locked {
+		_ = os.RemoveAll(temp)
+		if err == nil {
+			err = errors.New("ZCode snapshot lease is already held")
+		}
+		return "", noop, err
+	}
+	var once sync.Once
+	cleanup := func() {
+		once.Do(func() {
+			_ = os.RemoveAll(temp)
+			releasePiSessionFileLock(lease)
+		})
+	}
+	// Publish only after acquiring the lifetime lease; startup ignores staging directories.
+	published := filepath.Join(root, zcodeProvidersTempPrefix+strings.TrimPrefix(filepath.Base(temp), ".preparing-"))
+	if err := os.Rename(temp, published); err != nil {
+		cleanup()
+		return "", noop, err
+	}
+	temp = published
+	file := filepath.Join(temp, "providers.json")
+	if err := os.WriteFile(file, data, 0o600); err != nil {
+		cleanup()
+		return "", noop, err
+	}
+	return file, cleanup, nil
+}
+
+// CleanupStaleZcodeProviderSnapshots removes only unlocked snapshots in this profile.
+// Unknown legacy snapshots in the shared temp directory are deliberately left alone.
+func CleanupStaleZcodeProviderSnapshots(profileDir string) int {
+	if profileDir == "" {
+		return 0
+	}
+	root := zcodeProviderSnapshotRoot(profileDir)
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		return 0
 	}
 	removed := 0
-	for _, dir := range matches {
-		info, err := os.Stat(dir)
-		if err != nil || !info.IsDir() {
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), zcodeProvidersTempPrefix) {
 			continue
 		}
-		if !strings.HasPrefix(filepath.Base(dir), zcodeProvidersTempPrefix) {
+		dir := filepath.Join(root, entry.Name())
+		leasePath := filepath.Join(dir, "lease")
+		if info, err := os.Lstat(leasePath); err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		lease, locked, err := tryLockPiSessionFile(leasePath)
+		if err != nil || !locked {
 			continue
 		}
 		if err := os.RemoveAll(dir); err == nil {
 			removed++
 		}
+		releasePiSessionFileLock(lease)
 	}
 	return removed
 }

@@ -2075,8 +2075,26 @@ func (d *Daemon) RunWithHealthListener(ctx context.Context, healthLn net.Listene
 	return d.run(ctx, healthLn)
 }
 
+func (d *Daemon) prepareZcodeProviderSnapshots(ctx context.Context) (context.Context, error) {
+	if d.cfg.BundleReadOnly {
+		return ctx, nil
+	}
+	profileDir, err := cli.ProfileDir(d.cfg.Profile)
+	if err != nil {
+		return ctx, err
+	}
+	if n := agent.CleanupStaleZcodeProviderSnapshots(profileDir); n > 0 {
+		d.logger.Info("removed stale ZCode provider credential snapshots", "count", n)
+	}
+	return agent.WithZcodeProviderSnapshotProfile(ctx, profileDir), nil
+}
+
 func (d *Daemon) run(ctx context.Context, healthLn net.Listener) error {
 	var err error
+	ctx, err = d.prepareZcodeProviderSnapshots(ctx)
+	if err != nil {
+		return err
+	}
 	// Wrap context so handleUpdate can cancel the daemon for restart.
 	ctx, cancel := context.WithCancel(ctx)
 	d.cancelFunc = cancel
@@ -2103,12 +2121,6 @@ func (d *Daemon) run(ctx context.Context, healthLn net.Listener) error {
 	d.logger.Info("starting daemon", logFields...)
 	if d.cfg.BundleReadOnly {
 		d.logger.Warn(agent.ReadOnlyCodexCloudRiskWarning)
-	}
-	// Sweep orphaned ZCode provider credential snapshots left by a prior
-	// crash/SIGKILL (prepareZcodeRuntimeEnv writes 0600 files under
-	// $TMPDIR/multica-zcode-providers-*; normal exits remove them in defer).
-	if n := agent.CleanupStaleZcodeProviderSnapshots(); n > 0 {
-		d.logger.Info("removed stale ZCode provider credential snapshots", "count", n)
 	}
 	d.logger.Debug("daemon config resolved",
 		"daemon_id", d.cfg.DaemonID,

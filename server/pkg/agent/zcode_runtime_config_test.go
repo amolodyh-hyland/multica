@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -36,12 +37,17 @@ func TestZcodeDesktopProviderRepositoryIsPrivateAndDoesNotModifyUserConfig(t *te
 	if err := os.WriteFile(nativePath, native, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	env, cleanup, err := prepareZcodeRuntimeEnv(executable, []string{"ZCODE_DATA_BASE_DIR=" + base})
+	profileDir := filepath.Join(base, "profile-a")
+	ctx := WithZcodeProviderSnapshotProfile(context.Background(), profileDir)
+	env, cleanup, err := prepareZcodeRuntimeEnv(ctx, executable, []string{"ZCODE_DATA_BASE_DIR=" + base})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(cleanup)
 	snapshot := zcodeEnvValue(env, zcodePersonalConfigEnv)
+	if filepath.Dir(filepath.Dir(snapshot)) != zcodeProviderSnapshotRoot(profileDir) {
+		t.Fatalf("snapshot is outside its daemon profile: %s", snapshot)
+	}
 	if snapshot == "" || snapshot == nativePath {
 		t.Fatal("expected a separate process-owned snapshot")
 	}
@@ -83,7 +89,7 @@ func TestZcodeDesktopProviderRepositoryIsPrivateAndDoesNotModifyUserConfig(t *te
 
 func TestZcodeExplicitProviderRepositoryRemainsAuthoritative(t *testing.T) {
 	env := []string{zcodePersonalConfigEnv + "=/explicit/providers.json", "ZCODE_BUILTIN_PROVIDER_CONFIG_FILE=/explicit/builtin.json"}
-	got, cleanup, err := prepareZcodeRuntimeEnv("/app/zcode.cjs", env)
+	got, cleanup, err := prepareZcodeRuntimeEnv(context.Background(), "/app/zcode.cjs", env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,32 +99,65 @@ func TestZcodeExplicitProviderRepositoryRemainsAuthoritative(t *testing.T) {
 	}
 }
 
-func TestCleanupStaleZcodeProviderSnapshotsRemovesLeftovers(t *testing.T) {
-	base := t.TempDir()
-	t.Setenv("TMPDIR", base)
-	// os.TempDir on Unix reads TMPDIR; recreate the leftover layout.
-	leftover := filepath.Join(base, zcodeProvidersTempPrefix+"orphan123")
-	if err := os.MkdirAll(leftover, 0o700); err != nil {
-		t.Fatal(err)
+func TestCleanupStaleZcodeProviderSnapshotsPreservesLiveProfiles(t *testing.T) {
+	profileA, profileB := t.TempDir(), t.TempDir()
+	data := []byte(`{"apiKey":"fixture-secret"}`)
+	live := make([]string, 0, 2)
+	for _, profile := range []string{profileA, profileB} {
+		ctx := WithZcodeProviderSnapshotProfile(context.Background(), profile)
+		file, cleanup, err := writeZcodeProviderSnapshot(ctx, data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(cleanup)
+		live = append(live, file)
 	}
-	secret := filepath.Join(leftover, "providers.json")
-	if err := os.WriteFile(secret, []byte(`{"apiKey":"x"}`), 0o600); err != nil {
-		t.Fatal(err)
+	orphan := func(root, prefix string) string {
+		t.Helper()
+		dir, err := os.MkdirTemp(root, prefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "lease"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "providers.json"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return dir
 	}
-	// Unrelated temp dir must survive.
-	keep := filepath.Join(base, "unrelated-temp")
-	if err := os.MkdirAll(keep, 0o700); err != nil {
-		t.Fatal(err)
+	abandonedA := orphan(zcodeProviderSnapshotRoot(profileA), zcodeProvidersTempPrefix)
+	abandonedB := orphan(zcodeProviderSnapshotRoot(profileB), zcodeProvidersTempPrefix)
+	staging := orphan(zcodeProviderSnapshotRoot(profileA), ".preparing-")
+	legacy := orphan(t.TempDir(), zcodeProvidersTempPrefix)
+	if removed := CleanupStaleZcodeProviderSnapshots(profileA); removed != 1 {
+		t.Fatalf("profile A removed %d snapshots, want only its abandoned snapshot", removed)
 	}
-	removed := CleanupStaleZcodeProviderSnapshots()
-	if removed != 1 {
-		t.Fatalf("removed = %d, want 1", removed)
+	if _, err := os.Stat(abandonedA); !os.IsNotExist(err) {
+		t.Fatalf("abandoned profile A snapshot remains: %v", err)
 	}
-	if _, err := os.Stat(leftover); !os.IsNotExist(err) {
-		t.Fatalf("leftover still present: %v", err)
+	for _, file := range append(live, filepath.Join(abandonedB, "providers.json"), filepath.Join(staging, "providers.json"), filepath.Join(legacy, "providers.json")) {
+		if got, err := os.ReadFile(file); err != nil || string(got) != string(data) {
+			t.Fatalf("cleanup changed another live/profile/staging snapshot %s: %v", file, err)
+		}
 	}
-	if _, err := os.Stat(keep); err != nil {
-		t.Fatalf("unrelated dir was removed: %v", err)
+	if removed := CleanupStaleZcodeProviderSnapshots(profileB); removed != 1 {
+		t.Fatalf("profile B removed %d snapshots, want only its abandoned snapshot", removed)
+	}
+	for _, file := range live {
+		lease, locked, err := tryLockPiSessionFile(filepath.Join(filepath.Dir(file), "lease"))
+		if locked {
+			releasePiSessionFileLock(lease)
+		}
+		if err != nil || locked {
+			t.Fatalf("live snapshot lost its lease: locked=%v err=%v", locked, err)
+		}
+		if got, err := os.ReadFile(file); err != nil || string(got) != string(data) {
+			t.Fatalf("live snapshot was removed: %v", err)
+		}
+	}
+	if removed := CleanupStaleZcodeProviderSnapshots(""); removed != 0 {
+		t.Fatalf("unscoped cleanup removed %d snapshots", removed)
 	}
 }
 
