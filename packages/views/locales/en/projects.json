@@ -162,6 +162,7 @@
     "retry": "Retry"
   },
   "delete_dialog": {
+    "offline_error": "You're offline. Reconnect and try deleting again.",
     "title": "Delete project",
     "description": "This will delete the project. Issues will not be deleted but will be unlinked.",
     "confirm": "Delete",

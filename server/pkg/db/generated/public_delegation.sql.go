@@ -391,7 +391,7 @@ func (q *Queries) LockPublicDelegationInvocationTargets(ctx context.Context, age
 }
 
 const lockPublicDelegationMember = `-- name: LockPublicDelegationMember :one
-SELECT id, workspace_id, user_id, role, created_at FROM member WHERE workspace_id = $1 AND user_id = $2 FOR SHARE
+SELECT id, workspace_id, user_id, role, created_at, pinned_at FROM member WHERE workspace_id = $1 AND user_id = $2 FOR SHARE
 `
 
 type LockPublicDelegationMemberParams struct {
@@ -408,12 +408,13 @@ func (q *Queries) LockPublicDelegationMember(ctx context.Context, arg LockPublic
 		&i.UserID,
 		&i.Role,
 		&i.CreatedAt,
+		&i.PinnedAt,
 	)
 	return i, err
 }
 
 const lockPublicDelegationRuntime = `-- name: LockPublicDelegationRuntime :one
-SELECT id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, visibility, profile_id, custom_name, shared_with FROM agent_runtime WHERE id = $1 AND workspace_id = $2 FOR SHARE
+SELECT id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, visibility, profile_id, custom_name, shared_with, max_concurrent_tasks FROM agent_runtime WHERE id = $1 AND workspace_id = $2 FOR SHARE
 `
 
 type LockPublicDelegationRuntimeParams struct {
@@ -443,6 +444,7 @@ func (q *Queries) LockPublicDelegationRuntime(ctx context.Context, arg LockPubli
 		&i.ProfileID,
 		&i.CustomName,
 		&i.SharedWith,
+		&i.MaxConcurrentTasks,
 	)
 	return i, err
 }

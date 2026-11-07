@@ -17,6 +17,11 @@ unchanged. The member surface is mounted at `/api/v1` and currently accepts
 scoped member PATs only. Plugin context and storage are marked
 `plugin_extension` and are not available through the member surface.
 
+The shared-resource transcript endpoint `GET /v1/tasks/{task_id}/messages`
+accepts Plugin credentials with `tasks:read`. It has no member API mount or
+member PAT scope; shared-resource classification alone does not enable a trust
+surface. Private chat transcripts retain the session-creator credential check.
+
 Both surfaces should call the same Go service and handler layer. The Plugin API
 must not make an additional HTTP request to the user/PAT API.
 

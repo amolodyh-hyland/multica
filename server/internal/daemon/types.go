@@ -7,6 +7,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/libraryimport"
 
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
 
@@ -170,6 +171,8 @@ type Task struct {
 	DelegationID                  string                   `json:"delegation_id,omitempty"`
 	DelegationTitle               string                   `json:"delegation_title,omitempty"`
 	DelegationInstructions        string                   `json:"delegation_instructions,omitempty"`
+
+	ChatSource *protocol.ChatSource `json:"chat_source,omitempty"`
 
 	SquadID               string `json:"squad_id,omitempty"`                // when the picker was a squad, the squad's UUID; Agent is still the resolved leader
 	SquadName             string `json:"squad_name,omitempty"`              // display name for the picker squad, used in prompt text

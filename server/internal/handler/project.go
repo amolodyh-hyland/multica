@@ -33,6 +33,8 @@ type ProjectResponse struct {
 	Priority     string  `json:"priority"`
 	LeadType     *string `json:"lead_type"`
 	LeadID       *string `json:"lead_id"`
+	CreatorType  *string `json:"creator_type"`
+	CreatorID    *string `json:"creator_id"`
 	// StartDate / DueDate are calendar days ("YYYY-MM-DD"), no time-of-day or
 	// timezone — same contract as issue.start_date / issue.due_date.
 	StartDate  *string `json:"start_date"`
@@ -68,6 +70,8 @@ func projectToResponse(p db.Project) ProjectResponse {
 		CreatedAt:    timestampToString(p.CreatedAt),
 		UpdatedAt:    timestampToString(p.UpdatedAt),
 		WorkflowID:   uuidToPtr(p.WorkflowID),
+		CreatorType:  textToPtr(p.CreatorType),
+		CreatorID:    uuidToPtr(p.CreatorID),
 	}
 }
 
@@ -411,6 +415,11 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	creatorID, ok := parseUUIDOrBadRequest(w, actorID, "creator_id")
+	if !ok {
+		return
+	}
 	createParams := db.CreateProjectParams{
 		WorkspaceID:  wsUUID,
 		Title:        req.Title,
@@ -424,6 +433,8 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		StartDate:    startDate,
 		DueDate:      dueDate,
 		WorkflowID:   workflowID,
+		CreatorType:  pgtype.Text{String: actorType, Valid: true},
+		CreatorID:    creatorID,
 	}
 
 	// Without resources, keep the simple non-tx path.
@@ -664,11 +675,10 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
-	requester, ok := h.requireWorkspaceRole(w, r, uuidToString(project.WorkspaceID), "project not found", "owner", "admin")
-	if !ok {
+	if !h.requireProjectDeletion(w, r, project) {
 		return
 	}
-	userID := uuidToString(requester.UserID)
+	userID := requestUserID(r)
 	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
@@ -849,7 +859,7 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 	query := fmt.Sprintf(`SELECT p.id, p.workspace_id, p.title, p.description, p.icon, p.instructions,
 		p.status, p.priority, p.lead_type, p.lead_id,
 		p.start_date, p.due_date,
-		p.created_at, p.updated_at,
+		p.created_at, p.updated_at, p.creator_type, p.creator_id,
 		%s AS match_source
 	FROM project p
 	WHERE p.workspace_id = %s AND %s
@@ -930,6 +940,8 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 				&row.project.DueDate,
 				&row.project.CreatedAt,
 				&row.project.UpdatedAt,
+				&row.project.CreatorType,
+				&row.project.CreatorID,
 				&row.matchSource,
 			); err != nil {
 				return fmt.Errorf("scan: %w", err)

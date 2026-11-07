@@ -631,8 +631,9 @@ func TestBlockingAgentClassMatchesSQLClassification(t *testing.T) {
 	}
 }
 
-// Retention GC needs both no bound agents AND no unfinished task. An agent
-// rebound to another machine can leave a deferred run pinned to the old
+// Retention GC needs both no bound agents AND no unfinished task. A rebind
+// moves the agent's pending runs along, but a run enqueued concurrently with
+// the rebind, or left from before that move existed, can still sit on the old
 // runtime, so "no agents bound" alone is not a cleanup promise this server can
 // keep. Regression contributed by review.
 func TestDeleteAgentRuntime_OfflineInstanceWithUnfinishedTaskDoesNotPromiseCleanup(t *testing.T) {
@@ -643,12 +644,17 @@ func TestDeleteAgentRuntime_OfflineInstanceWithUnfinishedTaskDoesNotPromiseClean
 	runtimeID, _ := createProfileBackedRuntime(t, ctx, "Review Retired Host")
 	agentID := createCascadeFixtureAgent(t, ctx, runtimeID, "Review Moved Agent")
 	issueID := dbfx.Issue(t, "Review deferred task")
+	targetID := newTestRuntime(t, "Review New Host", "online")
+	w := httptest.NewRecorder()
+	testHandler.UpdateAgent(w, withURLParam(newRequest("PATCH", "/api/agents/"+agentID,
+		map[string]any{"runtime_id": targetID}), "id", agentID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("rebind: %d %s", w.Code, w.Body.String())
+	}
 	taskID := dbfx.Task(t, agentID, testutil.Cols{
 		"runtime_id": runtimeID, "issue_id": issueID, "status": "deferred",
 		"fire_at": testutil.Raw("now() + interval '30 days'"),
 	})
-	targetID := newTestRuntime(t, "Review New Host", "online")
-	dbfx.Exec(t, `UPDATE agent SET runtime_id=$1 WHERE id=$2`, targetID, agentID)
 	dbfx.Exec(t, `UPDATE agent_runtime SET status='offline', last_seen_at=now()-interval '8 days' WHERE id=$1`, runtimeID)
 	var taskRuntime, taskStatus string
 	dbfx.QueryRow(t, `SELECT runtime_id::text, status FROM agent_task_queue WHERE id=$1`, taskID).Scan(&taskRuntime, &taskStatus)

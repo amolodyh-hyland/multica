@@ -56,6 +56,10 @@
     "hint": "Les tâches ne peuvent pas s’afficher tant que les statuts ne sont pas chargés.",
     "retry": "Réessayer"
   },
+  "relation_filter_error": {
+    "title": "Impossible de charger le filtre « Lien avec moi »",
+    "hint": "Les tâches filtrées par « Auxquels je suis abonné » ou « Assignés à mes agents » s'affichent une fois vos abonnements et agents chargés."
+  },
   "source_context": {
     "create_action": "Créer une sous-tâche à partir d'ici",
     "preview_loading": "Chargement de l'aperçu de la source capturée…",
@@ -193,6 +197,7 @@
     "relation_assigned": "Qui me sont assignés",
     "relation_created": "Créés par moi",
     "relation_my_agents": "Assignés à mes agents",
+    "relation_subscribed": "Auxquels je suis abonné",
     "section_agent_status": "Statut de l'agent",
     "agent_status_running": "En cours d'exécution",
     "section_read_state": "État de lecture",
@@ -469,6 +474,8 @@
     "metadata_description": "Données clé-valeur enregistrées par les agents et les intégrations pour poursuivre le workflow.",
     "section_load_failed_retry": "Échec du chargement. Réessayer",
     "not_found": "Cette tâche n'existe pas ou a été supprimée dans cet espace de travail.",
+    "load_failed": "Impossible de charger la tâche.",
+    "load_retry": "Réessayer",
     "not_found_title": "Tâche introuvable",
     "breadcrumb_project_unknown": "Projet inconnu",
     "back": "Retour",
@@ -942,6 +949,7 @@
     "confirm": "Arrêter l'exécution"
   },
   "batch": {
+    "delete_restricted": "Vous pouvez supprimer les tâches créées par vous ou par vos agents. Les propriétaires et administrateurs peuvent supprimer toute tâche.",
     "selected": "{{count}} sélectionnés",
     "status": "Statut",
     "priority": "Priorité",
@@ -959,7 +967,6 @@
     "delete_dialog_title_other": "Supprimer {{count}} tâches ?",
     "delete_dialog_desc_one": "Cette action est irréversible. La tâche sélectionnée et toutes ses données associées seront définitivement supprimées.",
     "delete_dialog_desc_other": "Cette action est irréversible. Les tâches sélectionnées et toutes leurs données associées seront définitivement supprimées.",
-    "delete_dialog_warning": "Tout membre de l'espace de travail peut supprimer des tâches.",
     "cancel": "Annuler"
   },
   "card": {
