@@ -34,7 +34,8 @@
     "change_project_context": "更改專案上下文",
     "remove_project_context": "移除專案上下文",
     "no_projects": "還沒有專案",
-    "project_context_unsupported": "專案描述不會生效——該 AI 代理的守護程序版本過舊，需要升級"
+    "project_context_unsupported": "專案描述不會生效——該 AI 代理的守護程序版本過舊，需要升級",
+    "attach_folder": "附加資料夾"
   },
   "queue": {
     "title_other": "{{count}} 條排隊訊息",
@@ -251,5 +252,29 @@
     "delete": "刪除會話",
     "archive": "歸檔會話",
     "unarchive": "取消歸檔"
+  },
+  "folder": {
+    "title": "上傳資料夾快照",
+    "description": "確認後才會上傳列出的檔案。",
+    "server": "伺服器",
+    "workspace": "工作區",
+    "files": "待傳送檔案",
+    "summary": "{{count}} 個檔案 · {{size}} MiB（{{bytes}} 位元組）",
+    "skip_policy": "略過 .git 和 node_modules。",
+    "skipped": "已略過的項目（{{count}}）",
+    "cancel": "取消",
+    "confirm": "確認上傳",
+    "preparing": "正在準備…",
+    "errors": {
+      "empty": "資料夾中沒有可傳送的檔案。",
+      "too_many_files": "資料夾最多包含 500 個檔案，未上傳任何內容。",
+      "too_large": "資料夾總大小上限為 100 MiB，未上傳任何內容。",
+      "unsafe_path": "資料夾包含不安全或衝突的路徑，未上傳任何內容。",
+      "unsupported_name": "資料夾名稱必須使用 Unicode 15 字元，分解後連續組合標記不得超過 8 個。請重新命名檔案或資料夾後重試。未上傳任何內容。",
+      "changed": "目的地或資料夾已變更，請重新選取資料夾。",
+      "failed": "無法準備資料夾，未上傳任何內容。"
+    },
+    "symlinks_filtered": "自動略過符號連結。",
+    "symlink_warning": "瀏覽器無法偵測符號連結。連結檔案會上傳其指向的內容。確認前請檢查檔案清單。"
   }
 }

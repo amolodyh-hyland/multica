@@ -200,7 +200,8 @@
     "edit_description_title": "編輯描述",
     "description_placeholder": "這個 AI 代理做什麼？",
     "save": "儲存",
-    "cancel": "取消"
+    "cancel": "取消",
+    "runtime_switch_hint": "變更共用設定檔及其排程中的執行。請先完成或取消進行中的執行；任務的個別設定會保留原本的選擇。"
   },
   "overview": {
     "attention_title": "需要處理的執行",

@@ -178,5 +178,24 @@
     "clear_filter": "清除篩選",
     "no_matches": "沒有匹配的行",
     "close": "關閉"
+  },
+  "dictation": {
+    "stopping": "正在停止麥克風…",
+    "start": "在此裝置上聽寫",
+    "stop": "停止聽寫",
+    "cancel": "取消聽寫",
+    "checking": "正在檢查本機語音引擎…",
+    "starting": "正在等待麥克風與語音辨識權限…",
+    "recording": "正在此裝置上錄音",
+    "transcribing": "正在將語音轉為文字…",
+    "errors": {
+      "unsupported": "裝置端聽寫支援 macOS 和 Windows。",
+      "unavailable": "此語言沒有可用的本機語音引擎。請在系統設定中安裝語音語言套件，然後重新開啟輸入框。",
+      "permission_denied": "請在系統設定中允許麥克風與語音辨識權限，然後重試。",
+      "busy": "另一個輸入框正在使用麥克風。",
+      "no_speech": "未辨識到語音，請重新錄音。",
+      "timeout": "聽寫已逾時，請嘗試較短的錄音。",
+      "failed": "聽寫失敗，請檢查麥克風後重試。"
+    }
   }
 }

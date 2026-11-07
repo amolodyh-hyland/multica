@@ -26,10 +26,10 @@ func (q *Queries) CountIssuesByProject(ctx context.Context, projectID pgtype.UUI
 const createProject = `-- name: CreateProject :one
 INSERT INTO project (
     workspace_id, title, description, icon, status,
-    lead_type, lead_id, priority, start_date, due_date, workflow_id, instructions
+    lead_type, lead_id, priority, start_date, due_date, workflow_id, instructions, creator_type, creator_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
-) RETURNING id, workspace_id, title, description, icon, status, lead_type, lead_id, created_at, updated_at, priority, start_date, due_date, workflow_id, instructions
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+) RETURNING id, workspace_id, title, description, icon, status, lead_type, lead_id, created_at, updated_at, priority, start_date, due_date, workflow_id, instructions, creator_type, creator_id
 `
 
 type CreateProjectParams struct {
@@ -45,6 +45,8 @@ type CreateProjectParams struct {
 	DueDate      pgtype.Date `json:"due_date"`
 	WorkflowID   pgtype.UUID `json:"workflow_id"`
 	Instructions pgtype.Text `json:"instructions"`
+	CreatorType  pgtype.Text `json:"creator_type"`
+	CreatorID    pgtype.UUID `json:"creator_id"`
 }
 
 func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error) {
@@ -61,6 +63,8 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 		arg.DueDate,
 		arg.WorkflowID,
 		arg.Instructions,
+		arg.CreatorType,
+		arg.CreatorID,
 	)
 	var i Project
 	err := row.Scan(
@@ -79,6 +83,8 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 		&i.DueDate,
 		&i.WorkflowID,
 		&i.Instructions,
+		&i.CreatorType,
+		&i.CreatorID,
 	)
 	return i, err
 }
@@ -99,7 +105,7 @@ func (q *Queries) DeleteProject(ctx context.Context, arg DeleteProjectParams) er
 }
 
 const getProjectInWorkspace = `-- name: GetProjectInWorkspace :one
-SELECT id, workspace_id, title, description, icon, status, lead_type, lead_id, created_at, updated_at, priority, start_date, due_date, workflow_id, instructions FROM project
+SELECT id, workspace_id, title, description, icon, status, lead_type, lead_id, created_at, updated_at, priority, start_date, due_date, workflow_id, instructions, creator_type, creator_id FROM project
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -127,6 +133,8 @@ func (q *Queries) GetProjectInWorkspace(ctx context.Context, arg GetProjectInWor
 		&i.DueDate,
 		&i.WorkflowID,
 		&i.Instructions,
+		&i.CreatorType,
+		&i.CreatorID,
 	)
 	return i, err
 }
@@ -174,7 +182,7 @@ func (q *Queries) GetProjectIssueStats(ctx context.Context, arg GetProjectIssueS
 }
 
 const listProjects = `-- name: ListProjects :many
-SELECT id, workspace_id, title, description, icon, status, lead_type, lead_id, created_at, updated_at, priority, start_date, due_date, workflow_id, instructions FROM project
+SELECT id, workspace_id, title, description, icon, status, lead_type, lead_id, created_at, updated_at, priority, start_date, due_date, workflow_id, instructions, creator_type, creator_id FROM project
 WHERE workspace_id = $1
   AND ($2::text IS NULL OR status = $2)
   AND ($3::text IS NULL OR priority = $3)
@@ -212,6 +220,8 @@ func (q *Queries) ListProjects(ctx context.Context, arg ListProjectsParams) ([]P
 			&i.DueDate,
 			&i.WorkflowID,
 			&i.Instructions,
+			&i.CreatorType,
+			&i.CreatorID,
 		); err != nil {
 			return nil, err
 		}
@@ -277,7 +287,7 @@ UPDATE project SET
     due_date = CASE WHEN $17::boolean THEN $18 ELSE due_date END,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $19::uuid
-RETURNING id, workspace_id, title, description, icon, status, lead_type, lead_id, created_at, updated_at, priority, start_date, due_date, workflow_id, instructions
+RETURNING id, workspace_id, title, description, icon, status, lead_type, lead_id, created_at, updated_at, priority, start_date, due_date, workflow_id, instructions, creator_type, creator_id
 `
 
 type UpdateProjectParams struct {
@@ -341,6 +351,8 @@ func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (P
 		&i.DueDate,
 		&i.WorkflowID,
 		&i.Instructions,
+		&i.CreatorType,
+		&i.CreatorID,
 	)
 	return i, err
 }

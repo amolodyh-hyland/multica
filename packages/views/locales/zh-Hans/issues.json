@@ -55,6 +55,10 @@
     "hint": "加载状态后才能显示任务。",
     "retry": "重试"
   },
+  "relation_filter_error": {
+    "title": "“与我的关系”筛选加载失败",
+    "hint": "加载订阅和智能体后才能显示按“我订阅的”或“分配给我的智能体的”筛选的任务。"
+  },
   "source_context": {
     "create_action": "从这条评论创建子任务",
     "preview_loading": "正在加载来源上下文预览...",
@@ -191,6 +195,7 @@
     "relation_assigned": "分配给我的",
     "relation_created": "我创建的",
     "relation_my_agents": "分配给我的智能体的",
+    "relation_subscribed": "我订阅的",
     "section_agent_status": "智能体状态",
     "agent_status_running": "运行中",
     "section_read_state": "阅读状态",
@@ -463,6 +468,8 @@
     "metadata_description": "智能体和集成记录的键值数据，用于衔接工作流程。",
     "section_load_failed_retry": "加载失败，点击重试",
     "not_found": "这个任务不存在或已在该工作区被删除。",
+    "load_failed": "无法加载任务。",
+    "load_retry": "重试",
     "not_found_title": "未找到该任务",
     "breadcrumb_project_unknown": "未知项目",
     "back": "返回",
@@ -902,6 +909,7 @@
     "confirm": "停止运行"
   },
   "batch": {
+    "delete_restricted": "你可以删除本人或本人拥有的智能体创建的任务。工作区 owner 和 admin 可以删除任意任务。",
     "selected": "已选择 {{count}} 个",
     "status": "状态",
     "priority": "优先级",
@@ -914,7 +922,6 @@
     "delete_failed": "删除任务失败",
     "delete_dialog_title_other": "删除 {{count}} 个任务？",
     "delete_dialog_desc_other": "此操作无法撤销，所选任务及其全部关联数据都会被永久删除。",
-    "delete_dialog_warning": "任何工作区成员都可以删除任务。",
     "cancel": "取消"
   },
   "card": {

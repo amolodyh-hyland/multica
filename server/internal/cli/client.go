@@ -815,18 +815,16 @@ func (c *APIClient) DownloadFile(ctx context.Context, downloadURL string) ([]byt
 		return nil, newHTTPError(http.MethodGet, downloadURL, resp)
 	}
 
-	return readDownloadBody(resp.Body, foldersnapshot.MaxArchiveBytes)
+	data, err := readDownloadBody(resp.Body, foldersnapshot.MaxArchiveBytes)
+	return data, wrapBodyRead(req, err)
 }
 
 func readDownloadBody(body io.Reader, limit int64) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(body, limit+1))
-	if err != nil {
-		return nil, err
-	}
 	if int64(len(data)) > limit {
 		return nil, fmt.Errorf("attachment exceeds download size limit")
 	}
-	return data, nil
+	return data, err
 }
 
 // HealthCheck hits the /health endpoint and returns the response body.

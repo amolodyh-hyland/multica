@@ -60,7 +60,7 @@ func TestOpenAPICoversCapabilityLedger(t *testing.T) {
 		if gotScope != operation.Policy.Scope {
 			t.Errorf("%s %s x-multica-scope = %q, want %q", operation.Method, operation.Path, gotScope, operation.Policy.Scope)
 		}
-		if operation.Contract == ContractSharedResource && !hasWorkspaceRoles(raw["x-multica-workspace-roles"], operation.Policy.WorkspaceRoles) {
+		if containsCredential(operation.Policy.Credentials, CredentialPersonalAccess) && !hasWorkspaceRoles(raw["x-multica-workspace-roles"], operation.Policy.WorkspaceRoles) {
 			t.Errorf("%s %s workspace roles do not match the ledger", operation.Method, operation.Path)
 		}
 		if gotAudit, _ := raw["x-multica-audit"].(string); gotAudit != string(operation.Policy.Audit) {
@@ -69,7 +69,7 @@ func TestOpenAPICoversCapabilityLedger(t *testing.T) {
 		if !hasRateLimitProfiles(raw["x-multica-rate-limit-profiles"], operation.Policy.RateLimits) {
 			t.Errorf("%s %s rate-limit profiles do not match the ledger", operation.Method, operation.Path)
 		}
-		if operation.Contract == ContractSharedResource {
+		if containsCredential(operation.Policy.Credentials, CredentialPersonalAccess) {
 			security, ok := raw["security"].([]any)
 			if !ok || !hasSecurityScheme(security, "memberPAT") {
 				t.Errorf("%s %s does not declare member PAT security", operation.Method, operation.Path)
@@ -77,9 +77,6 @@ func TestOpenAPICoversCapabilityLedger(t *testing.T) {
 			servers, ok := raw["servers"].([]any)
 			if !ok || !hasServer(servers, "https://api.multica.ai/api/v1") {
 				t.Errorf("%s %s does not declare the member API server", operation.Method, operation.Path)
-			}
-			if !containsCredential(operation.Policy.Credentials, CredentialPersonalAccess) {
-				t.Errorf("%s %s does not declare PAT credentials in the ledger", operation.Method, operation.Path)
 			}
 			if containsCredential(operation.Policy.Credentials, CredentialUserOAuth) {
 				t.Errorf("%s %s declares OAuth before a verifier is implemented", operation.Method, operation.Path)
@@ -128,6 +125,24 @@ func TestDeclaredUserScopesComeFromTheCapabilityLedger(t *testing.T) {
 	if scopes, err := ValidateUserScopes(nil); err != nil || scopes == nil || len(scopes) != 0 {
 		t.Fatalf("empty scopes = %v, error=%v; want a non-nil empty set", scopes, err)
 	}
+}
+
+func TestTaskMessagesRemainPluginOnly(t *testing.T) {
+	for _, operation := range Operations {
+		if operation.Path != PathTaskMessages {
+			continue
+		}
+		if containsCredential(operation.Policy.Credentials, CredentialPersonalAccess) ||
+			!containsCredential(operation.Policy.Credentials, CredentialPluginInstall) ||
+			!containsCredential(operation.Policy.Credentials, CredentialPluginInvocation) {
+			t.Fatalf("task transcript credentials = %v", operation.Policy.Credentials)
+		}
+		if _, err := ValidateUserScopes([]string{operation.Policy.Scope}); err == nil {
+			t.Fatal("Plugin transcript scope was accepted for a member PAT")
+		}
+		return
+	}
+	t.Fatal("task transcript capability is missing")
 }
 
 func TestUserScopesAreBoundToWorkspaceRoleCapabilities(t *testing.T) {
