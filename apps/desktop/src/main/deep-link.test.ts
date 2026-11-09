@@ -28,6 +28,18 @@ describe("parseDeepLink", () => {
     });
   });
 
+  it("keeps an instance-bearing web issue URL for renderer validation", () => {
+    const url = "multica://open/issue?url=" + encodeURIComponent("https://tasks.example/acme/issues/ACM-1#comment-c1");
+    expect(parseDeepLink(url)).toEqual({ kind: "web-issue", url });
+  });
+
+  it("keeps the open workspace's legacy issue destination distinct", () => {
+    expect(parseDeepLink("multica://open/issues/ACM-1")).toEqual({
+      kind: "issue", slug: "open", issueId: "ACM-1",
+    });
+    expect(parseDeepLink("multica://open/issue/extra")).toBeNull();
+  });
+
   it("accepts hyphenated and numeric slugs", () => {
     expect(parseDeepLink("multica://acme-web-2/issues/abc")).toMatchObject({
       slug: "acme-web-2",

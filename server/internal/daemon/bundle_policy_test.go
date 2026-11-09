@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
@@ -87,6 +88,12 @@ func TestBundleReadOnlyTaskPolicy(t *testing.T) {
 		{"custom arguments", func(task *Task) { task.Agent.CustomArgs = []string{"--dangerously-skip-permissions"} }},
 		{"custom environment", func(task *Task) { task.Agent.CustomEnv = map[string]string{"CONFIG": "unsafe"} }},
 		{"MCP", func(task *Task) { task.Agent.McpConfig = json.RawMessage(`{"mcpServers":{"unsafe":{"command":"sh"}}}`) }},
+		{"connected app metadata", func(task *Task) {
+			task.ConnectedApps = []runtimeapps.ConnectedApp{{Provider: "composio", ServerName: "multica-apps", ToolkitSlug: "github", AccountScope: "personal", Level: "confirm_writes"}}
+		}},
+		{"connected app gateway", func(task *Task) {
+			task.Agent.McpConfig = json.RawMessage(`{"mcpServers":{"multica-apps":{"url":"https://fixture.invalid/mcp","headers":{"Authorization":"Bearer fixture"}}}}`)
+		}},
 		{"ordinary task", func(task *Task) { task.DelegationID = "" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

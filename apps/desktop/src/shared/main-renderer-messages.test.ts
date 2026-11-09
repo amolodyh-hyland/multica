@@ -27,6 +27,18 @@ describe("MainRendererMessageQueue", () => {
     expect(send).toHaveBeenCalledWith("a", "auth:token", "token-a");
   });
 
+  it("keeps web URLs queued until origin validation is ready without delivering them as legacy identifiers", () => {
+    const { queue, send } = createQueue();
+    const url = "multica://open/issue?url=https%3A%2F%2Ftasks.example%2Facme%2Fissues%2FACM-1";
+    const destination = { slug: "acme", issueId: "ACM-2" };
+    queue.enqueue("a", "issue:open-url", url);
+    queue.enqueue("a", "issue:open", destination);
+    queue.setReady("a", "issue:open", true);
+    expect(send).toHaveBeenCalledExactlyOnceWith("a", "issue:open", destination);
+    queue.setReady("a", "issue:open-url", true);
+    expect(send).toHaveBeenLastCalledWith("a", "issue:open-url", url);
+  });
+
   it("delivers immediately while the target's channel is ready", () => {
     const { queue, send } = createQueue();
 

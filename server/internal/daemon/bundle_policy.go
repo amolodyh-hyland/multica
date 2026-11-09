@@ -35,7 +35,7 @@ func (d *Daemon) validateBundleTask(task Task, provider string) error {
 	if task.IssueID != "" || task.ChatSessionID != "" || task.IsLeaderTask || task.AutopilotID != "" || task.PriorSessionID != "" || task.PriorWorkDir != "" {
 		return deny("only fresh brief-only delegations are supported")
 	}
-	if len(task.Repos) != 0 || len(task.ProjectResources) != 0 || len(task.RemoteMCPConnections) != 0 || len(task.PluginHookTools) != 0 {
+	if len(task.Repos) != 0 || len(task.ProjectResources) != 0 || len(task.RemoteMCPConnections) != 0 || len(task.PluginHookTools) != 0 || len(task.ConnectedApps) != 0 {
 		return deny("repository bindings and remote tools are unsupported")
 	}
 	a := task.Agent
