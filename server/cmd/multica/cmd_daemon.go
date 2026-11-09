@@ -1145,6 +1145,9 @@ func runDaemonForeground(cmd *cobra.Command) error {
 	if daemonAlive(existing) && daemonIdentityMismatch(existing, profile, port) == nil {
 		return fmt.Errorf("daemon %s is already running or starting", describeProfile(profile))
 	}
+	if err := persistDaemonControl(profile, cfg); err != nil {
+		return fmt.Errorf("persist daemon control policy: %w", err)
+	}
 	if err := writeDaemonShutdownResult(profile, daemonShutdownResult{PID: os.Getpid()}); err != nil {
 		return fmt.Errorf("initialize daemon shutdown result: %w", err)
 	}
@@ -1327,6 +1330,9 @@ func runDaemonRestart(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	health := checkDaemonHealthOnPort(ctx, healthPort)
+	if err := requireLegacyDaemonControl(profile, health); err != nil {
+		return err
+	}
 	if daemonAlive(health) {
 		// Identity before preflight, and well before the stop phase: restart
 		// kills whatever answered on this port, so a collision would take out
@@ -1348,6 +1354,9 @@ func runDaemonRestart(cmd *cobra.Command, args []string) error {
 		if pid > 0 {
 			fmt.Fprintf(os.Stderr, "Stopping daemon (pid %d)...\n", int(pid))
 			if err := requestDaemonShutdown(healthPort); err != nil {
+				if err := requireLegacyDaemonControl(profile, health); err != nil {
+					return err
+				}
 				if p, perr := os.FindProcess(int(pid)); perr == nil {
 					_ = p.Kill()
 				}
@@ -1393,6 +1402,9 @@ func runDaemonStop(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	health := checkDaemonHealthOnPort(ctx, healthPort)
+	if err := requireLegacyDaemonControl(profile, health); err != nil {
+		return err
+	}
 	if force, _ := cmd.Flags().GetBool("force"); force {
 		if err := stopDaemonAndWait(profile, healthPort, health, daemonShutdownLockWait, 2*time.Second); err != nil {
 			return err
@@ -1431,6 +1443,9 @@ func runDaemonStop(cmd *cobra.Command, _ []string) error {
 	// platforms and triggers the same context-cancel path the daemon
 	// already uses for self-restart.
 	if err := requestDaemonShutdown(healthPort); err != nil {
+		if err := requireLegacyDaemonControl(profile, health); err != nil {
+			return err
+		}
 		fmt.Fprintf(os.Stderr, "Graceful shutdown request failed: %v — falling back to forced kill.\n", err)
 		if kerr := process.Kill(); kerr != nil {
 			return fmt.Errorf("kill daemon (pid %d): %w", int(pid), kerr)

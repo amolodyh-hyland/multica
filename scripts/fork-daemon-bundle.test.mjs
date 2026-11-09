@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { profileSettings, pilotProfile, standaloneProfile, nativeRestrictions, targets, validateServerInputs, verify } from './fork-daemon-bundle.mjs';
+import { nativeTarget, standardCapabilities, providerEnvironment, profileSettings, pilotProfile, standaloneProfile, nativeRestrictions, targets, validateServerInputs, validateStandardSource, verify } from './fork-daemon-bundle.mjs';
 import { imageInputs, renderRecipe } from './fork-images.mjs';
 
 const source = 'a'.repeat(40);
@@ -39,20 +39,73 @@ test('bundle uses a unique dedicated profile and disables updates, reload and cl
   for (const target of ['', 'darwin/x64', '../escape', 'linux/amd64,linux/amd64']) assert.throws(() => targets(target));
 });
 
-function fixture(t) {
+test('Windows host maps to the Go target without changing other hosts', () => {
+  assert.equal(nativeTarget('win32', 'x64'), 'windows/amd64');
+  assert.deepEqual(targets(nativeTarget('win32', 'x64')), ['windows/amd64']);
+  assert.equal(nativeTarget('darwin', 'arm64'), 'darwin/arm64');
+  assert.equal(nativeTarget('linux', 'x64'), 'linux/amd64');
+});
+
+test('standard builds refuse source revisions without isolated identity and verified control', () => {
+  const config = readFileSync(new URL('../server/internal/daemon/config.go', import.meta.url), 'utf8');
+  const health = readFileSync(new URL('../server/internal/daemon/health.go', import.meta.url), 'utf8');
+  validateStandardSource(config, health);
+  assert.throws(() => validateStandardSource(config.replaceAll('MULTICA_DAEMON_ISOLATED', 'OLD_IDENTITY'), health), /Selected source/);
+  assert.throws(() => validateStandardSource(config, health.replaceAll('/shutdown/verified', '/shutdown')), /Selected source/);
+});
+
+test('standard mode has a separate identity and normal tools while restricted defaults stay unchanged', (t) => {
+  const standard = profileSettings(source, identity, 'standard');
+  assert.notEqual(standard.profile, profileSettings(source, identity).profile);
+  assert.equal(standard.readOnly, false);
+  assert.equal(standard.daemonID, identity);
+  assert.equal(standard.isolated, true);
+  assert.equal(standard.identityFile, null);
+  assert.equal(standard.migrateLegacyIdentities, false);
+  assert.equal(standaloneProfile('standard').bundle_read_only, false);
+  assert.equal(nativeRestrictions('standard').mode, 'standard');
+  assert.equal(nativeRestrictions('standard').managedConfiguration, 'preserved');
+  assert.doesNotMatch(JSON.stringify(nativeRestrictions('standard')), /read.only|restricted/);
+  assert.deepEqual(pilotProfile('standard'), { runtime_config: { local_directory_mode: 'in_place' }, custom_args: [], custom_env: {} });
+  const f = fixture(t, 'standard');
+  assert.equal(verify(f.dir).runnerMode, 'standard');
+  assert.deepEqual(verify(f.dir).capabilities, { standardIsolatedIdentity: true, authenticatedShutdown: true });
+  f.manifest.capabilities.authenticatedShutdown = false;
+  f.save();
+  assert.throws(() => verify(f.dir), /capabilities/);
+  f.manifest.capabilities.authenticatedShutdown = true;
+  f.manifest.runnerMode = 'restricted';
+  f.save();
+  assert.throws(() => verify(f.dir), /Invalid/);
+  assert.throws(() => profileSettings(source, identity, 'other'), /mode/);
+});
+
+test('standard provider environment covers every current probe including OMP', () => {
+  const map = providerEnvironment();
+  assert.equal(map.claude, 'MULTICA_CLAUDE_PATH');
+  assert.equal(map.codex, 'MULTICA_CODEX_PATH');
+  assert.equal(map.cursor, 'MULTICA_CURSOR_PATH');
+  assert.equal(map.copilot, 'MULTICA_COPILOT_PATH');
+  assert.equal(map.omp, 'MULTICA_OMP_PATH');
+  assert.equal(Object.keys(map).length, readFileSync(new URL('agent-cli-command-names.txt', import.meta.url), 'utf8').trim().split('\n').length);
+  assert.equal(new Set(Object.values(map)).size, Object.keys(map).length);
+});
+
+function fixture(t, mode = 'restricted') {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'multica-bundle-test-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const file = 'multica-darwin-arm64';
+  const file = 'multica-windows-amd64.exe';
   const bytes = Buffer.from('fixture binary');
   const server = { source, tree: 'tree', archiveSha256: 'archive', recipeSha256: 'recipe' };
   const serverBytes = JSON.stringify(server);
   const manifest = {
     version: 2, ...server, serverSourceManifestSha256: hash(serverBytes), serverRecipeSha256: server.recipeSha256,
-    profile: profileSettings(source, identity),
-    nativeRestrictions: nativeRestrictions(),
-    binaries: [{ target: 'darwin/arm64', file, bytes: bytes.length, sha256: hash(bytes) }],
+    ...(mode === 'standard' ? { runnerMode: mode, capabilities: standardCapabilities(), providerEnvironment: providerEnvironment() } : {}),
+    profile: profileSettings(source, identity, mode),
+    nativeRestrictions: nativeRestrictions(mode),
+    binaries: [{ target: 'windows/amd64', file, bytes: bytes.length, sha256: hash(bytes) }],
   };
-  const files = { [file]: bytes, 'server-source-manifest.json': serverBytes, 'install-and-start.md': 'fixture guide', 'fork-server-images.md': 'server guide', 'pilot-profile.json': JSON.stringify(pilotProfile()), 'standalone-profile.json': JSON.stringify(standaloneProfile()), 'bundle-manifest.json': JSON.stringify(manifest) };
+  const files = { [file]: bytes, 'server-source-manifest.json': serverBytes, 'install-and-start.md': 'fixture guide', 'fork-server-images.md': 'server guide', 'pilot-profile.json': JSON.stringify(pilotProfile(mode)), 'standalone-profile.json': JSON.stringify(standaloneProfile(mode)), 'bundle-manifest.json': JSON.stringify(manifest) };
   const save = () => {
     files['bundle-manifest.json'] = JSON.stringify(manifest);
     for (const [name, content] of Object.entries(files)) writeFileSync(path.join(dir, name), content);

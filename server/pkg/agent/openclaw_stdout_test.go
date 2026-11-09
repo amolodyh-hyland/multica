@@ -3,14 +3,12 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -70,25 +68,6 @@ func newOpenclawTestBackendWithLog(bin string) (*openclawBackend, *syncBuffer) {
 		Logger: slog.New(slog.NewTextHandler(io.MultiWriter(os.Stderr, buf),
 			&slog.HandlerOptions{Level: slog.LevelWarn})),
 	}}, buf
-}
-
-// syncBuffer is a bytes.Buffer safe for the backend's logging goroutine to write
-// to while the test reads it.
-type syncBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (b *syncBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *syncBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
 }
 
 // TestOpenclawExecuteCompletesWhenCLINeverExits is the assertion that would have

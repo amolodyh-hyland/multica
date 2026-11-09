@@ -347,6 +347,117 @@ func TestHealthHandlerReportsRepoCoordinationActivity(t *testing.T) {
 	}
 }
 
+func TestVerifiedShutdownIdentityAndAuthentication(t *testing.T) {
+	startedAt := time.Date(2026, 11, 7, 12, 0, 0, 1234, time.UTC)
+	const token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	cfg := Config{Profile: "standard-test", DaemonID: "22222222-2222-4222-8222-222222222222", CLICommit: strings.Repeat("b", 40), LocalControlToken: token}
+	base := verifiedShutdownIdentity{PID: os.Getpid(), Profile: cfg.Profile, DaemonID: cfg.DaemonID, CLICommit: cfg.CLICommit, StartedAt: startedAt.Format(time.RFC3339Nano)}
+	for _, field := range []string{"pid", "profile", "daemon_id", "cli_commit", "started_at", "missing", "valid"} {
+		t.Run(field, func(t *testing.T) {
+			identity := base
+			switch field {
+			case "pid":
+				identity.PID++
+			case "profile":
+				identity.Profile = "other"
+			case "daemon_id":
+				identity.DaemonID = "other"
+			case "cli_commit":
+				identity.CLICommit = strings.Repeat("c", 40)
+			case "started_at":
+				identity.StartedAt = startedAt.Add(time.Second).Format(time.RFC3339Nano)
+			case "missing":
+				identity = verifiedShutdownIdentity{}
+			}
+			body, _ := json.Marshal(identity)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			d := &Daemon{cfg: cfg, cancelFunc: cancel}
+			req := httptest.NewRequest(http.MethodPost, "/shutdown/verified", bytes.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+token)
+			rec := httptest.NewRecorder()
+			d.verifiedShutdownHandler(startedAt).ServeHTTP(rec, req)
+			if field == "valid" {
+				if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "shutting down") || !rec.Flushed {
+					t.Fatalf("valid shutdown: %d %s", rec.Code, rec.Body.String())
+				}
+				select {
+				case <-ctx.Done():
+				case <-time.After(time.Second):
+					t.Fatal("not cancelled")
+				}
+			} else {
+				if rec.Code != http.StatusConflict {
+					t.Fatalf("stale identity: %d", rec.Code)
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal("cancelled stale identity")
+				default:
+				}
+			}
+		})
+	}
+	for _, tc := range []struct {
+		path, method, auth, body string
+		status                   int
+	}{
+		{"/shutdown/verified", http.MethodPost, "", `{}`, http.StatusUnauthorized},
+		{"/shutdown/verified", http.MethodPost, "Bearer wrong", `{}`, http.StatusUnauthorized},
+		{"/shutdown/verified", http.MethodPost, "Bearer " + token, `{`, http.StatusBadRequest},
+		{"/shutdown/verified", http.MethodPost, "Bearer " + token, `{} {}`, http.StatusBadRequest},
+		{"/shutdown/verified", http.MethodPost, "Bearer " + token, `{"unknown":true}`, http.StatusBadRequest},
+		{"/shutdown/verified", http.MethodGet, "Bearer " + token, `{}`, http.StatusMethodNotAllowed},
+		{"/shutdown", http.MethodPost, "", `{}`, http.StatusUnauthorized},
+		{"/shutdown", http.MethodPost, "Bearer " + token, `{}`, http.StatusUnauthorized},
+	} {
+		ctx, cancel := context.WithCancel(context.Background())
+		d := &Daemon{cfg: cfg, cancelFunc: cancel}
+		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+		req.Header.Set("Authorization", tc.auth)
+		rec := httptest.NewRecorder()
+		if tc.path == "/shutdown" {
+			d.shutdownHandler().ServeHTTP(rec, req)
+		} else {
+			d.verifiedShutdownHandler(startedAt).ServeHTTP(rec, req)
+		}
+		if rec.Code != tc.status {
+			t.Fatalf("refusal: %d want %d", rec.Code, tc.status)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("cancelled refused shutdown")
+		default:
+		}
+		cancel()
+	}
+	d := &Daemon{}
+	rec := httptest.NewRecorder()
+	d.verifiedShutdownHandler(startedAt).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/shutdown/verified", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatal("advertised unconfigured control")
+	}
+	d = &Daemon{cfg: cfg, workspaces: map[string]*workspaceState{}}
+	rec = httptest.NewRecorder()
+	d.healthHandler(startedAt).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	var health HealthResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &health); err != nil || health.StartedAt != base.StartedAt || !health.VerifiedShutdown {
+		t.Fatalf("health capability/start: %+v %v", health, err)
+	}
+	if strings.Contains(rec.Body.String(), token) {
+		t.Fatal("leaked control token")
+	}
+	if health.RunnerMode != "standard" {
+		t.Fatal("standard health mode mismatch")
+	}
+	d.cfg.BundleReadOnly = true
+	rec = httptest.NewRecorder()
+	d.healthHandler(startedAt).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &health); err != nil || health.RunnerMode != "restricted" {
+		t.Fatal("restricted health mode mismatch")
+	}
+}
+
 func TestShutdownHandlerPostCancelsDaemonContext(t *testing.T) {
 	t.Parallel()
 

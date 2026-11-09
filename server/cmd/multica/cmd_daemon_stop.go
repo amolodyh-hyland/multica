@@ -42,7 +42,22 @@ func waitDaemonStop(profile string, timeout time.Duration) (bool, error) {
 	}
 }
 
+func requireLegacyDaemonControl(profile string, health map[string]any) error {
+	if controlled, _ := health["verified_shutdown"].(bool); controlled || os.Getenv("MULTICA_DAEMON_CONTROL_TOKEN_FILE") != "" {
+		return fmt.Errorf("daemon requires authenticated /shutdown/verified control; refusing legacy shutdown or forced termination")
+	}
+	if _, present, err := readDaemonControlRecord(profile); err != nil {
+		return err
+	} else if present {
+		return fmt.Errorf("profile requires authenticated /shutdown/verified control; refusing legacy shutdown or forced termination")
+	}
+	return nil
+}
+
 func stopDaemonAndWait(profile string, port int, health map[string]any, grace, killWait time.Duration) error {
+	if err := requireLegacyDaemonControl(profile, health); err != nil {
+		return err
+	}
 	if daemonAlive(health) {
 		if err := daemonIdentityMismatch(health, profile, port); err != nil {
 			return err
@@ -136,6 +151,9 @@ func stopDaemonAndWait(profile string, port int, health map[string]any, grace, k
 		return err
 	}
 	defer process.Release()
+	if err := requireLegacyDaemonControl(profile, health); err != nil {
+		return err
+	}
 	if err := process.Kill(); err != nil {
 		if stopped, probeErr := daemonStopComplete(profile); probeErr == nil && stopped {
 			return confirmDaemonCleanup(profile, pidAtStop)

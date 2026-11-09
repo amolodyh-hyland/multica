@@ -19,6 +19,26 @@ import (
 	"time"
 )
 
+func TestDaemonControlledStopHasNoKillFallback(t *testing.T) {
+	t.Setenv("MULTICA_DAEMON_CONTROL_TOKEN_FILE", "")
+	mkProfiles(t, "controlled-test")
+	for _, health := range []map[string]any{nil, {"verified_shutdown": false}} {
+		if err := requireLegacyDaemonControl("controlled-test", health); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pid := startBlockingChild(t)
+	for _, byEnv := range []bool{false, true} {
+		health := map[string]any{"status": "running", "pid": float64(pid), "verified_shutdown": !byEnv}
+		if byEnv {
+			t.Setenv("MULTICA_DAEMON_CONTROL_TOKEN_FILE", "private-control.token")
+		}
+		if err := stopDaemonAndWait("controlled-test", 0, health, 0, 0); err == nil || !strings.Contains(err.Error(), "/shutdown/verified") {
+			t.Fatalf("controlled stop was not refused: %v", err)
+		}
+	}
+}
+
 // Reuse the existing bounded lock-holder test process; never run an Agent CLI.
 func startStopLockHolder(t *testing.T, profile string, daemonName bool) (*exec.Cmd, string) {
 	t.Helper()
