@@ -2,9 +2,11 @@ package daemon
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -27,8 +29,11 @@ type HealthResponse struct {
 	// lifecycle CLI (`daemon start/stop`) acts on the host process namespace,
 	// so a foreign-OS daemon can't be started/stopped by the app even though
 	// /health is reachable. See #3916.
-	OS     string `json:"os"`
-	Uptime string `json:"uptime"`
+	OS               string `json:"os"`
+	Uptime           string `json:"uptime"`
+	StartedAt        string `json:"started_at"`
+	VerifiedShutdown bool   `json:"verified_shutdown"`
+	RunnerMode       string `json:"runner_mode"`
 	// Profile names the CLI profile this daemon was started with, empty for
 	// the default profile. Health ports are derived by hashing the profile
 	// name into a 1000-port range, so two names can collide and a caller has
@@ -352,6 +357,9 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 			PID:                   os.Getpid(),
 			OS:                    runtime.GOOS,
 			Uptime:                time.Since(startedAt).Truncate(time.Second).String(),
+			StartedAt:             startedAt.UTC().Format(time.RFC3339Nano),
+			VerifiedShutdown:      d.cfg.LocalControlToken != "",
+			RunnerMode:            "standard",
 			Profile:               d.cfg.Profile,
 			LaunchedBy:            d.cfg.LaunchedBy,
 			DaemonID:              d.cfg.DaemonID,
@@ -370,6 +378,9 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 
 			ReloadPendingReason: d.reloadPending(),
 			Workspaces:          wsList,
+		}
+		if d.cfg.BundleReadOnly {
+			resp.RunnerMode = "restricted"
 		}
 		if reporter, ok := d.repoCache.(interface{ Activity() repocache.Activity }); ok {
 			activity := reporter.Activity()
@@ -402,13 +413,67 @@ func (d *Daemon) shutdownHandler() http.HandlerFunc {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "shutting down"})
-		if d.cancelFunc != nil {
-			// Cancel asynchronously so the response flushes first; otherwise
-			// srv.Close() races with the writer.
-			go d.cancelFunc()
+		if d.cfg.LocalControlToken != "" {
+			http.Error(w, "use authenticated verified shutdown", http.StatusUnauthorized)
+			return
 		}
+		d.cancelForShutdown(w)
+	}
+}
+
+type verifiedShutdownIdentity struct {
+	PID       int    `json:"pid"`
+	Profile   string `json:"profile"`
+	DaemonID  string `json:"daemon_id"`
+	CLICommit string `json:"cli_commit"`
+	StartedAt string `json:"started_at"`
+}
+
+func (d *Daemon) verifiedShutdownHandler(startedAt time.Time) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if d.cfg.LocalControlToken == "" {
+			http.NotFound(w, r)
+			return
+		}
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+d.cfg.LocalControlToken)) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		var identity verifiedShutdownIdentity
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&identity); err != nil {
+			http.Error(w, "invalid shutdown identity", http.StatusBadRequest)
+			return
+		}
+		if err := decoder.Decode(new(any)); err != io.EOF {
+			http.Error(w, "invalid shutdown identity", http.StatusBadRequest)
+			return
+		}
+		expected := verifiedShutdownIdentity{PID: os.Getpid(), Profile: d.cfg.Profile, DaemonID: d.cfg.DaemonID,
+			CLICommit: d.cfg.CLICommit, StartedAt: startedAt.UTC().Format(time.RFC3339Nano)}
+		if identity != expected || expected.Profile == "" || expected.DaemonID == "" || len(expected.CLICommit) != 40 {
+			http.Error(w, "shutdown identity mismatch", http.StatusConflict)
+			return
+		}
+		d.cancelForShutdown(w)
+	}
+}
+
+func (d *Daemon) cancelForShutdown(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "shutting down"})
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	if d.cancelFunc != nil {
+		// Cancel asynchronously so the response flushes first; otherwise
+		// srv.Close() races with the writer.
+		go d.cancelFunc()
 	}
 }
 
@@ -418,6 +483,7 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", d.healthHandler(startedAt))
 	mux.HandleFunc("/shutdown", d.shutdownHandler())
+	mux.HandleFunc("/shutdown/verified", d.verifiedShutdownHandler(startedAt))
 	mux.HandleFunc("/repo/checkout", d.repoCheckoutHandler())
 
 	srv := &http.Server{Handler: mux}

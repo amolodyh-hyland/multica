@@ -132,6 +132,7 @@ type Config struct {
 	BundleReadOnly                 bool
 	BundleWorkspaceID              string
 	RuntimePinned                  bool
+	LocalControlToken              string        `json:"-"`
 	AutoUpdateEnabled              bool          // periodically check for a newer CLI release and self-update when idle (default: true on Multica Cloud, false on self-host)
 	AutoUpdateCheckInterval        time.Duration // how often the auto-update loop polls for a new release (default: 6h)
 	AutoReloadEnabled              bool          // restart when the multica binary on disk no longer matches the running version (default: true for CLI-launched daemons)
@@ -209,6 +210,10 @@ type Overrides struct {
 // LoadConfig builds the daemon configuration from environment variables
 // and optional CLI flag overrides.
 func LoadConfig(overrides Overrides) (Config, error) {
+	controlToken, err := loadLocalControlToken(os.Getenv("MULTICA_DAEMON_CONTROL_TOKEN_FILE"))
+	if err != nil {
+		return Config{}, err
+	}
 	// Server URL: override > env > default
 	rawServerURL := envOrDefault("MULTICA_SERVER_URL", DefaultServerURL)
 	if overrides.ServerURL != "" {
@@ -528,6 +533,10 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if overrides.DaemonID != "" {
 		daemonID = overrides.DaemonID
 	}
+	isolated, err := isolatedDaemonIdentity(os.Getenv("MULTICA_DAEMON_ISOLATED"), profile, daemonID, bundleReadOnly)
+	if err != nil {
+		return Config{}, err
+	}
 	var legacyDaemonIDs []string
 	if bundleReadOnly {
 		if daemonID != "" {
@@ -545,11 +554,13 @@ func LoadConfig(overrides Overrides) (Config, error) {
 				return Config{}, fmt.Errorf("ensure daemon id: %w", err)
 			}
 		}
-		legacyDaemonIDs = LegacyDaemonIDs(host, profile)
-		if uuids, err := LegacyDaemonUUIDs(); err == nil {
-			legacyDaemonIDs = append(legacyDaemonIDs, uuids...)
+		if !isolated {
+			legacyDaemonIDs = LegacyDaemonIDs(host, profile)
+			if uuids, err := LegacyDaemonUUIDs(); err == nil {
+				legacyDaemonIDs = append(legacyDaemonIDs, uuids...)
+			}
+			legacyDaemonIDs = filterLegacyIDs(legacyDaemonIDs, daemonID)
 		}
-		legacyDaemonIDs = filterLegacyIDs(legacyDaemonIDs, daemonID)
 	}
 
 	deviceName := envOrDefault("MULTICA_DAEMON_DEVICE_NAME", host)
@@ -667,6 +678,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	}
 
 	return Config{
+		LocalControlToken:               controlToken,
 		BundleReadOnly:                  bundleReadOnly,
 		BundleWorkspaceID:               bundleWorkspaceID,
 		RuntimePinned:                   runtimePinned,

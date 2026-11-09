@@ -13,6 +13,28 @@ const run = (file, args, options = {}) => execFileSync(file, args, { encoding: '
 const write = (dir, file, bytes, mode = 0o600) => writeFileSync(path.join(dir, file), bytes, { flag: 'wx', mode });
 const supported = new Set(['darwin/arm64', 'darwin/amd64', 'linux/arm64', 'linux/amd64', 'windows/amd64']);
 
+export function nativeTarget(platform = os.platform(), arch = os.arch()) {
+  return `${platform === 'win32' ? 'windows' : platform}/${arch === 'x64' ? 'amd64' : arch}`;
+}
+
+function runnerMode(mode) {
+  if (!['restricted', 'standard'].includes(mode)) throw new Error('Runner mode must be restricted or standard');
+  return mode;
+}
+
+export const standardCapabilities = () => ({ standardIsolatedIdentity: true, authenticatedShutdown: true });
+
+export function providerEnvironment(probe = readFileSync(path.join(root, 'server/internal/daemon/agents_probe.go'), 'utf8'),
+  builtins = readFileSync(path.join(root, 'server/pkg/agent/builtin_runtimes.go'), 'utf8')) {
+  const entries = [...probe.matchAll(/probe\("(MULTICA_[A-Z0-9_]+_PATH)", "[^"]+", "[^"]*"\); ok \{\s*agents\["([^"]+)"\]/g)]
+    .map((match) => [match[2], match[1]]);
+  for (const match of builtins.matchAll(/ID:\s*"([^"]+)"[\s\S]*?EnvPrefix:\s*"(MULTICA_[A-Z0-9_]+)"/g)) entries.push([match[1], `${match[2]}_PATH`]);
+  if (!entries.some(([id]) => id === 'claude') || !entries.some(([id]) => id === 'codex') || new Set(entries.map(([id]) => id)).size !== entries.length) {
+    throw new Error('Cannot determine standard provider environment from source');
+  }
+  return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));
+}
+
 export function targets(value) {
   const result = value.split(',');
   if (!result.length || new Set(result).size !== result.length || result.some((target) => !supported.has(target))) {
@@ -21,35 +43,44 @@ export function targets(value) {
   return result;
 }
 
-export function profileSettings(source, identity = randomUUID()) {
+export function profileSettings(source, identity = randomUUID(), mode = 'restricted') {
+  runnerMode(mode);
   if (!/^[a-f0-9]{40}$/.test(source) || !/^[a-f0-9-]{36}$/.test(identity)) throw new Error('Invalid bundle identity');
-  const profile = `wi-fac-02-${source.slice(0, 12)}-${identity}`;
+  const standard = mode === 'standard';
+  const profile = `${standard ? 'standard' : 'wi-fac-02'}-${source.slice(0, 12)}-${identity}`;
   return {
     profile,
     preferredHealthPort: 19515 + ([...Buffer.from(profile)].reduce((total, b) => total + b, 0) % 1000),
     maxConcurrentTasks: 1,
     runtimePinned: true,
-    readOnly: true,
+    readOnly: !standard,
     disableAutoUpdate: true,
     disableAutoReload: true,
     gcEnabled: false,
     standalone: true,
-    identityScope: 'profile',
-    identityFile: 'bundle-daemon.id',
+    identityScope: standard ? 'explicit' : 'profile',
+    identityFile: standard ? null : 'bundle-daemon.id',
     migrateLegacyIdentities: false,
+    ...(standard ? { daemonID: identity, isolated: true } : {}),
   };
 }
 
-export const pilotProfile = () => ({
+export const pilotProfile = (mode = 'restricted') => runnerMode(mode) === 'standard' ? ({
+  runtime_config: { local_directory_mode: 'in_place' }, custom_args: [], custom_env: {},
+}) : ({
   runtime_config: { local_directory_mode: 'none', permission_mode: 'read_only' },
   custom_args: [], custom_env: {}, mcp_config: { mcpServers: {} },
 });
 
-export const standaloneProfile = () => ({
-  bundle_read_only: true, disable_auto_update: true, disable_auto_reload: true, max_concurrent_tasks: 1,
+export const standaloneProfile = (mode = 'restricted') => ({
+  bundle_read_only: runnerMode(mode) === 'restricted', disable_auto_update: true, disable_auto_reload: true, max_concurrent_tasks: 1,
 });
 
-export const nativeRestrictions = () => ({
+export const nativeRestrictions = (mode = 'restricted') => runnerMode(mode) === 'standard' ? ({
+  mode: 'standard', tools: 'native', skills: 'native-cwd', localDirectoryMode: 'in_place',
+  managedConfiguration: 'preserved', supportedProviders: ['claude', 'codex'], windowsLaunchers: 'absolute-native-exe',
+  verification: 'source-and-offline-fixtures', liveVerification: 'not-run', activation: 'requires-human-approval',
+}) : ({
   mode: 'read_only', automaticApproval: false, localDirectoryMode: 'none',
   supported: {
     claude: { minimumVersion: '2.1.259', mode: 'restricted', tools: [] },
@@ -74,13 +105,24 @@ export function validateServerInputs(inputs, source, tree, recipe) {
   if (!recipe.includes('FF_PUBLIC_DELEGATIONS_V1: ${FF_PUBLIC_DELEGATIONS_V1:-false}')) throw new Error('Source lacks default-off delegation forwarding');
 }
 
-export function build(serverInputs, output, selectedTargets) {
+export function validateStandardSource(config, health) {
+  if (!config.includes('MULTICA_DAEMON_ISOLATED') || !config.includes('MULTICA_DAEMON_CONTROL_TOKEN_FILE') ||
+      !health.includes('"/shutdown/verified"') || !health.includes('"verified_shutdown"')) {
+    throw new Error('Selected source lacks isolated standard identity and verified shutdown support');
+  }
+}
+
+export function build(serverInputs, output, selectedTargets, mode = 'restricted') {
+  runnerMode(mode);
   targets(selectedTargets.join(','));
   const inputBytes = readFileSync(path.join(serverInputs, 'source-manifest.json'));
   const inputs = JSON.parse(inputBytes);
   const { source } = inputs;
   if (!/^[a-f0-9]{40}$/.test(source)) throw new Error('Use a full source SHA');
   const tree = run('git', ['rev-parse', `${source}^{tree}`]);
+  if (mode === 'standard') {
+    validateStandardSource(run('git', ['show', `${source}:server/internal/daemon/config.go`]), run('git', ['show', `${source}:server/internal/daemon/health.go`]));
+  }
   const recipe = execFileSync('git', ['show', `${source}:docker-compose.selfhost.yml`], { cwd: root, encoding: 'utf8' });
   validateServerInputs(inputs, source, tree, recipe);
   if (hash(readFileSync(path.join(serverInputs, 'stack/docker-compose.selfhost.yml'))) !== inputs.recipeSha256) throw new Error('Prepared server recipe changed');
@@ -95,11 +137,11 @@ export function build(serverInputs, output, selectedTargets) {
   mkdirSync(sourceDir, { mode: 0o700 });
   execFileSync('tar', ['-xf', '-', '-C', sourceDir], { input: archive });
   const date = run('git', ['show', '-s', '--format=%cI', source]);
-  const nativeOS = os.platform();
-  const nativeArch = os.arch() === 'x64' ? 'amd64' : os.arch();
+  const [nativeOS, nativeArch] = nativeTarget().split('/');
   const env = { ...process.env, GOOS: nativeOS, GOARCH: nativeArch, CGO_ENABLED: '0', GOWORK: 'off', GOTOOLCHAIN: 'local', GOPROXY: 'off', GOSUMDB: 'off', GOENV: 'off', GOFLAGS: '', GOEXPERIMENT: '', GOCACHEPROG: '', GOAMD64: 'v1', GOARM64: 'v8.0' };
   const toolchain = run('go', ['env', 'GOVERSION'], { env });
-  const verificationCommand = ['test', './pkg/agent', './internal/daemon', './internal/daemon/execenv', './cmd/multica', '-run', '^TestReadOnly|^TestBundle', '-count=1'];
+  const testPattern = '^TestReadOnly|^TestBundle' + (mode === 'standard' ? '|^TestLocalControl|^TestIsolated|^TestVerifiedShutdown|^TestShutdownHandler|^TestDaemonControlled|^TestStandardWindows|^TestStandardProviderEnvironment' : '');
+  const verificationCommand = ['test', './pkg/agent', './internal/daemon', './internal/daemon/execenv', './cmd/multica', '-run', testPattern, '-count=1'];
   run('go', verificationCommand, { cwd: path.join(sourceDir, 'server'), env, stdio: ['ignore', 'pipe', 'inherit'] });
   const ldflags = `-s -w -X main.version=fork-${source} -X main.commit=${source} -X main.buildCommit=${source} -X main.date=${date}`;
   const binaries = selectedTargets.map((target) => {
@@ -117,8 +159,8 @@ export function build(serverInputs, output, selectedTargets) {
     const identity = JSON.parse(run(path.join(output, native.file), ['version', '--output', 'json']));
     if (identity.commit !== source || identity.os !== nativeOS || identity.arch !== nativeArch) throw new Error('Built native identity mismatch');
   }
-  write(output, 'pilot-profile.json', json(pilotProfile()));
-  write(output, 'standalone-profile.json', json(standaloneProfile()));
+  write(output, 'pilot-profile.json', json(pilotProfile(mode)));
+  write(output, 'standalone-profile.json', json(standaloneProfile(mode)));
   write(output, 'server-source-manifest.json', inputBytes);
   write(output, 'install-and-start.md', readFileSync(path.join(sourceDir, 'docs/fork-daemon-bundle.md')));
   write(output, 'fork-server-images.md', readFileSync(path.join(sourceDir, 'docs/fork-server-images.md')));
@@ -127,8 +169,11 @@ export function build(serverInputs, output, selectedTargets) {
     serverRecipeSha256: inputs.recipeSha256, toolchain, date,
     build: { cgo: false, trimpath: true, buildvcs: false, moduleMode: 'readonly', proxy: 'off', goenv: 'off', goflags: '', goexperiment: '', goamd64: 'v1', goarm64: 'v8.0', ldflags },
     modules: Object.fromEntries(['go.mod', 'go.sum'].map((file) => [file, hash(readFileSync(path.join(sourceDir, 'server', file)))])),
-    profile: profileSettings(source), binaries,
-    nativeRestrictions: nativeRestrictions(),
+    ...(mode === 'standard' ? { runnerMode: mode, capabilities: standardCapabilities(),
+      providerEnvironment: providerEnvironment(readFileSync(path.join(sourceDir, 'server/internal/daemon/agents_probe.go'), 'utf8'),
+        readFileSync(path.join(sourceDir, 'server/pkg/agent/builtin_runtimes.go'), 'utf8')) } : {}),
+    profile: profileSettings(source, randomUUID(), mode), binaries,
+    nativeRestrictions: nativeRestrictions(mode),
     verification: { result: 'passed', command: ['go', ...verificationCommand] },
     signing: 'unsigned', notarization: 'not performed',
   };
@@ -164,24 +209,32 @@ export function verify(dir) {
   if (server.source !== manifest.source || server.tree !== manifest.tree || server.archiveSha256 !== manifest.archiveSha256 ||
       server.recipeSha256 !== manifest.serverRecipeSha256 || checksums.get('server-source-manifest.json') !== manifest.serverSourceManifestSha256) throw new Error('Server manifest mismatch');
   const profile = manifest.profile;
-  const identity = profile.profile.slice(`wi-fac-02-${manifest.source.slice(0, 12)}-`.length);
-  if (JSON.stringify(profile) !== JSON.stringify(profileSettings(manifest.source, identity)) || JSON.stringify(manifest.nativeRestrictions) !== JSON.stringify(nativeRestrictions())) throw new Error('Invalid activation/profile contract');
-  for (const [file, expected] of [['pilot-profile.json', pilotProfile()], ['standalone-profile.json', standaloneProfile()]]) {
+  const mode = runnerMode(manifest.runnerMode ?? 'restricted');
+  if (mode === 'standard' && (JSON.stringify(manifest.capabilities) !== JSON.stringify(standardCapabilities()) ||
+      JSON.stringify(manifest.providerEnvironment) !== JSON.stringify(providerEnvironment()))) throw new Error('Invalid standard capabilities/provider environment');
+  const identity = profile.profile.slice(`${mode === 'standard' ? 'standard' : 'wi-fac-02'}-${manifest.source.slice(0, 12)}-`.length);
+  if (JSON.stringify(profile) !== JSON.stringify(profileSettings(manifest.source, identity, mode)) || JSON.stringify(manifest.nativeRestrictions) !== JSON.stringify(nativeRestrictions(mode))) throw new Error('Invalid activation/profile contract');
+  for (const [file, expected] of [['pilot-profile.json', pilotProfile(mode)], ['standalone-profile.json', standaloneProfile(mode)]]) {
     if (JSON.stringify(JSON.parse(readFileSync(path.join(dir, file)))) !== JSON.stringify(expected)) throw new Error('Invalid read-only profile');
   }
   return manifest;
 }
 
 function main(args) {
+  let mode = 'restricted';
+  const modeIndex = args.indexOf('--mode');
+  if (modeIndex !== -1) {
+    mode = runnerMode(args[modeIndex + 1]);
+    args = [...args.slice(0, modeIndex), ...args.slice(modeIndex + 2)];
+  }
   const [action, ...rest] = args;
   if (action === 'verify' && rest.length === 1) {
     const manifest = verify(rest[0]);
     console.log(`Verified ${manifest.source}; native activation ${manifest.nativeRestrictions.activation}`);
   } else if (action === 'build' && rest.length >= 2 && rest.length <= 3) {
-    const target = `${os.platform()}/${os.arch() === 'x64' ? 'amd64' : os.arch()}`;
-    const manifest = build(rest[0], rest[1], targets(rest[2] ?? target));
+    const manifest = build(rest[0], rest[1], targets(rest[2] ?? nativeTarget()), mode);
     console.log(`Built ${manifest.binaries.length} targets from ${manifest.source}; native activation requires human approval`);
-  } else throw new Error('Usage: fork-daemon-bundle.mjs build SERVER_INPUTS NEW_ABSOLUTE_OUTPUT [os/arch,...] | verify BUNDLE');
+  } else throw new Error('Usage: fork-daemon-bundle.mjs build SERVER_INPUTS NEW_ABSOLUTE_OUTPUT [os/arch,...] [--mode restricted|standard] | verify BUNDLE');
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
