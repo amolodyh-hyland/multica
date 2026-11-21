@@ -41,18 +41,20 @@ asarUnpack:
 # latest-x64-mac.yml so installed macOS 12 clients skip updates they cannot
 # launch. See scripts/mac-update-floor.cjs for why this can't be plain config.
 beforePack: ./scripts/mac-update-floor.cjs
+afterSign: ./scripts/verify-mac-release.mjs
 mac:
   extraResources:
     - from: resources/dictation/multica-dictation
       to: dictation/multica-dictation
   binaries:
     - Contents/Resources/dictation/multica-dictation
-  extendInfo:
-    NSMicrophoneUsageDescription: Dictate text into your draft using on-device speech recognition.
-    NSSpeechRecognitionUsageDescription: Convert speech to editable draft text on this Mac. Audio is never sent to a server.
   # Electron 44 requires macOS 13 Ventura; declare it on every mac bundle.
   minimumSystemVersion: "13.0.0"
   entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    # Shown in the macOS prompt the first time voice input opens the mic.
+    NSMicrophoneUsageDescription: Multica uses the microphone for voice input when you dictate into chat or comments.
+    NSSpeechRecognitionUsageDescription: Convert speech to editable draft text on this Mac. Audio is never sent to a server.
   target:
     - dmg
     - zip

@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -12,11 +13,11 @@ import (
 	"github.com/multica-ai/multica/server/pkg/publicapi/v1"
 )
 
-func TestMemberPublicAPIRoutesCoverSharedLedger(t *testing.T) {
+func TestMemberPublicAPIRoutesCoverMemberLedger(t *testing.T) {
 	router := chi.NewRouter()
 	registerMemberPublicAPIRoutes(router, (*handler.Handler)(nil))
 	for _, operation := range publicapiv1.Operations {
-		if operation.Contract != publicapiv1.ContractSharedResource {
+		if operation.Contract != publicapiv1.ContractSharedResource || !slices.Contains(operation.Policy.Credentials, publicapiv1.CredentialPersonalAccess) {
 			continue
 		}
 		path := strings.ReplaceAll(operation.Path, "{issue_ref}", "MUL-1")
@@ -26,6 +27,33 @@ func TestMemberPublicAPIRoutesCoverSharedLedger(t *testing.T) {
 		if response.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s status=%d, want the registered operation's scope middleware (401); body=%s", operation.Method, path, response.Code, response.Body.String())
 		}
+	}
+}
+
+func TestTaskMessagesRemainPluginOnly(t *testing.T) {
+	member := chi.NewRouter()
+	registerMemberPublicAPIRoutes(member, (*handler.Handler)(nil))
+	request := httptest.NewRequest(http.MethodGet, "/tasks/00000000-0000-0000-0000-000000000001/messages", nil)
+	ctx := middleware.WithPublicAPIUserCredential(request.Context(), middleware.PublicAPIUserCredential{
+		Credential: publicapiv1.CredentialPersonalAccess, Scopes: []string{"tasks:read"},
+	})
+	response := httptest.NewRecorder()
+	member.ServeHTTP(response, request.WithContext(ctx))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("plugin-only task messages exposed to a member credential: status=%d", response.Code)
+	}
+
+	plugin := chi.NewRouter()
+	registerPluginActionRoutes(plugin, (*handler.Handler)(nil))
+	found := false
+	if err := chi.Walk(plugin, func(method, path string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		found = found || method == http.MethodGet && path == publicapiv1.PathTaskMessages
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("task messages missing from the Plugin surface")
 	}
 }
 

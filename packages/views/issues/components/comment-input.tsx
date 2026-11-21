@@ -2,10 +2,13 @@
 
 import { useRef, useState, useEffect, useMemo } from "react";
 import { cn } from "@multica/ui/lib/utils";
+import { Info } from "@multica/ui/icons";
+import { useCurrentWorkspace } from "@multica/core/paths";
+import { useIsGuest } from "@multica/core/permissions";
+import { StorageLimitNotice } from "../../billing/storage-limit-notice";
 import { ContentEditor, type ContentEditorRef, useFileDropZone, FileDropOverlay, useLazyEditor, useUploadGate, useComposerSubmit } from "../../editor";
 import { useComposerDictation } from "../../editor/use-composer-dictation";
 import { DictationControls } from "../../editor/dictation-controls";
-import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
 import { SubmitButton } from "@multica/ui/components/common/submit-button";
 import { Button } from "@multica/ui/components/ui/button";
 import { contentReferencesAttachment, type AgentTask } from "@multica/core/types";
@@ -13,10 +16,23 @@ import { useShortcut } from "@multica/core/shortcuts";
 import { ShortcutKeycaps } from "../../common/shortcut-keycaps";
 import { useCommentDraftStore } from "@multica/core/issues/stores";
 import { composeAnnotatedReply, hasReplyIntent } from "@multica/core/drafts/reply-annotation";
+import { annotationsWithPending, type AnnotationComposerSlot } from "./annotation-composer";
 import { ReplyAnnotations } from "./reply-annotations";
 import { useT } from "../../i18n";
+import {
+  useComposerVoice,
+  VoiceErrorRow,
+  VoiceHud,
+  VoiceSetupDialog,
+} from "../../voice";
 import { CommentTriggerChips } from "./comment-trigger-chips";
-import { useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
+import {
+  ComposerToolbar,
+  ComposerTools,
+  QUIET_SEND_CLASS,
+  useComposerFocus,
+} from "./composer-frame";
+import { commentTriggerPreviewSignature, useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
 import { useRecipientActions } from "../hooks/use-recipient-actions";
 import { SteerAttachmentNotice } from "./steer-attachment-notice";
 import { useStopRunsBeforeSend } from "./use-stop-runs-before-send";
@@ -33,6 +49,7 @@ interface CommentInputProps {
   /** Called after the server accepts the comment and the composer is cleared. */
   onAccepted?: (commentId: string) => void;
   onEditAnnotation?: (id: string) => boolean;
+  annotationComposer?: AnnotationComposerSlot;
 }
 
 // A top-level comment belongs to no thread, so it takes a running turn by
@@ -41,19 +58,19 @@ function steerTopLevelByDefault(task: AgentTask): boolean {
   return !task.trigger_comment_id;
 }
 
-function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: CommentInputProps) {
+function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation, annotationComposer }: CommentInputProps) {
   const { t } = useT("issues");
   const { t: tEditor } = useT("editor");
   const sendShortcut = useShortcut("send");
   const editorRef = useRef<ContentEditorRef>(null);
+  // A guest (MUL-9420) comments and mentions people, nothing that runs agents.
+  const guest = useIsGuest(useCurrentWorkspace()?.id);
+  const placeholder = guest ? t(($) => $.comment.guest_placeholder) : t(($) => $.comment.leave_comment_placeholder);
   // Sending mid-upload would strip the pending image's blob URL out of the
   // markdown and bind no attachment id — the comment posts without the file.
   const uploadGate = useUploadGate(editorRef);
   // Subscribe to the persisted draft so text written into it from outside
   // this composer shows up even while it is mounted.
-  // Quick actions in the `/` menu: picking one inserts the cached
-  // body so the user can edit before sending, instead of firing immediately.
-  const quickActionMenu = useQuickActionMenu();
   const draftKey = `new:${issueId}` as const;
   const [initialDraft] = useState(() =>
     useCommentDraftStore.getState().getDraft(draftKey),
@@ -62,9 +79,11 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
   const [content, setContent] = useState(initialDraft ?? "");
   const [isEmpty, setIsEmpty] = useState(() => !initialDraft?.trim());
   const annotations = useCommentDraftStore((s) => s.getAnnotations(draftKey));
-  const composedContent = useMemo(() => composeAnnotatedReply(content, annotations), [content, annotations]);
+  const previewAnnotations = useMemo(() => annotationsWithPending(annotations, annotationComposer?.pending), [annotations, annotationComposer?.pending]);
+  const composedContent = useMemo(() => composeAnnotatedReply(content, previewAnnotations), [content, previewAnnotations]);
   const canSend = annotations.length ? hasReplyIntent(content, annotations) : !isEmpty;
-  const triggerPreview = useCommentTriggerPreview({ issueId, content: canSend ? composedContent : "" });
+  const previewContent = canSend || annotationComposer?.pending.note.trim() ? composedContent : "";
+  const triggerPreview = useCommentTriggerPreview({ issueId, content: previewContent });
   // Uploads for this composer session (MUL-5181). Owned by the module-level
   // coordinator and persisted in the draft store, so closing/scrolling the
   // composer away no longer drops an in-flight upload — its result lands in the
@@ -73,7 +92,7 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
   // status chips (uploading / failed / interrupted).
   // `gate` widens the editor gate with coordinator-owned placeholders, so a
   // composer reopened over a still-in-flight upload cannot send past it.
-  const { attachments: pendingAttachments, handleUpload, gate } =
+  const { attachments: pendingAttachments, handleUpload, gate, storageRefusal, dismissStorageRefusal } =
     useCommentUploads(draftKey, { issueId }, uploadGate, editorRef);
   const hasAttachments = useMemo(
     () => pendingAttachments.some((a) => contentReferencesAttachment(content, a)) || gate.uploading,
@@ -100,6 +119,8 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
     editorRef,
   });
   const dictation = useComposerDictation({ editorRef, resetKey: draftKey, activate: lazy.activate, ready: lazy.ready });
+  // Inactive shells must not mount query observers or duplicate cold reads.
+  const quickActionMenu = useQuickActionMenu(issueId, { enabled: lazy.active, triggerPreview, previewContent });
   const { isDragOver, dropZoneProps } = useFileDropZone({
     onDrop: lazy.uploadOrQueue,
   });
@@ -177,7 +198,8 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
       const { suppressAgentIds, steerTaskIds } = routing;
       // A preview still catching up with an edited @mention can name a
       // recipient this comment no longer addresses: never stop a run on it.
-      const restartTaskIds = triggerPreview.isCurrent ? routing.restartTaskIds : [];
+      const previewMatches = triggerPreview.isCurrent && commentTriggerPreviewSignature(content) === commentTriggerPreviewSignature(composedContent);
+      const restartTaskIds = previewMatches ? routing.restartTaskIds : [];
       if (!(await stopRunsBeforeSend(restartTaskIds))) return false;
       // Flush the editor's pending debounce before snapshotting — a late flush
       // of pre-submit typing must not read as an edit made during the request.
@@ -223,10 +245,35 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
     },
   });
 
-  return (
+  const voice = useComposerVoice({
+    disabled: dictation.busy,
+    insert: (text) => editorRef.current?.insertText(text) ?? false,
+    // Sending while a run would be restarted stays an explicit click on the
+    // destructive button.
+    submit: routing.restartTaskIds.length === 0 ? () => void submit() : undefined,
+    activate: () => lazy.activate(),
+    scope: issueId,
+  });
+  const { focused, focusProps } = useComposerFocus();
+  const showsTriggerChips = recipients.length > 0 || triggerPreview.blocked.length > 0 || triggerPreview.hasAllMembersMention;
+
+  return (<>
+    {annotationComposer?.render({
+      submit, submitting, uploading: gate.uploading, restart: routing.restartTaskIds.length > 0,
+      draftContent: content, annotations,
+      recipients: <CommentTriggerChips recipients={recipients} blocked={triggerPreview.blocked}
+        hasAllMembersMention={triggerPreview.hasAllMembersMention} draftContent={composedContent} onActionChange={setAction} />,
+    })}
     <div
+      data-mc="comment-composer"
       {...dropZoneProps}
-      className="relative flex flex-col rounded-lg bg-card pb-8 ring-1 ring-border"
+      {...focusProps}
+      className={cn(
+        "relative flex flex-col rounded-lg bg-card ring-1 transition-shadow",
+        focused ? "ring-foreground/25" : "ring-border",
+      )}
+      ref={voice.rootRef}
+      onFocusCapture={voice.onFocusCapture}
     >
       {attachmentsBlockSteer && <div className="px-3 pt-2">
         <SteerAttachmentNotice />
@@ -256,7 +303,7 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
           ref={editorRef}
           value={persistedDraft ?? content}
           onReady={lazy.onReady}
-          placeholder={t(($) => $.comment.leave_comment_placeholder)}
+          placeholder={placeholder}
           onUpdate={(md) => {
             setContent(md);
             setIsEmpty(!md.trim());
@@ -272,7 +319,7 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
           debounceMs={100}
           currentIssueId={issueId}
           attachments={pendingAttachments}
-          enableSlashCommands
+          enableSlashCommands={!guest}
           slashCommandMode="command"
           quickActionMenu={quickActionMenu}
         />
@@ -286,7 +333,7 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
           data-testid="comment-composer-shell"
           role="button"
           tabIndex={0}
-          aria-label={t(($) => $.comment.leave_comment_placeholder)}
+          aria-label={placeholder}
           className="flex-1 min-h-0 cursor-text px-3 py-2"
           onClick={() => lazy.activate()}
           onKeyDown={(e) => {
@@ -300,37 +347,46 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
               exact type metrics (line-height 1.625 from prose.css), so the
               shell→editor swap doesn't shift layout. */}
           <div className="rich-text-editor text-body">
-            <p className="text-muted-foreground">{t(($) => $.comment.leave_comment_placeholder)}</p>
+            <p className="text-muted-foreground">{placeholder}</p>
           </div>
         </div>
       )}
-      <div className={cn("absolute bottom-1 left-2 min-w-0", dictation.visible ? (dictation.busy ? "right-48" : "right-40") : "right-28")}>
-        <CommentTriggerChips
+      <VoiceHud voice={voice} />
+      <VoiceSetupDialog voice={voice} />
+      <VoiceErrorRow voice={voice} className="mx-2 mb-1" />
+      {storageRefusal && (
+        <StorageLimitNotice refusal={storageRefusal} onDismiss={dismissStorageRefusal} className="mx-2 mb-1" />
+      )}
+      <ComposerToolbar
+        className="px-1.5 pb-1"
+        voice={voice}
+        hasRecipients={guest || showsTriggerChips}
+        recipients={guest ? (
+          <p className="flex items-center gap-1.5 px-1.5 text-caption text-muted-foreground">
+            <Info className="size-3.5 shrink-0" aria-hidden="true" />
+            <span className="truncate">{t(($) => $.comment.guest_hint)}</span>
+          </p>
+        ) : <CommentTriggerChips
           recipients={recipients}
           blocked={triggerPreview.blocked}
           hasAllMembersMention={triggerPreview.hasAllMembersMention}
           draftContent={composedContent}
           onActionChange={setAction}
-        />
-      </div>
-      <div className="absolute bottom-1 right-1.5 flex items-center gap-1">
-        <DictationControls dictation={dictation} disabled={submitting} />
-        <FileUploadButton
-          size="sm"
-          multiple
-          onSelect={(file) => lazy.uploadOrQueue([file])}
-        />
-        {routing.restartTaskIds.length > 0 ? (
+        />}
+        tools={guest ? null : <><DictationControls dictation={dictation} disabled={submitting || !!voice.session || voice.busyElsewhere} /><ComposerTools voice={voice} onAttach={(file) => lazy.uploadOrQueue([file])} /></>}
+        send={routing.restartTaskIds.length > 0 ? (
           <Button
             size="sm"
             variant="destructive"
-            className="rounded-full"
+            // eslint-disable-next-line no-restricted-syntax -- composer send button, the one round button
+            className="rounded-full px-3"
             onClick={submit}
             disabled={!canSend || submitting || dictation.busy || gate.uploading}
           >
             {t(($) => $.comment.restart_send)}
           </Button>
         ) : <SubmitButton
+          className={QUIET_SEND_CLASS}
           onClick={submit}
           disabled={!canSend || dictation.busy}
           loading={submitting}
@@ -352,10 +408,10 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
             ? tEditor(($) => $.upload.in_progress)
             : t(($) => $.comment.send_tooltip)}
         />}
-      </div>
+      />
       {isDragOver && <FileDropOverlay />}
     </div>
-  );
+  </>);
 }
 
 export { CommentInput };

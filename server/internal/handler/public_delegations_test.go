@@ -519,7 +519,11 @@ func TestPublicDelegationDeliveryRechecksInvocation(t *testing.T) {
 			}
 			req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, daemonID)
 			req.Header.Set("X-Client-Capabilities", "public-delegation-v1")
-			response, _, _, _, failure, err := testHandler.finalizeClaimDeliveryForTest(req, task, runtimeID, testWorkspaceID)
+			runtime, err := testHandler.Queries.GetAgentRuntime(context.Background(), parseUUID(runtimeID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, _, _, _, failure, err := testHandler.finalizeClaimDeliveryForTestWithRuntime(req, task, runtime, runtimeID, testWorkspaceID)
 			if err != nil {
 				t.Fatal(err)
 			}

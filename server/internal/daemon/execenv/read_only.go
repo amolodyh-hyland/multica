@@ -37,8 +37,12 @@ func prepareReadOnlyCodexHome(home, sharedHome, goos string) error {
 }
 
 func hydrateReadOnlyAwareCodexSkills(home string, readOnly bool, skills []SkillContextForEnv, disabled []RuntimeSkillRefForEnv, logger *slog.Logger) ([]string, error) {
+	return hydrateReadOnlyAwareCodexSkillsTracked(home, readOnly, skills, disabled, logger, nil)
+}
+
+func hydrateReadOnlyAwareCodexSkillsTracked(home string, readOnly bool, skills []SkillContextForEnv, disabled []RuntimeSkillRefForEnv, logger *slog.Logger, installed map[string]string) ([]string, error) {
 	if readOnly {
 		return nil, nil
 	}
-	return hydrateCodexSkills(home, skills, disabled, logger)
+	return hydrateCodexSkillsTracked(home, skills, disabled, logger, installed)
 }

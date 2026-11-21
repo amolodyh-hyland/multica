@@ -388,8 +388,9 @@ func TestIssueRuntimeRetryRacingProfileSwitchUsesCurrentBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close(context.Background())
-	svc := *testHandler.TaskService
-	svc.Queries, svc.TxStarter = db.New(conn), conn
+	baseService := testHandler.TaskService
+	svc := service.NewTaskService(db.New(conn), conn, baseService.Hub, baseService.Bus, baseService.Wakeup)
+	svc.Analytics = baseService.Analytics
 	type result struct {
 		task *db.AgentTaskQueue
 		err  error

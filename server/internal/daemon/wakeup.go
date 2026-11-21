@@ -97,6 +97,7 @@ func jitterDuration(d time.Duration) time.Duration {
 }
 
 func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []string, taskWakeups chan<- taskWakeup, runtimeSetCh <-chan struct{}) (time.Duration, error) {
+	registrationCapture := d.client.beginRestrictedWS()
 	wsURL, err := taskWakeupURL(d.cfg.ServerBaseURL, runtimeIDs)
 	if err != nil {
 		return 0, err
@@ -117,7 +118,7 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 	}
 	// WS claims use the common capabilities plus scheduling hints that only the
 	// healthy-connection poller can consume.
-	headers.Set("X-Client-Capabilities", daemonClientCapabilities())
+	headers.Set("X-Client-Capabilities", d.client.clientCapabilities(true))
 
 	// A hand-built websocket.Dialer has Proxy == nil, which gorilla reads as
 	// "dial direct" — unlike websocket.DefaultDialer, it does not fall back to
@@ -136,6 +137,11 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 		return 0, err
 	}
 	connectedAt := time.Now()
+	if !d.client.bindRestrictedWS(registrationCapture, func() { _ = conn.Close(); d.runtimeSet.notify() }) {
+		_ = conn.Close()
+		return 0, errRuntimeSetChanged
+	}
+	defer d.client.endRestrictedWS(registrationCapture)
 	uptime := func() time.Duration { return time.Since(connectedAt) }
 	defer conn.Close()
 	// HTTP heartbeats resume the moment WS detaches so the freshness window
@@ -143,7 +149,7 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 	defer d.clearWSHeartbeatAcks()
 
 	d.logger.Info("task wakeup websocket connected", "runtimes", len(runtimeIDs))
-	signalTaskWakeup(taskWakeups, "")
+	d.signalTaskWakeup(taskWakeups, "")
 	// A healthy reconnect is the strongest signal that a terminal callback
 	// stranded during an outage may now succeed. The buffered wakeup also
 	// preserves a connect that races replay-loop startup.
@@ -183,6 +189,9 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 	var sendMu sync.Mutex
 	sendClosed := false
 	wsRPCGeneration := d.wsRPC.attach(func(frame []byte) (*wsOutbound, error) {
+		if err := d.client.allowRestrictedWSFrame(registrationCapture, frame); err != nil {
+			return nil, err
+		}
 		sendMu.Lock()
 		defer sendMu.Unlock()
 		if sendClosed {
@@ -209,7 +218,7 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- d.readTaskWakeupMessagesForConnection(conn, taskWakeups, wsRPCGeneration)
+		errCh <- d.readTaskWakeupMessagesForRegistration(conn, taskWakeups, wsRPCGeneration, registrationCapture)
 	}()
 
 	// Defer cleanup must shut goroutines down in this order:
@@ -239,7 +248,7 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 		// A healthy WS connection lets the claim poller use a longer fallback
 		// interval. Wake it as soon as the connection drops so it immediately
 		// observes the detach and resumes the configured HTTP cadence.
-		signalTaskWakeup(taskWakeups, "")
+		d.signalTaskWakeup(taskWakeups, "")
 		sendMu.Lock()
 		sendClosed = true
 		sendMu.Unlock()
@@ -315,7 +324,7 @@ func (d *Daemon) sendWSHeartbeats(ctx context.Context, runtimeIDs []string, writ
 		}
 		frame, err := json.Marshal(protocol.Message{
 			Type:    protocol.EventDaemonHeartbeat,
-			Payload: marshalRaw(protocol.DaemonHeartbeatRequestPayload{RuntimeID: rid, SupportsBatchImport: true}),
+			Payload: marshalRaw(protocol.DaemonHeartbeatRequestPayload{RuntimeID: rid, SupportsBatchImport: true, SupportsQueuedUpdate: true}),
 		})
 		if err != nil {
 			d.logger.Debug("ws heartbeat marshal failed", "error", err, "runtime_id", rid)
@@ -358,7 +367,14 @@ func (d *Daemon) handleWSHeartbeatAck(ctx context.Context, ack *HeartbeatRespons
 }
 
 func (d *Daemon) handleWSHeartbeatAckForConnection(ctx context.Context, ack *HeartbeatResponse, wsRPCGeneration uint64) {
+	d.handleWSHeartbeatAckForRegistration(ctx, ack, wsRPCGeneration, restrictedClaimCapture{})
+}
+
+func (d *Daemon) handleWSHeartbeatAckForRegistration(ctx context.Context, ack *HeartbeatResponse, wsRPCGeneration uint64, capture restrictedClaimCapture) {
 	if ack == nil || ack.RuntimeID == "" {
+		return
+	}
+	if !d.client.acceptRestrictedAck(capture, ack.RuntimeID, ack) {
 		return
 	}
 	if ack.RuntimeGone {
@@ -380,6 +396,10 @@ func (d *Daemon) readTaskWakeupMessages(conn *websocket.Conn, taskWakeups chan<-
 }
 
 func (d *Daemon) readTaskWakeupMessagesForConnection(conn *websocket.Conn, taskWakeups chan<- taskWakeup, wsRPCGeneration uint64) error {
+	return d.readTaskWakeupMessagesForRegistration(conn, taskWakeups, wsRPCGeneration, restrictedClaimCapture{})
+}
+
+func (d *Daemon) readTaskWakeupMessagesForRegistration(conn *websocket.Conn, taskWakeups chan<- taskWakeup, wsRPCGeneration uint64, capture restrictedClaimCapture) error {
 	d.configureTaskWakeupReadLiveness(conn)
 	for {
 		_, raw, err := conn.ReadMessage()
@@ -406,7 +426,7 @@ func (d *Daemon) readTaskWakeupMessagesForConnection(conn *websocket.Conn, taskW
 			if payload.RuntimeID != "" {
 				d.logger.Debug("task wakeup received", "runtime_id", payload.RuntimeID, "task_id", payload.TaskID)
 			}
-			signalTaskWakeup(taskWakeups, payload.RuntimeID)
+			d.signalTaskWakeup(taskWakeups, payload.RuntimeID)
 		case protocol.EventDaemonTaskSupplementAvailable:
 			var payload protocol.TaskAvailablePayload
 			if err := json.Unmarshal(msg.Payload, &payload); err != nil {
@@ -452,7 +472,7 @@ func (d *Daemon) readTaskWakeupMessagesForConnection(conn *websocket.Conn, taskW
 				d.logger.Debug("ws heartbeat ack invalid payload", "error", err)
 				continue
 			}
-			d.handleWSHeartbeatAckForConnection(context.Background(), &ack, wsRPCGeneration)
+			d.handleWSHeartbeatAckForRegistration(context.Background(), &ack, wsRPCGeneration, capture)
 		case protocol.EventDaemonRPCResponse:
 			var resp protocol.RPCResponsePayload
 			if err := json.Unmarshal(msg.Payload, &resp); err != nil {
@@ -496,10 +516,28 @@ func (d *Daemon) handleRuntimeProfilesChanged(payload protocol.RuntimeProfilesCh
 	}
 }
 
-func signalTaskWakeup(taskWakeups chan<- taskWakeup, runtimeID string) {
+// signalTaskWakeup delivers a targeted (or catch-up) task wakeup to the poller.
+// For a targeted wakeup the runtime id is the #7452 force-recheck signal, so it
+// is recorded in the woken set BEFORE the send is attempted. Recording after the
+// send would race: the `default` branch is only reached because a nudge is
+// already queued, and between a failed send and a late note the poller can
+// consume that queued nudge AND drain the woken set — stranding the id in a set
+// nobody will drain, with no nudge left to trigger a claim, until the next
+// scheduled poll. Recording first is strictly safe: if a drain races in, it
+// picks the id up and the subsequent nudge is merely redundant. The channel is a
+// coalescing nudge, so a full channel already carries a pending wakeup that will
+// drive the next claim, where the runtime is now forced. A catch-up wakeup
+// (empty runtimeID) has nothing to preserve.
+func (d *Daemon) signalTaskWakeup(taskWakeups chan<- taskWakeup, runtimeID string) {
+	if runtimeID != "" {
+		d.noteWokenRuntime(runtimeID)
+	}
 	select {
 	case taskWakeups <- taskWakeup{runtimeID: runtimeID}:
 	default:
+		if runtimeID != "" {
+			d.logger.Debug("task wakeup channel full; coalesced runtime into force-recheck set", "runtime_id", runtimeID)
+		}
 	}
 }
 
