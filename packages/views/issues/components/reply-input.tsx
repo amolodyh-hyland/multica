@@ -3,12 +3,11 @@
 import { composeAnnotatedReply, EMPTY_REPLY_ANNOTATIONS, hasReplyIntent } from "@multica/core/drafts/reply-annotation";
 import { annotationsWithPending, type AnnotationComposerSlot } from "./annotation-composer";
 import { ReplyAnnotations } from "./reply-annotations";
-import { useRef, useState, useEffect, useMemo } from "react";
+import { useCallback, useRef, useState, useEffect, useImperativeHandle, useMemo, type Ref } from "react";
 import { toast } from "sonner";
 import { ContentEditor, type ContentEditorRef, useFileDropZone, FileDropOverlay, useLazyEditor, useUploadGate, useComposerSubmit } from "../../editor";
 import { useComposerDictation } from "../../editor/use-composer-dictation";
 import { DictationControls } from "../../editor/dictation-controls";
-import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
 import { SubmitButton } from "@multica/ui/components/common/submit-button";
 import { Button } from "@multica/ui/components/ui/button";
 import { ActorAvatar } from "../../common/actor-avatar";
@@ -19,7 +18,21 @@ import { useCommentDraftStore, type CommentDraftKey } from "@multica/core/issues
 import { cn } from "@multica/ui/lib/utils";
 import type { AvatarSize } from "@multica/ui/lib/avatar-size";
 import { useT } from "../../i18n";
+import {
+  useComposerVoice,
+  VoiceErrorRow,
+  VoiceHud,
+  VoiceSetupDialog,
+} from "../../voice";
 import { CommentTriggerChips } from "./comment-trigger-chips";
+import {
+  ComposerIdleTools,
+  ComposerToolbar,
+  ComposerTools,
+  QUIET_SEND_CLASS,
+  useComposerExpanded,
+  useComposerFocus,
+} from "./composer-frame";
 import { commentTriggerPreviewSignature, useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
 import { useRecipientActions } from "../hooks/use-recipient-actions";
 import { SteerAttachmentNotice } from "./steer-attachment-notice";
@@ -29,7 +42,13 @@ import { useQuickActionMenu } from "../hooks/use-quick-action-menu";
 
 // Types
 
+/** Lets the thread around the box move the caret into it, e.g. from a menu. */
+interface ReplyInputHandle {
+  focus: () => void;
+}
+
 interface ReplyInputProps {
+  handleRef?: Ref<ReplyInputHandle>;
   issueId: string;
   parentId: string;
   placeholder?: string;
@@ -58,6 +77,7 @@ const NEVER_STEER_BY_DEFAULT = () => false;
 // ReplyInput
 
 function ReplyInput({
+  handleRef,
   issueId,
   parentId,
   placeholder,
@@ -80,10 +100,6 @@ function ReplyInput({
   const composerRef = useRef<HTMLDivElement>(null);
   // See CommentInput — replying mid-upload posts without the file.
   const uploadGate = useUploadGate(editorRef);
-  // Quick actions in the `/` menu — same catalog and same insert-don't-run
-  // behavior as the top-level composer. A reply posts to the same issue, so
-  // `/` has to offer the same thing here (MUL-5588).
-  const quickActionMenu = useQuickActionMenu();
   // If a draft key is provided, hydrate from store on mount (defaultValue is
   // the only injection point on ContentEditorRef) and flush on every onUpdate.
   const [initialDraft] = useState(() =>
@@ -98,7 +114,8 @@ function ReplyInput({
   const canSend = !targetMissing && (annotations.length ? hasReplyIntent(content, annotations) : !isEmpty);
   // Saving the first pending annotation will fix the target before submission.
   const previewParentId = annotations.length === 0 ? annotationComposer?.pending.sourceCommentId ?? parentId : parentId;
-  const triggerPreview = useCommentTriggerPreview({ issueId, parentId: previewParentId, content: !targetMissing && (canSend || annotationComposer?.pending.note.trim()) ? composedContent : "" });
+  const previewContent = !targetMissing && (canSend || annotationComposer?.pending.note.trim()) ? composedContent : "";
+  const triggerPreview = useCommentTriggerPreview({ issueId, parentId: previewParentId, content: previewContent });
   // Uploads for this reply session (MUL-5181) — owned by the coordinator. With
   // a draftKey they persist in the draft store so scroll-out/close no longer
   // drops an in-flight upload; without one (no persistence context) they fall
@@ -120,6 +137,9 @@ function ReplyInput({
     resetKey: `${issueId}:${previewParentId}`,
   });
   const stopRunsBeforeSend = useStopRunsBeforeSend(issueId);
+  // A pending annotation note previews recipients while the reply itself is
+  // still empty, so the chip row can render under the one-line placeholder.
+  const showsTriggerChips = recipients.length > 0 || triggerPreview.blocked.length > 0 || triggerPreview.hasAllMembersMention;
 
   // Readonly-first: static shell until intent; an unsent draft mounts the
   // real editor immediately (see CommentInput). This is also what keeps the
@@ -133,6 +153,14 @@ function ReplyInput({
     editorRef,
   });
   const dictation = useComposerDictation({ editorRef, resetKey: `${issueId}:${parentId}:${draftKey ?? ""}`, activate: lazy.activate, ready: lazy.ready, disabled: targetMissing });
+  const quickActionMenu = useQuickActionMenu(issueId, {
+    enabled: lazy.active,
+    parentId: previewParentId,
+    targetMissing,
+    triggerPreview,
+    previewContent,
+  });
+  useImperativeHandle(handleRef, () => ({ focus: () => lazy.activate() }), [lazy]);
   const { isDragOver, dropZoneProps } = useFileDropZone({
     onDrop: lazy.uploadOrQueue,
   });
@@ -241,6 +269,25 @@ function ReplyInput({
   });
 
   const avatarSize: AvatarSize = size === "sm" ? "sm" : "md";
+  const voice = useComposerVoice({
+    disabled: dictation.busy,
+    insert: (text) => editorRef.current?.insertText(text) ?? false,
+    // A send that would restart a run stays an explicit click — see CommentInput.
+    submit: routing.restartTaskIds.length === 0 ? () => void submit() : undefined,
+    activate: () => lazy.activate(),
+    scope: `${issueId}:${parentId}`,
+  });
+  const { focused, focusProps } = useComposerFocus();
+  // One line at rest, like the comment box — see CommentInput.
+  const expanded = useComposerExpanded(
+    focused || !isEmpty || annotations.length > 0 || showsTriggerChips || voice.showStrip || submitting || gate.uploading,
+    voice,
+  );
+  const voiceRootRef = voice.rootRef;
+  const bindComposer = useCallback((element: HTMLDivElement | null) => {
+    composerRef.current = element;
+    voiceRootRef(element);
+  }, [voiceRootRef]);
 
   return (<>
     {annotationComposer?.render({
@@ -258,11 +305,10 @@ function ReplyInput({
       />
       <div
         {...dropZoneProps}
-        ref={composerRef}
-        className={cn(
-          "relative min-w-0 flex-1 flex flex-col",
-          (!isEmpty || annotations.length > 0 || dictation.busy) && "pb-9",
-        )}
+        {...focusProps}
+        ref={bindComposer}
+        className="relative flex min-w-0 flex-1 flex-col"
+        onFocusCapture={voice.onFocusCapture}
       >
         {attachmentsBlockSteer && <SteerAttachmentNotice />}
         {draftKey && annotations.length > 0 && <>
@@ -270,11 +316,12 @@ function ReplyInput({
           <ReplyAnnotations draftKey={draftKey} annotations={annotations}
             disabled={submitting} onEditAnnotation={onEditAnnotation} />
         </>}
+        <div className="flex min-h-0 flex-1 items-center">
         {/* Lock the editor while the reply is in flight — see CommentInput. */}
         {lazy.active && (
         <div
           className={cn(
-            "flex-1 min-h-0 overflow-y-auto",
+            "min-w-0 flex-1 min-h-0 overflow-y-auto",
             submitting && "pointer-events-none opacity-60",
             !lazy.ready && "hidden",
           )}
@@ -312,7 +359,7 @@ function ReplyInput({
             role="button"
             tabIndex={0}
             aria-label={placeholderText}
-            className="flex-1 min-h-0 cursor-text rich-text-editor text-body"
+            className="min-w-0 flex-1 cursor-text rich-text-editor text-body"
             onClick={() => lazy.activate()}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
@@ -326,34 +373,36 @@ function ReplyInput({
             <p className="text-muted-foreground">{placeholderText}</p>
           </div>
         )}
-        <div className={cn("absolute bottom-0 left-0 min-w-0", dictation.visible ? (dictation.busy ? "right-40" : "right-32") : "right-24")}>
-          <CommentTriggerChips
+        {!expanded && <ComposerIdleTools className="-my-1" voice={voice} onAttach={(file) => lazy.uploadOrQueue([file])} />}
+        </div>
+        <VoiceHud voice={voice} />
+        <VoiceSetupDialog voice={voice} />
+        <VoiceErrorRow voice={voice} className="mt-1" />
+        {expanded && <ComposerToolbar
+          className="mt-1 animate-in fade-in slide-in-from-top-1 duration-150"
+          voice={voice}
+          hasRecipients={showsTriggerChips}
+          recipients={<CommentTriggerChips
             recipients={recipients}
             blocked={triggerPreview.blocked}
             hasAllMembersMention={triggerPreview.hasAllMembersMention}
             draftContent={composedContent}
             onActionChange={setAction}
-          />
-        </div>
-        <div className="absolute bottom-0 right-0 flex items-center gap-1">
-          <DictationControls dictation={dictation} disabled={submitting || targetMissing} />
-        <FileUploadButton
-            size="sm"
-            multiple
-            onSelect={(file) => lazy.uploadOrQueue([file])}
-          />
-          {routing.restartTaskIds.length > 0 ? (
+          />}
+          tools={<><DictationControls dictation={dictation} disabled={submitting || targetMissing || !!voice.session || voice.busyElsewhere} /><ComposerTools voice={voice} onAttach={(file) => lazy.uploadOrQueue([file])} /></>}
+          send={routing.restartTaskIds.length > 0 ? (
             <Button
               size="sm"
               variant="destructive"
               // eslint-disable-next-line no-restricted-syntax -- composer send button, the one round button
-              className="rounded-full"
+              className="rounded-full px-3"
               onClick={submit}
               disabled={!canSend || submitting || dictation.busy || gate.uploading}
             >
               {t(($) => $.comment.restart_send)}
             </Button>
           ) : <SubmitButton
+            className={QUIET_SEND_CLASS}
             onClick={submit}
             disabled={!canSend || dictation.busy}
             loading={submitting}
@@ -375,11 +424,11 @@ function ReplyInput({
               ? tEditor(($) => $.upload.in_progress)
               : t(($) => $.comment.send_tooltip)}
           />}
-        </div>
+        />}
         {isDragOver && <FileDropOverlay />}
       </div>
     </div>
   </>);
 }
 
-export { ReplyInput, type ReplyInputProps };
+export { ReplyInput, type ReplyInputHandle, type ReplyInputProps };

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"net/http"
@@ -131,64 +132,80 @@ func TestAgentRuntimeSwitchPreservesConfirmedDelegation(t *testing.T) {
 }
 
 func TestTaskEnqueueRacingRuntimeSwitchUsesLockedBinding(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	oldRuntime := dbfx.Runtime(t, "enqueue source")
-	nextRuntime := dbfx.Runtime(t, "enqueue destination")
-	agentID := dbfx.Agent(t, "racing enqueue profile", oldRuntime)
-	issueID := dbfx.Issue(t, "racing enqueue issue")
-	dbfx.Cleanup(t, `DELETE FROM agent_task_queue WHERE agent_id=$1`, agentID)
-	tx, err := testPool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(context.Background())
-	if _, err := tx.Exec(ctx, `UPDATE agent SET runtime_id=$1 WHERE id=$2`, nextRuntime, agentID); err != nil {
-		t.Fatal(err)
-	}
-	enqueueConn, err := testPool.Acquire(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer enqueueConn.Release()
-	applicationName := "runtime-switch-" + agentID
-	if _, err := enqueueConn.Exec(ctx, `SELECT set_config('application_name',$1,false)`, applicationName); err != nil {
-		t.Fatal(err)
-	}
-	defer enqueueConn.Exec(context.Background(), `RESET application_name`)
-	type result struct {
-		task db.AgentTaskQueue
-		err  error
-	}
-	done := make(chan result, 1)
-	go func() {
-		task, err := db.New(enqueueConn).CreateAgentTask(ctx, db.CreateAgentTaskParams{
-			AgentID: parseUUID(agentID), RuntimeID: parseUUID(oldRuntime), IssueID: parseUUID(issueID),
+	for _, kind := range []string{"queued", "deferred_channel", "quick_create"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			oldRuntime := dbfx.Runtime(t, "enqueue source")
+			nextRuntime := dbfx.Runtime(t, "enqueue destination")
+			agentID := dbfx.Agent(t, "racing enqueue profile "+kind, oldRuntime)
+			issueID := dbfx.Issue(t, "racing enqueue issue")
+			dbfx.Cleanup(t, `DELETE FROM agent_task_queue WHERE agent_id=$1`, agentID)
+			tx, err := testPool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(context.Background())
+			if _, err := tx.Exec(ctx, `UPDATE agent SET runtime_id=$1 WHERE id=$2`, nextRuntime, agentID); err != nil {
+				t.Fatal(err)
+			}
+			enqueueConn, err := testPool.Acquire(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer enqueueConn.Release()
+			applicationName := "runtime-switch-" + agentID
+			if _, err := enqueueConn.Exec(ctx, `SELECT set_config('application_name',$1,false)`, applicationName); err != nil {
+				t.Fatal(err)
+			}
+			defer enqueueConn.Exec(context.Background(), `RESET application_name`)
+			type result struct {
+				task db.AgentTaskQueue
+				err  error
+			}
+			done := make(chan result, 1)
+			go func() {
+				q := db.New(enqueueConn)
+				a, r, i := parseUUID(agentID), parseUUID(oldRuntime), parseUUID(issueID)
+				var task db.AgentTaskQueue
+				var err error
+				switch kind {
+				case "queued":
+					task, err = q.CreateAgentTask(ctx, db.CreateAgentTaskParams{AgentID: a, RuntimeID: r, IssueID: i, Priority: 4})
+				case "deferred_channel":
+					task, err = q.CreateDeferredChannelIssueTask(ctx, db.CreateDeferredChannelIssueTaskParams{
+						AgentID: a, RuntimeID: r, IssueID: i, Priority: 4,
+						FireAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+					})
+				case "quick_create":
+					task, err = q.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{AgentID: a, RuntimeID: r, Priority: 4, Context: []byte(`{"type":"quick_create"}`)})
+				}
+				done <- result{task, err}
+			}()
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				var waiting bool
+				if err := testPool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND application_name=$1)`, applicationName).Scan(&waiting); err != nil {
+					t.Fatal(err)
+				}
+				if waiting {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("enqueue did not wait for the profile binding lock")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			out := <-done
+			if out.err != nil {
+				t.Fatal(out.err)
+			}
+			if out.task.RuntimeID != parseUUID(nextRuntime) {
+				t.Fatalf("enqueued runtime=%s, want committed binding %s", uuidToString(out.task.RuntimeID), nextRuntime)
+			}
 		})
-		done <- result{task, err}
-	}()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		var waiting bool
-		if err := testPool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND application_name=$1)`, applicationName).Scan(&waiting); err != nil {
-			t.Fatal(err)
-		}
-		if waiting {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("enqueue did not wait for the profile binding lock")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	out := <-done
-	if out.err != nil {
-		t.Fatal(out.err)
-	}
-	if out.task.RuntimeID != parseUUID(nextRuntime) {
-		t.Fatalf("enqueued runtime=%s, want committed binding %s", uuidToString(out.task.RuntimeID), nextRuntime)
 	}
 }

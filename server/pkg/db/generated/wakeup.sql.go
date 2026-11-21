@@ -378,6 +378,16 @@ func (q *Queries) CreateIssueWakeup(ctx context.Context, arg CreateIssueWakeupPa
 }
 
 const createWakeupTask = `-- name: CreateWakeupTask :one
+WITH enqueue_agent AS MATERIALIZED (
+    SELECT a.id,
+           COALESCE(issue_runtime_for_run(a.id, $2), a.runtime_id, $24::uuid) AS runtime_id,
+           issue_runtime_for_run(a.id, $2) AS runtime_override_id
+    FROM agent a
+    WHERE a.id = $1
+      AND lock_task_owner_rows(a.id, $2, COALESCE(a.runtime_id, $24::uuid))
+      AND lock_task_owner_rows(a.id, $2, COALESCE(issue_runtime_for_run(a.id, $2), a.runtime_id, $24::uuid))
+    FOR KEY SHARE OF a
+)
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, runtime_override_id, issue_id, status, priority, trigger_comment_id,
     coalesced_comment_ids, trigger_summary, force_fresh_session, is_leader_task, handoff_note,
@@ -386,7 +396,7 @@ INSERT INTO agent_task_queue (
     workflow_step, id
 )
 SELECT
-    $1, COALESCE(issue_runtime_for_run($1,$2),(SELECT binding.runtime_id FROM agent binding WHERE binding.id = $1 FOR SHARE)), issue_runtime_for_run($1,$2), $2, 'queued', $3, $4,
+    $1, enqueue_agent.runtime_id, enqueue_agent.runtime_override_id, $2, 'queued', $3, $4,
     COALESCE($5::uuid[], '{}'),
     $6,
     COALESCE($7::boolean, FALSE),
@@ -417,8 +427,7 @@ SELECT
         (SELECT i.status FROM issue i WHERE i.id = $2)
     ),
     COALESCE($23::uuid, gen_random_uuid())
-WHERE lock_task_owner_rows($1, $2, $24::uuid)
-  AND lock_task_owner_rows($1, $2, COALESCE(issue_runtime_for_run($1, $2), (SELECT binding.runtime_id FROM agent binding WHERE binding.id = $1), $24::uuid))
+FROM enqueue_agent
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision, comment_thread_id, cancelled_by_type, cancelled_by_id, cancelled_by_name, issue_snapshot, workflow_step, knowledge_manifest, private_library_manifest, runtime_override_id, native_resume_disabled
 `
 
@@ -1080,10 +1089,17 @@ const listPausedWakeupIssues = `-- name: ListPausedWakeupIssues :many
 SELECT w.issue_id,w.id,w.agent_id,w.paused_reason
 FROM issue_wakeup w JOIN issue i ON i.id=w.issue_id AND i.workspace_id=w.workspace_id
 WHERE w.workspace_id= $1 AND NOT w.enabled AND w.paused_reason IN ('loop','rate','max_fires')
+ -- MUL-8472: private projects the caller cannot see.
+ AND ($2::uuid[] IS NULL OR NOT (COALESCE(i.project_id, '00000000-0000-0000-0000-000000000000'::uuid) = ANY($2::uuid[])))
  AND i.status NOT IN ('done','cancelled')
  AND NOT EXISTS(SELECT 1 FROM issue_status s WHERE s.workspace_id=i.workspace_id AND s.key=i.status AND s.category IN ('done','closed'))
 ORDER BY w.updated_at DESC LIMIT 200
 `
+
+type ListPausedWakeupIssuesParams struct {
+	WorkspaceID      pgtype.UUID   `json:"workspace_id"`
+	HiddenProjectIds []pgtype.UUID `json:"hidden_project_ids"`
+}
 
 type ListPausedWakeupIssuesRow struct {
 	IssueID      pgtype.UUID `json:"issue_id"`
@@ -1094,8 +1110,8 @@ type ListPausedWakeupIssuesRow struct {
 
 // Rules the platform paused on open issues, for board cues and the
 // workspace banner. Access follows shared issue visibility.
-func (q *Queries) ListPausedWakeupIssues(ctx context.Context, workspaceID pgtype.UUID) ([]ListPausedWakeupIssuesRow, error) {
-	rows, err := q.db.Query(ctx, listPausedWakeupIssues, workspaceID)
+func (q *Queries) ListPausedWakeupIssues(ctx context.Context, arg ListPausedWakeupIssuesParams) ([]ListPausedWakeupIssuesRow, error) {
+	rows, err := q.db.Query(ctx, listPausedWakeupIssues, arg.WorkspaceID, arg.HiddenProjectIds)
 	if err != nil {
 		return nil, err
 	}
@@ -1393,6 +1409,8 @@ LEFT JOIN member actor_member ON w.filter_actor_type='member' AND actor_member.u
 LEFT JOIN "user" actor_user ON actor_user.id=actor_member.user_id
 LEFT JOIN agent source ON source.id=w.filter_agent_id AND source.workspace_id=w.workspace_id AND source.id=ANY($1::uuid[])
  WHERE w.workspace_id= $2 AND w.enabled
+  -- MUL-8472: private projects the caller cannot see.
+  AND ($3::uuid[] IS NULL OR NOT (COALESCE(i.project_id, '00000000-0000-0000-0000-000000000000'::uuid) = ANY($3::uuid[])))
   AND i.status NOT IN ('done','cancelled')
   AND NOT EXISTS(SELECT 1 FROM issue_status s WHERE s.workspace_id=i.workspace_id AND s.key=i.status AND s.category IN ('done','closed'))
 )
@@ -1401,8 +1419,9 @@ FROM ranked WHERE rank<=3 ORDER BY issue_id,rank
 `
 
 type ListWorkspaceWakeupSummaryRowsParams struct {
-	AgentIds    []pgtype.UUID `json:"agent_ids"`
-	WorkspaceID pgtype.UUID   `json:"workspace_id"`
+	AgentIds         []pgtype.UUID `json:"agent_ids"`
+	WorkspaceID      pgtype.UUID   `json:"workspace_id"`
+	HiddenProjectIds []pgtype.UUID `json:"hidden_project_ids"`
 }
 
 type ListWorkspaceWakeupSummaryRowsRow struct {
@@ -1429,7 +1448,7 @@ type ListWorkspaceWakeupSummaryRowsRow struct {
 
 // No prompts/history; at most three previews per issue plus exact counts.
 func (q *Queries) ListWorkspaceWakeupSummaryRows(ctx context.Context, arg ListWorkspaceWakeupSummaryRowsParams) ([]ListWorkspaceWakeupSummaryRowsRow, error) {
-	rows, err := q.db.Query(ctx, listWorkspaceWakeupSummaryRows, arg.AgentIds, arg.WorkspaceID)
+	rows, err := q.db.Query(ctx, listWorkspaceWakeupSummaryRows, arg.AgentIds, arg.WorkspaceID, arg.HiddenProjectIds)
 	if err != nil {
 		return nil, err
 	}
@@ -1518,7 +1537,7 @@ func (q *Queries) LockIssueWakeup(ctx context.Context, id pgtype.UUID) (IssueWak
 }
 
 const lockWakeupIssue = `-- name: LockWakeupIssue :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, duplicate_of_issue_id FROM issue WHERE id= $1 FOR NO KEY UPDATE
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, triage_state, duplicate_of_issue_id, requester_user_id FROM issue WHERE id= $1 FOR NO KEY UPDATE
 `
 
 func (q *Queries) LockWakeupIssue(ctx context.Context, id pgtype.UUID) (Issue, error) {
@@ -1555,6 +1574,7 @@ func (q *Queries) LockWakeupIssue(ctx context.Context, id pgtype.UUID) (Issue, e
 		&i.LastActivityAt,
 		&i.TriageState,
 		&i.DuplicateOfIssueID,
+		&i.RequesterUserID,
 	)
 	return i, err
 }

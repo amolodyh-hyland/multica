@@ -17,7 +17,9 @@ import { DesktopLoginPage } from "./pages/login";
 import { DesktopAuthRecoveryPage } from "./pages/auth-recovery";
 import { DesktopShell } from "./components/desktop-layout";
 import { UpdateNotification } from "./components/update-notification";
+import { NativeContextMenu } from "./components/native-context-menu";
 import { IssueWindow } from "./components/issue-window";
+import { DesktopDevToolbar } from "./components/desktop-dev-toolbar";
 import { useTabStore } from "./stores/tab-store";
 import { useWindowOverlayStore } from "./stores/window-overlay-store";
 import { useOpenSettingsShortcut } from "./hooks/use-open-settings-shortcut";
@@ -26,6 +28,7 @@ import { useDaemonIPCBridge } from "./platform/daemon-ipc-bridge";
 import { syncDaemonOnLogin } from "./platform/daemon-login-sync";
 import { createDesktopLocaleAdapter } from "./platform/i18n-adapter";
 import { captureEvent } from "@multica/core/analytics";
+import { AppearanceSync } from "@multica/views/common/appearance-sync";
 import { RESOURCES } from "@multica/views/locales";
 import { DesktopClientUsageReporter } from "./platform/client-usage-reporter";
 import { DiagnosticRouteReporter } from "./platform/diagnostic-route-reporter";
@@ -143,12 +146,12 @@ function AppContent() {
 
   // Listen for invite IDs delivered via deep link (multica://invite/<id>).
   // We open the overlay regardless of login state — if the user isn't logged
-  // in, InvitePage's queries will fail and render the "not found" state,
+  // in, InvitationsPage's queries will fail and render the "not found" state,
   // which is acceptable; the expected pre-flight happens in the web app
   // (login + next=/invite/... dance) before the deep link is ever dispatched.
   useEffect(() => {
     return window.desktopAPI.onInviteOpen((invitationId) => {
-      useWindowOverlayStore.getState().open({ type: "invite", invitationId });
+      useWindowOverlayStore.getState().open({ type: "invitations", invitationId });
     });
   }, []);
 
@@ -470,6 +473,7 @@ export default function App() {
 
   return (
     <ThemeProvider>
+      <AppearanceSync />
       {runtimeConfigResult.ok ? (
         <CoreProvider
           apiBaseUrl={runtimeConfigResult.config.apiUrl}
@@ -487,6 +491,7 @@ export default function App() {
         >
           <DictationProvider value={desktopDictationEngineFactory}>
           <DesktopAuthSessionBridge />
+          <NativeContextMenu />
           {windowContext.kind === "main" && <DiagnosticRouteReporter />}
           {windowContext.kind === "main" && <WorkspaceWindowBridge />}
           {windowContext.kind === "main" && <IssueDeepLinkBridge />}
@@ -501,6 +506,12 @@ export default function App() {
             <AppContent />
           )}
           </DictationProvider>
+          {/* Opt-in dev status bar; see "Dev Toolbar" in CONTRIBUTING.md. */}
+          {import.meta.env.DEV &&
+            import.meta.env.VITE_DEV_TOOLBAR &&
+            windowContext.kind === "main" && (
+              <DesktopDevToolbar apiUrl={runtimeConfigResult.config.apiUrl} />
+            )}
         </CoreProvider>
       ) : (
         <BlockingRuntimeConfigError message={runtimeConfigResult.error.message} />

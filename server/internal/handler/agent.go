@@ -24,6 +24,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/projectaccess"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -400,6 +401,10 @@ type TaskCancellationActor struct {
 }
 
 type AgentTaskResponse struct {
+	// Restricted marks a run on an issue in a private project the caller
+	// cannot see (MUL-8472): only identity, status, timing and usage remain.
+	Restricted bool `json:"restricted,omitempty"`
+
 	StartClaimSupported      bool                   `json:"start_claim_supported,omitempty"`
 	CancelledByCommentChange bool                   `json:"cancelled_by_comment_change,omitempty"`
 	CancelledBy              *TaskCancellationActor `json:"cancelled_by,omitempty"`
@@ -458,12 +463,14 @@ type AgentTaskResponse struct {
 	ParentTaskID       *string                  `json:"parent_task_id,omitempty"`
 	IsLeaderTask       bool                     `json:"is_leader_task,omitempty"`
 	LeaderRoleResolved bool                     `json:"leader_role_resolved,omitempty"` // claim-only capability, always true here: IsLeaderTask/SquadID authoritatively answer "is this a leader run", so the daemon must not infer the role from briefing text. Servers predating it make no such promise — before #4951 they sent no is_leader_task at all, after it they sent the flag without guaranteeing a briefing — so a daemon seeing no capability keeps the legacy inference. Never rendered into a prompt; see daemon.taskIsSquadLeader (MUL-5811). Mirror field: internal/daemon/types.go, same JSON name
+	DocsEnabled        bool                     `json:"docs_enabled,omitempty"`         // the docs_v1 flag at claim time. The daemon writes the `multica doc` and mention://doc lines into the agent brief only when true, so agents are not pointed at an API that answers 403 docs_disabled. Mirror field: internal/daemon/types.go, same JSON name
 	Agent              *TaskAgentData           `json:"agent,omitempty"`
 	ConnectedApps      []ConnectedAppData       `json:"connected_apps,omitempty"` // daemon-claim only: per-run app capabilities mounted through runtime MCP overlays
 	Repos              []RepoData               `json:"repos,omitempty"`
 	ProjectID          string                   `json:"project_id,omitempty"`          // issue's project, when present
 	ProjectTitle       string                   `json:"project_title,omitempty"`       // for surfacing in agent context
 	ProjectDescription string                   `json:"project_description,omitempty"` // durable project-level context injected into the brief
+	ProjectArchived    bool                     `json:"project_archived,omitempty"`    // project is archived: the brief tells the agent not to file new issues into it
 	ProjectResources   []ProjectResourceData    `json:"project_resources,omitempty"`   // resources attached to the project
 	CreatedAt          string                   `json:"created_at"`
 	PriorSessionID     string                   `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
@@ -565,6 +572,8 @@ type AgentTaskResponse struct {
 	ChatSource               *protocol.ChatSource `json:"chat_source,omitempty"`
 	ChatInThread             bool                 `json:"chat_in_thread,omitempty"`            // true when the latest @mention was a thread reply; tells the agent to start with `multica chat thread` vs `multica chat history`
 	ChatMessage              string               `json:"chat_message,omitempty"`              // user message for chat tasks
+	ChatSkillMessage         *string              `json:"chat_skill_message,omitempty"`        // verified member-authored input eligible for explicit skill selection
+	ChatResumeMessage        *string              `json:"chat_resume_message,omitempty"`       // excludes guidance already delivered to the resumed session
 	ChatMessageAttachments   []ChatAttachmentMeta `json:"chat_message_attachments,omitempty"`  // attachments on the user message — agent calls `multica attachment download <id>` per entry
 	ChatIntro                bool                 `json:"chat_intro,omitempty"`                // legacy compatibility for historical is_agent_intro sessions; new agent creation no longer creates these chats
 	AutopilotRunID           string               `json:"autopilot_run_id,omitempty"`          // non-empty for autopilot-spawned tasks
@@ -640,6 +649,10 @@ type AgentTaskResponse struct {
 	// owning user; the daemon must not fall back to its own credential. See
 	// MUL-3292.
 	AuthToken string `json:"auth_token,omitempty"`
+
+	// ChatFeishuSource is the Feishu ids of the message this task answers,
+	// from its frozen delivery. Absent for other surfaces.
+	ChatFeishuSource *protocol.FeishuSource `json:"chat_feishu_source,omitempty"`
 }
 
 // TaskAttribution is the wire shape of a run's accountable-human provenance
@@ -1222,6 +1235,23 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list agents")
 		return
 	}
+	if projectaccess.IsGuestRole(member.Role) {
+		// Not the agent directory: only the agents the guest meets in its
+		// projects, with just enough to render their names.
+		seen, err := h.guestAgentIDs(r.Context(), member)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list agents")
+			return
+		}
+		names := make([]AgentResponse, 0, len(seen))
+		for _, a := range agents {
+			if seen[a.ID.Bytes] {
+				names = append(names, guestAgentView(h.agentToResponse(a)))
+			}
+		}
+		writeJSON(w, http.StatusOK, names)
+		return
+	}
 	runtimeAvailabilityByID, err := h.loadAgentRuntimeAvailability(r.Context(), agents, workspaceID, userID, member.Role, time.Now())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load agent runtime availability")
@@ -1579,7 +1609,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	// — this runtime's own discovered catalog is. Keeps a Hermes Agent user's
 	// clear 400 instead of accepting a level the daemon would later drop.
 	if req.ThinkingLevel != "" {
-		switch h.acpThinkingDecision(r.Context(), runtime.Provider, runtime.ID) {
+		switch h.acpThinkingDecision(r.Context(), runtime.Provider, runtime.ID, req.Model, req.ThinkingLevel) {
 		case acpEffortAbsent:
 			writeError(w, http.StatusBadRequest, thinkingCapabilityRejection(runtime.Provider))
 			return
@@ -2304,7 +2334,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, thinkingLevelRejection(provider, value))
 				return
 			}
-			switch h.acpThinkingDecision(r.Context(), provider, targetRuntimeID) {
+			switch h.acpThinkingDecision(r.Context(), provider, targetRuntimeID, effectiveModelValue(params, existing), value) {
 			case acpEffortAbsent:
 				writeError(w, http.StatusBadRequest, thinkingCapabilityRejection(provider))
 				return
@@ -2335,7 +2365,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, existingThinkingLevelRejection(provider, existing.ThinkingLevel.String))
 			return
 		}
-		switch h.acpThinkingDecision(r.Context(), provider, targetRuntimeID) {
+		switch h.acpThinkingDecision(r.Context(), provider, targetRuntimeID, effectiveModelValue(params, existing), existing.ThinkingLevel.String) {
 		case acpEffortAbsent:
 			writeError(w, http.StatusBadRequest, existingThinkingCapabilityRejection(provider, existing.ThinkingLevel.String))
 			return
@@ -2564,6 +2594,11 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A cap change can make the agent's queued work claimable right away
+	// (#10455). Nudge its runtime now that the write is visible, as a runtime
+	// cap change does, instead of leaving the queue to the daemon's next poll.
+	// A runtime switch above already woke the same runtime.
+	capChanged := req.MaxConcurrentTasks != nil && *req.MaxConcurrentTasks != existing.MaxConcurrentTasks
 
 	// Nullable runtime overrides: null/empty in the request means explicitly
 	// clear the field. COALESCE in UpdateAgent cannot set a column to NULL, so
@@ -2615,6 +2650,9 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if capChanged && updated.RuntimeID.Valid && switchedRuntime == nil && h.TaskService != nil {
+		h.TaskService.NotifyRuntimeCapacityChanged(updated.RuntimeID)
+	}
 	for _, task := range movedTasks {
 		h.TaskService.NotifyTaskRuntimeChanged(r.Context(), task)
 	}
@@ -2826,11 +2864,31 @@ var ambiguousACPEffortProviders = map[string]bool{
 // turns an undiscovered catalog into a refusal, because for those the name
 // genuinely does not answer the question and guessing "yes" is what let a Hermes
 // Agent user persist a level the daemon would later drop.
-func (h *Handler) acpThinkingDecision(ctx context.Context, provider string, runtimeID pgtype.UUID) acpEffortEvidence {
+func partialEffortCatalogKey(runtimeID string) string {
+	return "partial-effort:" + runtimeID
+}
+
+func (h *Handler) acpThinkingDecision(ctx context.Context, provider string, runtimeID pgtype.UUID, model, level string) acpEffortEvidence {
 	if !agent.UsesACPCatalogThinking(provider) {
 		return acpEffortPresent
 	}
-	snapshot := h.cachedModelCatalog(ctx, uuidToString(runtimeID))
+	snapshot, partial := h.currentModelCatalog(ctx, uuidToString(runtimeID), provider)
+	if partial {
+		for _, entry := range snapshot.Models {
+			if model == "" && !entry.Default || model != "" && entry.ID != model {
+				continue
+			}
+			if entry.Thinking != nil {
+				for _, option := range entry.Thinking.SupportedLevels {
+					if option.Value == level {
+						return acpEffortPresent
+					}
+				}
+			}
+			break
+		}
+		return acpEffortUnknown
+	}
 	if snapshot == nil || len(snapshot.Models) == 0 {
 		if ambiguousACPEffortProviders[provider] {
 			return acpEffortUnknown
@@ -3048,6 +3106,9 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 		PageLimit: int32(limit + 1),
 	})
 	if err != nil {
+		if writeQueryCancellation(w, r, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to list agent tasks")
 		return
 	}
@@ -3070,20 +3131,37 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := h.redactForeignChatTaskContent(r.Context(), requestUserID(r), tasks, resp); err != nil {
+		if writeQueryCancellation(w, r, err) {
+			return
+		}
 		slog.Warn("list agent tasks: resolve chat owners failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to list agent tasks")
 		return
 	}
 	h.hydrateTaskSupplementMetadata(r.Context(), r, agent.WorkspaceID, tasks, resp)
+	if err := h.redactHiddenProjectTasks(r, workspaceID, tasks, resp); err != nil {
+		if writeQueryCancellation(w, r, err) {
+			return
+		}
+		slog.Warn("list agent tasks: resolve project access failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+		writeError(w, http.StatusInternalServerError, "failed to list agent tasks")
+		return
+	}
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
 	if includeUsage {
 		if err := h.hydrateAgentTaskUsage(r.Context(), agent.ID, taskIDs, resp); err != nil {
+			if writeQueryCancellation(w, r, err) {
+				return
+			}
 			slog.Warn("list agent task usage failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to list agent task usage")
 			return
 		}
 	}
 
+	if writeQueryCancellation(w, r, r.Context().Err()) {
+		return
+	}
 	if nextCursor != "" {
 		w.Header().Set(HeaderAgentTasksNextCursor, nextCursor)
 	}
@@ -3227,18 +3305,44 @@ func (h *Handler) ListWorkspaceWorkingAgents(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Issues in private projects the caller cannot see (MUL-8472) are left
+	// out of issue_ids; the agent and its running count stay, as on the
+	// redacted run list.
+	hidden, ok := h.requestHiddenProjects(w, r, workspaceID)
+	if !ok {
+		return
+	}
+	var issueIDs []pgtype.UUID
+	for _, row := range rows {
+		issueIDs = append(issueIDs, row.IssueIds...)
+	}
+	hiddenIssues, err := h.hiddenIssueIDs(r, hidden, issueIDs)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve project access")
+		return
+	}
+
 	resp := make([]WorkspaceWorkingAgent, 0, len(rows))
 	for _, row := range rows {
 		agentID := uuidToString(row.ID)
 		if _, ok := allowed[agentID]; !ok {
 			continue
 		}
+		visibleIssues := row.IssueIds
+		if len(hiddenIssues) > 0 {
+			visibleIssues = make([]pgtype.UUID, 0, len(row.IssueIds))
+			for _, id := range row.IssueIds {
+				if _, hide := hiddenIssues[id]; !hide {
+					visibleIssues = append(visibleIssues, id)
+				}
+			}
+		}
 		resp = append(resp, WorkspaceWorkingAgent{
 			ID:               agentID,
 			Name:             row.Name,
 			AvatarURL:        h.resolveAvatarURLPtr(textToPtr(row.AvatarUrl)),
 			RunningTaskCount: row.RunningTaskCount,
-			IssueIDs:         uuidStringsOrEmpty(row.IssueIds),
+			IssueIDs:         uuidStringsOrEmpty(visibleIssues),
 		})
 	}
 
@@ -3373,6 +3477,11 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 	}
 	if err := h.redactForeignChatTaskContent(r.Context(), requestUserID(r), kept, resp); err != nil {
 		slog.Warn("agent task snapshot: resolve chat owners failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to list agent task snapshot")
+		return
+	}
+	if err := h.redactHiddenProjectTasks(r, workspaceID, kept, resp); err != nil {
+		slog.Warn("agent task snapshot: resolve project access failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to list agent task snapshot")
 		return
 	}

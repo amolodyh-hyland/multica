@@ -252,7 +252,7 @@ func TestAcquireLocalDirectoryLockSkipsSquadLeaderTasks(t *testing.T) {
 	if leaderAssignment != nil {
 		t.Fatalf("leader assignment = %+v, want nil", leaderAssignment)
 	}
-	leaderRelease, abort := d.acquireLocalDirectoryLockIfNeeded(context.Background(), leader, slog.Default())
+	leaderRelease, abort := d.acquireLocalDirectoryLockIfNeeded(context.Background(), leader, slog.Default(), newTestTaskSlot(0))
 	if abort {
 		t.Fatal("leader lock acquisition aborted")
 	}
@@ -263,7 +263,7 @@ func TestAcquireLocalDirectoryLockSkipsSquadLeaderTasks(t *testing.T) {
 		t.Fatalf("holder after leader skip = %q, want empty", got)
 	}
 
-	release, abort := d.acquireLocalDirectoryLockIfNeeded(context.Background(), worker, slog.Default())
+	release, abort := d.acquireLocalDirectoryLockIfNeeded(context.Background(), worker, slog.Default(), newTestTaskSlot(0))
 	if abort {
 		t.Fatal("worker lock acquisition aborted")
 	}
@@ -275,7 +275,7 @@ func TestAcquireLocalDirectoryLockSkipsSquadLeaderTasks(t *testing.T) {
 		t.Fatalf("holder = %q, want %q", got, worker.ID)
 	}
 
-	leaderRelease, abort = d.acquireLocalDirectoryLockIfNeeded(context.Background(), leader, slog.Default())
+	leaderRelease, abort = d.acquireLocalDirectoryLockIfNeeded(context.Background(), leader, slog.Default(), newTestTaskSlot(0))
 	if abort {
 		t.Fatal("leader lock acquisition aborted")
 	}
@@ -686,7 +686,7 @@ func TestAcquireLocalDirectoryLock_CancelDuringWait(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		rel, abort := d.acquireLocalDirectoryLockIfNeeded(context.Background(), task, slog.Default())
+		rel, abort := d.acquireLocalDirectoryLockIfNeeded(context.Background(), task, slog.Default(), newTestTaskSlot(0))
 		done <- result{release: rel, abort: abort}
 	}()
 
@@ -773,7 +773,7 @@ func TestAcquireLocalDirectoryLock_ParentCancellationReportsWaitFailure(t *testi
 	}
 	done := make(chan result, 1)
 	go func() {
-		rel, abort := d.acquireLocalDirectoryLockIfNeeded(ctx, task, slog.Default())
+		rel, abort := d.acquireLocalDirectoryLockIfNeeded(ctx, task, slog.Default(), newTestTaskSlot(0))
 		done <- result{release: rel, abort: abort}
 	}()
 
@@ -853,7 +853,7 @@ func TestAcquireLocalDirectoryLock_EarlyFailureReportsWithCancelledParent(t *tes
 
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
-			release, abort := d.acquireLocalDirectoryLockIfNeeded(ctx, task, slog.Default())
+			release, abort := d.acquireLocalDirectoryLockIfNeeded(ctx, task, slog.Default(), newTestTaskSlot(0))
 			if !abort {
 				t.Fatal("expected local_directory failure to abort task")
 			}
@@ -908,6 +908,7 @@ func TestAcquireLocalDirectoryLockSkipsWorktreeMode(t *testing.T) {
 			context.Background(),
 			Task{ID: taskID, ProjectResources: resources},
 			slog.Default(),
+			newTestTaskSlot(0),
 		)
 		if abort {
 			t.Fatalf("%s: acquisition aborted", taskID)
@@ -1009,6 +1010,7 @@ func TestAcquireLocalDirectoryLockRejectsUnknownExecutionMode(t *testing.T) {
 		context.Background(),
 		Task{ID: "t1", ProjectResources: resources},
 		slog.Default(),
+		newTestTaskSlot(0),
 	)
 	if !abort {
 		t.Error("abort = false; the task was allowed to run with an unsupported mode")
@@ -1125,7 +1127,7 @@ func TestChatTaskSkipsPathMutexButKeepsAssignment(t *testing.T) {
 
 	// The coding task takes the lock and keeps it for the rest of the test —
 	// this is the 20-minute build the chat turn used to queue behind.
-	release, abort := d.acquireLocalDirectoryLockIfNeeded(context.Background(), worker, slog.Default())
+	release, abort := d.acquireLocalDirectoryLockIfNeeded(context.Background(), worker, slog.Default(), newTestTaskSlot(0))
 	if abort {
 		t.Fatal("worker lock acquisition aborted")
 	}
@@ -1146,7 +1148,7 @@ func TestChatTaskSkipsPathMutexButKeepsAssignment(t *testing.T) {
 	}
 	done := make(chan acquireResult, 1)
 	go func() {
-		chatRelease, chatAbort := d.acquireLocalDirectoryLockIfNeeded(context.Background(), chat, slog.Default())
+		chatRelease, chatAbort := d.acquireLocalDirectoryLockIfNeeded(context.Background(), chat, slog.Default(), newTestTaskSlot(0))
 		done <- acquireResult{release: chatRelease, abort: chatAbort}
 	}()
 
@@ -1207,7 +1209,7 @@ func TestChatTaskOnWorktreeResourceKeepsAssignment(t *testing.T) {
 		localPathLocks: NewLocalPathLocker(),
 		logger:         slog.Default(),
 	}
-	release, abort := d.acquireLocalDirectoryLockIfNeeded(context.Background(), chat, slog.Default())
+	release, abort := d.acquireLocalDirectoryLockIfNeeded(context.Background(), chat, slog.Default(), newTestTaskSlot(0))
 	if abort {
 		t.Fatal("chat lock acquisition aborted")
 	}
@@ -1256,7 +1258,7 @@ func TestIssueTasksStillSerialiseOnPathMutex(t *testing.T) {
 		logger:             slog.Default(),
 		cancelPollInterval: time.Hour, // never poll; the test drives cancellation itself
 	}
-	release, abort := d.acquireLocalDirectoryLockIfNeeded(context.Background(), first, slog.Default())
+	release, abort := d.acquireLocalDirectoryLockIfNeeded(context.Background(), first, slog.Default(), newTestTaskSlot(0))
 	if abort || release == nil {
 		t.Fatalf("first issue task failed to take the lock (abort=%v)", abort)
 	}
@@ -1267,7 +1269,7 @@ func TestIssueTasksStillSerialiseOnPathMutex(t *testing.T) {
 	blocked := make(chan struct{})
 	go func() {
 		defer close(blocked)
-		secondRelease, _ := d.acquireLocalDirectoryLockIfNeeded(ctx, second, slog.Default())
+		secondRelease, _ := d.acquireLocalDirectoryLockIfNeeded(ctx, second, slog.Default(), newTestTaskSlot(0))
 		if secondRelease != nil {
 			secondRelease()
 		}
@@ -1341,7 +1343,7 @@ func TestNoneModeSkipsHeldRepositoryLockAndPreservesWriterLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	unlock, abort := d.acquireLocalDirectoryLockIfNeeded(context.Background(), task, slog.Default())
+	unlock, abort := d.acquireLocalDirectoryLockIfNeeded(context.Background(), task, slog.Default(), newTestTaskSlot(0))
 	if abort || unlock != nil {
 		t.Fatal("none-mode turn acquired a repository lock")
 	}

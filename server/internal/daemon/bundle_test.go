@@ -148,7 +148,7 @@ func TestBundleDelegationLifecycle(t *testing.T) {
 				quiescent.Store(true)
 				return TaskResult{Status: "completed", Comment: "synthetic result"}, nil
 			})
-			d.handleTask(ctx, *tasks[0], 0)
+			d.handleTask(ctx, *tasks[0], newTestTaskSlot(0))
 			mu.Lock()
 			defer mu.Unlock()
 			want := "completed"

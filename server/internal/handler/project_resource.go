@@ -539,6 +539,9 @@ func (h *Handler) loadProjectForResource(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusNotFound, "project not found")
 		return db.Project{}, false
 	}
+	if !h.requireProjectVisible(w, r, uuidToString(wsUUID), project.ID, http.StatusNotFound, "project not found") {
+		return db.Project{}, false
+	}
 	return project, true
 }
 
@@ -976,10 +979,11 @@ type claimProjectContext struct {
 	ProjectID    string
 	Title        string
 	Description  string
-	Instructions string
-	Knowledge    []knowledge.Binding
+	Archived     bool
 	Resources    []ProjectResourceData
 	Repos        []RepoData
+	Instructions string
+	Knowledge    []knowledge.Binding
 }
 
 // applyTo copies the resolved context onto a claim response. Callers assign the
@@ -991,6 +995,7 @@ func (c claimProjectContext) applyTo(resp *AgentTaskResponse) {
 	resp.ProjectDescription = c.Description
 	resp.ProjectInstructions = c.Instructions
 	resp.ProjectKnowledge = c.Knowledge
+	resp.ProjectArchived = c.Archived
 	if len(c.Resources) > 0 {
 		resp.ProjectResources = c.Resources
 	}
@@ -1034,6 +1039,7 @@ func (h *Handler) resolveClaimProjectContext(ctx context.Context, projectID, wor
 			out.Title = project.Title
 			out.Description = project.Description.String
 			out.Instructions = project.Instructions.String
+			out.Archived = project.ArchivedAt.Valid
 
 			rows, resErr := h.Queries.ListProjectResourcesInWorkspace(ctx, db.ListProjectResourcesInWorkspaceParams{
 				ProjectID:   project.ID,

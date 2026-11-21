@@ -69,6 +69,10 @@ func readZcodeConfig(path string, into any) error {
 // authoritative. A lease protects the snapshot until session cleanup.
 func prepareZcodeRuntimeEnv(ctx context.Context, executable string, env []string) ([]string, func(), error) {
 	noop := func() {}
+	env = zcodeRuntimeEnv(executable, env)
+	if script, desktop := zcodeDesktopScript(executable); desktop {
+		executable = script
+	}
 	if zcodeEnvValue(env, zcodePersonalConfigEnv) != "" {
 		return zcodeRuntimeEnv(executable, env), noop, nil
 	}

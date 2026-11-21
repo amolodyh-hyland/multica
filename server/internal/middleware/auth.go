@@ -254,7 +254,7 @@ func authWithPATQueryer(queries *db.Queries, patQueries authPATQueryer, patCache
 						return
 					}
 					r.Header.Set("X-User-ID", entry.UserID)
-					ctx := WithAuthCredential(r.Context(), AuthCredential{Kind: AuthCredentialPersonalAccess})
+					ctx := WithAuthCredential(withPersonalAccessToken(r.Context()), AuthCredential{Kind: AuthCredentialPersonalAccess})
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
@@ -296,7 +296,7 @@ func authWithPATQueryer(queries *db.Queries, patQueries authPATQueryer, patCache
 
 				r.Header.Set("X-User-ID", userID)
 
-				ctx := WithAuthCredential(r.Context(), AuthCredential{Kind: AuthCredentialPersonalAccess})
+				ctx := WithAuthCredential(withPersonalAccessToken(r.Context()), AuthCredential{Kind: AuthCredentialPersonalAccess})
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
