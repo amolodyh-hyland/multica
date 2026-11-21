@@ -3,6 +3,7 @@ package inboxread
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,49 @@ func (s *testStarter) Begin(context.Context) (pgx.Tx, error) { s.calls.Add(1); r
 type blockedStarter struct{}
 
 func (blockedStarter) Begin(ctx context.Context) (pgx.Tx, error) { <-ctx.Done(); return nil, ctx.Err() }
+
+type readOnlyStarter struct{ tx *readOnlyTx }
+
+func (s readOnlyStarter) Begin(context.Context) (pgx.Tx, error) { return s.tx, nil }
+
+type readOnlyTx struct {
+	pgx.Tx
+	statements []string
+	rejectMode bool
+	rolledBack bool
+}
+
+func (tx *readOnlyTx) Exec(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
+	tx.statements = append(tx.statements, sql)
+	if tx.rejectMode && sql == "SET TRANSACTION ISOLATION LEVEL READ COMMITTED READ ONLY" {
+		return pgconn.CommandTag{}, errors.New("read-only setup refused")
+	}
+	return pgconn.CommandTag{}, nil
+}
+func (tx *readOnlyTx) Commit(context.Context) error { return nil }
+func (tx *readOnlyTx) Rollback(context.Context) error {
+	tx.rolledBack = true
+	return nil
+}
+
+func TestReadOnlyModePrecedesQuery(t *testing.T) {
+	for _, rejectMode := range []bool{false, true} {
+		t.Run(fmt.Sprint("reject=", rejectMode), func(t *testing.T) {
+			tx := &readOnlyTx{rejectMode: rejectMode}
+			called := false
+			err := New(Config{}).Run(context.Background(), "list", readOnlyStarter{tx}, func(_ context.Context, _ pgx.Tx) error {
+				called = true
+				if len(tx.statements) == 0 || tx.statements[0] != "SET TRANSACTION ISOLATION LEVEL READ COMMITTED READ ONLY" {
+					t.Fatalf("query ran before database-enforced read-only mode: %v", tx.statements)
+				}
+				return nil
+			})
+			if (err != nil) != rejectMode || called == rejectMode || !tx.rolledBack {
+				t.Fatalf("err=%v called=%v rolledBack=%v", err, called, tx.rolledBack)
+			}
+		})
+	}
+}
 
 func eventually(t *testing.T, condition func() bool) {
 	t.Helper()

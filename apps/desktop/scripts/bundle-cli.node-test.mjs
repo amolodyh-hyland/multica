@@ -33,7 +33,7 @@ for (const [platform, arch, goos, goarch, foreignCaller] of [
         mkdirSync(bin);
         mkdirSync(join(root, "server"));
         mkdirSync(caller);
-        for (const name of ["bundle-cli.mjs", "package.mjs"]) {
+        for (const name of ["bundle-cli.mjs", "package.mjs", "bundle-dictation.mjs"]) {
           copyFileSync(join(scriptDir, name), join(scripts, name));
         }
         fakeExecutable(join(bin, "git"), `

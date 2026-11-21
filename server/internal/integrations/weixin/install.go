@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -77,7 +78,7 @@ func (s *InstallService) api(base, token string) *apiClient {
 	return newAPI(base, token, s.client)
 }
 
-func (s *InstallService) Begin(ctx context.Context, workspace, agent, initiator pgtype.UUID) (LoginView, error) {
+func (s *InstallService) BeginLogin(ctx context.Context, workspace, agent, initiator pgtype.UUID) (LoginView, error) {
 	state := loginState{BaseURL: DefaultBaseURL}
 	var tokens []string
 	inst, err := s.q.GetWeixinInstallationForAgent(ctx, db.GetWeixinInstallationForAgentParams{WorkspaceID: workspace, AgentID: agent})
@@ -103,7 +104,10 @@ func (s *InstallService) Begin(ctx context.Context, workspace, agent, initiator 
 	if err != nil {
 		return LoginView{}, err
 	}
-	tx, err := s.tx.Begin(ctx)
+	scope := bindingtx.Workspaces(workspace).WithPreparation(func(ctx context.Context, before pgx.Tx) error {
+		return s.q.WithTx(before).LockChannelInstallationAppIDSlot(ctx, db.LockChannelInstallationAppIDSlotParams{ChannelType: "weixin-login", AppID: util.UUIDToString(agent) + ":" + util.UUIDToString(initiator)})
+	})
+	tx, err := bindingtx.Begin(ctx, s.tx, scope)
 	if err != nil {
 		return LoginView{}, err
 	}
@@ -111,9 +115,6 @@ func (s *InstallService) Begin(ctx context.Context, workspace, agent, initiator 
 	q := s.q.WithTx(tx)
 	// Serialize a user's repeated Connect clicks; the newest QR cancels the old
 	// one even when the two requests land on different replicas.
-	if err := q.LockChannelInstallationAppIDSlot(ctx, db.LockChannelInstallationAppIDSlotParams{ChannelType: "weixin-login", AppID: util.UUIDToString(agent) + ":" + util.UUIDToString(initiator)}); err != nil {
-		return LoginView{}, err
-	}
 	if err := q.CancelPreviousWeixinLogins(ctx, db.CancelPreviousWeixinLoginsParams{WorkspaceID: workspace, AgentID: agent, InitiatorUserID: initiator}); err != nil {
 		return LoginView{}, err
 	}
@@ -265,7 +266,10 @@ func authorizeLogin(ctx context.Context, q *db.Queries, session db.WeixinLoginSe
 }
 
 func (s *InstallService) complete(ctx context.Context, session db.WeixinLoginSession, result qrStatus) error {
-	tx, err := s.tx.Begin(ctx)
+	scope := bindingtx.ChannelSlot(session.WorkspaceID, string(TypeWeixin), result.BotID).WithPreparation(func(ctx context.Context, before pgx.Tx) error {
+		return s.q.WithTx(before).LockChannelInstallationAppIDSlot(ctx, db.LockChannelInstallationAppIDSlotParams{ChannelType: string(TypeWeixin), AppID: result.BotID})
+	})
+	tx, err := bindingtx.Begin(ctx, s.tx, scope)
 	if err != nil {
 		return err
 	}
@@ -276,9 +280,6 @@ func (s *InstallService) complete(ctx context.Context, session db.WeixinLoginSes
 	}
 	member, err := authorizeLogin(ctx, q, session)
 	if err != nil {
-		return err
-	}
-	if err := q.LockChannelInstallationAppIDSlot(ctx, db.LockChannelInstallationAppIDSlotParams{ChannelType: string(TypeWeixin), AppID: result.BotID}); err != nil {
 		return err
 	}
 	owner, err := q.GetChannelInstallationSlotOwnerByAppID(ctx, db.GetChannelInstallationSlotOwnerByAppIDParams{ChannelType: string(TypeWeixin), AppID: result.BotID})
@@ -343,7 +344,7 @@ func (s *InstallService) confirmExisting(ctx context.Context, session db.WeixinL
 	if err != nil || !id.Valid || len(state.InstallationConfig) == 0 {
 		return ErrProtocol
 	}
-	tx, err := s.tx.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.tx, bindingtx.Workspaces(session.WorkspaceID))
 	if err != nil {
 		return err
 	}
@@ -375,7 +376,7 @@ func (s *InstallService) List(ctx context.Context, workspace pgtype.UUID) ([]db.
 }
 
 func (s *InstallService) Revoke(ctx context.Context, installation, workspace, actor pgtype.UUID) error {
-	tx, err := s.tx.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.tx, bindingtx.Workspaces(workspace))
 	if err != nil {
 		return err
 	}

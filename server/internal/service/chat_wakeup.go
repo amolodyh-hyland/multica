@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -268,7 +269,7 @@ func (s *ChatWakeupService) Create(ctx context.Context, task db.AgentTaskQueue, 
 	requester := chatTurnRequester(task, session)
 
 	var created db.ChatWakeup
-	err = s.inTx(ctx, func(tx pgx.Tx, qtx *db.Queries) error {
+	err = s.inTx(ctx, session.WorkspaceID, func(tx pgx.Tx, qtx *db.Queries) error {
 		// Serializes with DeleteChatSession, which removes the session's
 		// wakeups under its own lock on this row.
 		locked, err := qtx.LockChatSessionForEnqueue(ctx, session.ID)
@@ -370,7 +371,7 @@ func (s *ChatWakeupService) Update(ctx context.Context, task db.AgentTaskQueue, 
 		return db.ChatWakeup{}, err
 	}
 	var updated db.ChatWakeup
-	err = s.inTx(ctx, func(tx pgx.Tx, qtx *db.Queries) error {
+	err = s.inTx(ctx, session.WorkspaceID, func(tx pgx.Tx, qtx *db.Queries) error {
 		current, err := qtx.LockChatWakeupInSession(ctx, db.LockChatWakeupInSessionParams{ID: id, ChatSessionID: session.ID})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrChatWakeupNotFound
@@ -540,9 +541,16 @@ var (
 
 // process decides whether a due wakeup starts a turn now and, if so, starts it.
 func (s *ChatWakeupService) process(ctx context.Context, id pgtype.UUID) error {
+	snapshot, err := s.Tasks.Queries.GetChatWakeup(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
 	var decision *chatWakeupDecision
 	var locked db.ChatWakeup
-	err := s.inTx(ctx, func(tx pgx.Tx, qtx *db.Queries) error {
+	err = s.inTx(ctx, snapshot.WorkspaceID, func(tx pgx.Tx, qtx *db.Queries) error {
 		w, err := qtx.LockChatWakeup(ctx, id)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
@@ -743,7 +751,7 @@ func (s *ChatWakeupService) fire(ctx context.Context, d chatWakeupDecision) (db.
 	content := s.turnInput(ctx, w, d.reason, d.observed, d.retry)
 	var task db.AgentTaskQueue
 	var fired db.ChatWakeup
-	err = s.inTx(ctx, func(_ pgx.Tx, qtx *db.Queries) error {
+	err = s.inTx(ctx, w.WorkspaceID, func(_ pgx.Tx, qtx *db.Queries) error {
 		current, err := qtx.LockChatWakeup(ctx, w.ID)
 		if err != nil {
 			return err
@@ -921,11 +929,11 @@ func truncateRunes(s string, max int) string {
 	return string(r[:max]) + "…"
 }
 
-func (s *ChatWakeupService) inTx(ctx context.Context, fn func(pgx.Tx, *db.Queries) error) error {
+func (s *ChatWakeupService) inTx(ctx context.Context, workspace pgtype.UUID, fn func(pgx.Tx, *db.Queries) error) error {
 	if s.Tasks.TxStarter == nil {
 		return errors.New("chat wakeup: transaction starter is required")
 	}
-	tx, err := s.Tasks.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, s.Tasks.TxStarter, bindingtx.Workspaces(workspace))
 	if err != nil {
 		return err
 	}

@@ -224,7 +224,7 @@ func TestDaemonAuth_StripsClientSuppliedUserID(t *testing.T) {
 	}, auth.AuthCacheTTL)
 	const rawPAT = "mul_user_header_strip_test"
 	patCache := auth.NewPATCache(rdb)
-	patCache.Set(context.Background(), auth.HashToken(rawPAT), "44444444-4444-4444-4444-444444444444", auth.AuthCacheTTL)
+	patCache.Set(context.Background(), auth.HashToken(rawPAT), auth.PATCacheEntry{UserID: "44444444-4444-4444-4444-444444444444"}, auth.AuthCacheTTL)
 
 	var gotUserID string
 	mw := DaemonAuth(nil, patCache, cache, nil)

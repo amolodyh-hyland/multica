@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 
 	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -349,7 +350,7 @@ func (h *Handler) writeProjectUpdate(w http.ResponseWriter, r *http.Request, par
 		}
 		return project, true
 	}
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(params.WorkspaceID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
 		return db.Project{}, false
@@ -558,7 +559,7 @@ func (h *Handler) AddProjectMembers(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(project.WorkspaceID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
 		return

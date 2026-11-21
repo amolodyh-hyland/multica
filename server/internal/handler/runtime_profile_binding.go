@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -25,7 +26,7 @@ type profileMachineBindingResult struct {
 // daemon from recreating a removed instance before the binding commits.
 func (h *Handler) bindRuntimeProfileMachine(ctx context.Context, params db.UpdateRuntimeProfileParams) (profileMachineBindingResult, error) {
 	var result profileMachineBindingResult
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(params.WorkspaceID))
 	if err != nil {
 		return result, err
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 )
 
 var ErrBusy = errors.New("inbox read capacity unavailable")
@@ -167,7 +168,7 @@ func (g *Guard) Run(ctx context.Context, operation string, starter TxStarter, qu
 
 	setupCtx, setupCancel := context.WithTimeout(ctx, setupTimeout)
 	defer setupCancel()
-	tx, err := starter.Begin(setupCtx)
+	tx, err := bindingtx.BeginReadOnly(setupCtx, starter, bindingtx.ReadCommitted)
 	if err != nil {
 		return fmt.Errorf("begin inbox read: %w", err)
 	}

@@ -107,7 +107,7 @@ func TestZcodeLinuxDesktopProviderConfig(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	env, cleanup, err := prepareZcodeRuntimeEnv(bin, []string{"ZCODE_DATA_BASE_DIR=" + root})
+	env, cleanup, err := prepareZcodeRuntimeEnv(context.Background(), bin, []string{"ZCODE_DATA_BASE_DIR=" + root})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -14,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -560,7 +560,7 @@ func (h *Handler) AckTaskSupplement(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ackChatTaskSupplement(w http.ResponseWriter, r *http.Request, task db.AgentTaskQueue, messageID pgtype.UUID, delivered bool) {
-	tx, err := h.TxStarter.Begin(r.Context())
+	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Owners(task.ID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to acknowledge chat guidance")
 		return

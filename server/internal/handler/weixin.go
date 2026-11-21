@@ -80,7 +80,7 @@ func (h *Handler) BeginWeixinLogin(w http.ResponseWriter, r *http.Request) {
 	if !h.canManageAgent(w, r, row) {
 		return
 	}
-	view, err := h.WeixinInstall.Begin(r.Context(), workspace, agent, initiator)
+	view, err := h.WeixinInstall.BeginLogin(r.Context(), workspace, agent, initiator)
 	if err != nil {
 		writeWeixinError(w, err)
 		return

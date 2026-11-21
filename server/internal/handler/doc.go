@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -344,7 +345,7 @@ func (h *Handler) CreateDoc(w http.ResponseWriter, r *http.Request) {
 	taskID, issueID := h.docTaskContext(r, actorType)
 
 	ctx := r.Context()
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(wsUUID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create doc")
 		return
@@ -459,7 +460,7 @@ func (h *Handler) UpdateDoc(w http.ResponseWriter, r *http.Request) {
 	taskID, issueID := h.docTaskContext(r, actorType)
 
 	ctx := r.Context()
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(wsUUID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update doc")
 		return
@@ -582,7 +583,7 @@ func (h *Handler) MoveDoc(w http.ResponseWriter, r *http.Request) {
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 
 	ctx := r.Context()
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(wsUUID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to move doc")
 		return
@@ -625,7 +626,7 @@ func (h *Handler) DeleteDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(wsUUID))
 	if err != nil {
 		writeError(w, 500, "failed to delete doc")
 		return
@@ -736,7 +737,7 @@ func (h *Handler) CreateDocFolder(w http.ResponseWriter, r *http.Request) {
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 
 	ctx := r.Context()
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(wsUUID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create folder")
 		return
@@ -851,7 +852,7 @@ func (h *Handler) MoveDocFolder(w http.ResponseWriter, r *http.Request) {
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 
 	ctx := r.Context()
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(wsUUID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to move folder")
 		return
@@ -905,7 +906,7 @@ func (h *Handler) DeleteDocFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := bindingtx.Begin(ctx, h.TxStarter, bindingtx.Workspaces(wsUUID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete folder")
 		return

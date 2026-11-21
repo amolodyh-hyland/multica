@@ -127,7 +127,7 @@ func newDatabaseFixture(t *testing.T) *databaseFixture {
 
 func (x *databaseFixture) begin(t *testing.T) pgtype.UUID {
 	t.Helper()
-	login, err := x.svc.Begin(context.Background(), x.workspace, x.agent, x.user)
+	login, err := x.svc.BeginLogin(context.Background(), x.workspace, x.agent, x.user)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +285,7 @@ func TestLoginTokensAreScopedAndBoundRedirectPreservesInstallation(t *testing.T)
 		t.Fatalf("repeat binding reset state: %v", err)
 	}
 	other := testUUID(t, x.f.Agent(t, "Another agent", ""))
-	if _, err := x.svc.Begin(context.Background(), x.workspace, other, x.user); err != nil {
+	if _, err := x.svc.BeginLogin(context.Background(), x.workspace, other, x.user); err != nil {
 		t.Fatal(err)
 	}
 	if tokens := x.tokens.Load().([]string); len(tokens) != 0 {
@@ -326,7 +326,7 @@ func TestLoginConflictNamesOnlyManageableAgents(t *testing.T) {
 	x := newDatabaseFixture(t)
 	x.connect(t)
 	other := testUUID(t, x.f.Agent(t, "Another agent", ""))
-	view, err := x.svc.Begin(context.Background(), x.workspace, other, x.user)
+	view, err := x.svc.BeginLogin(context.Background(), x.workspace, other, x.user)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +339,7 @@ func TestLoginConflictNamesOnlyManageableAgents(t *testing.T) {
 	x.f.Member(t, x.f.WorkspaceID, member, "member")
 	x.f.Exec(t, `UPDATE agent SET owner_id=$1 WHERE id=$2`, member, other)
 	memberID := testUUID(t, member)
-	view, err = x.svc.Begin(context.Background(), x.workspace, other, memberID)
+	view, err = x.svc.BeginLogin(context.Background(), x.workspace, other, memberID)
 	if err != nil {
 		t.Fatal(err)
 	}

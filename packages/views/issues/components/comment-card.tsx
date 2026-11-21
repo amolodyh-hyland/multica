@@ -35,6 +35,7 @@ import { useActorName } from "@multica/core/workspace/hooks";
 import { useLocale, useTimeAgo } from "../../i18n";
 import { DictationControls } from "../../editor/dictation-controls";
 import { useComposerDictation } from "../../editor/use-composer-dictation";
+import { StorageLimitNotice } from "../../billing/storage-limit-notice";
 import { ContentEditor, type ContentEditorRef, ReadonlyContent, useFileDropZone, FileDropOverlay, Attachment as AttachmentRenderer, AttachmentDownloadProvider, useUploadGate, useComposerSubmit } from "../../editor";
 import { useCommentUploads } from "./use-comment-uploads";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
@@ -391,7 +392,7 @@ function useEditAttachmentState(
   const dictation = useComposerDictation({ editorRef, resetKey: draftKey, disabled: !editing || !composerVisible || isDeletedComment(entry) });
   // `gate` widens the editor gate with coordinator-owned placeholders — see
   // CommentInput.
-  const { uploads, attachments: pendingAttachments, handleUpload, removeUpload, gate } =
+  const { uploads, attachments: pendingAttachments, handleUpload, removeUpload, gate, storageRefusal, dismissStorageRefusal } =
     useCommentUploads(draftKey, { issueId }, uploadGate, editorRef);
   const [retainedStandaloneIds, setRetainedStandaloneIds] = useState<Set<string> | null>(null);
   const triggerPreview = useCommentTriggerPreview({
@@ -564,6 +565,8 @@ function useEditAttachmentState(
     handleUpload,
     uploads,
     removeUpload,
+    storageRefusal,
+    dismissStorageRefusal,
     isDragOver,
     dropZoneProps,
     triggerPreview,
@@ -964,6 +967,9 @@ function CommentRow({
               attachments={edit.editorAttachments}
             />
           </div>
+          {edit.storageRefusal && (
+            <StorageLimitNotice refusal={edit.storageRefusal} onDismiss={edit.dismissStorageRefusal} className="mt-2" />
+          )}
           {edit.revisionConflict ? (
             <CommentRevisionConflict
               serverContent={entry.content ?? ""}
@@ -1575,6 +1581,9 @@ function CommentCardImpl({
                     attachments={edit.editorAttachments}
                   />
                 </div>
+                {edit.storageRefusal && (
+                  <StorageLimitNotice refusal={edit.storageRefusal} onDismiss={edit.dismissStorageRefusal} className="mt-2" />
+                )}
                 {edit.revisionConflict ? (
                   <CommentRevisionConflict
                     serverContent={entry.content ?? ""}
