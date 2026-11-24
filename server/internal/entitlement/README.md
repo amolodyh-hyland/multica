@@ -17,7 +17,7 @@ The client reads:
 
 - `schema_version`: only version 1 is accepted.
 - `policy_revision`: the effective-instruction generation, currently fixed at
-  `7` by Cloud and not deployment configuration. Cloud advances it when the
+  `10` by Cloud and not deployment configuration. Cloud advances it when the
   meaning or set of actionable instructions changes, including additive
   instructions; `schema_version` changes only for incompatible wire parsing.
 - `subscription_version`: the workspace's monotonic subscription revision. A
@@ -73,6 +73,16 @@ Revision 7 adds the `agent_invocation_members`, `runtime_member_sharing` and
 `team_app_accounts` features. It is safe in either order: an older consumer
 ignores features it does not know, and this consumer reads a policy without
 one as that feature `off` with reason `feature_missing`.
+
+`gates.dashboard_history_days` (revision 9) is optional like `members`: a
+missing or malformed gate, including a `limit` outside 1–365 or one carrying a
+period, is `off` with reason `gate_missing` or `gate_invalid` for that gate
+alone. See [Dashboard history limit](#dashboard-history-limit).
+
+`gates.app_tool_calls` (revision 10) is optional like `members`: a missing or
+malformed gate, including one without its period, is `off` with reason
+`gate_missing` or `gate_invalid` for that gate alone. See
+[Monthly app call limit](#monthly-app-call-limit).
 
 Responses tolerate unknown JSON fields and gates for additive compatibility.
 Unknown schema/action, malformed fields, a missing `autopilot_runs` gate, HTTP
@@ -217,6 +227,54 @@ Clients read `GET /api/workspaces/{id}/storage-usage` (member-readable), which
 returns `action` and, while a limit applies, `used_bytes` and `limit_bytes`;
 `reached` is present only under `enforce`.
 
+## Monthly app call limit
+
+`app_tool_calls` caps the Connected Apps tool calls a workspace sends to
+Composio in a Cloud-defined period (a UTC calendar month). Like
+`autopilot_runs` it carries a `limit`, the period, and under `enforce` a
+`first_rejection_per_limit` notification policy. `service.AppToolCallQuota`
+(`server/internal/service/app_tool_call_quota.go`) checks it; the gateway
+calls it through `connectedapps.CallQuota`.
+
+Usage is a counter, `app_tool_call_quota_period.used_count` per workspace and
+period, never a `COUNT` over `app_tool_call`. One conditional upsert counts a
+call right before it is sent to Composio: under `enforce` it only increments
+below the limit, so concurrent calls cannot take a workspace past it; under
+`observe` it always increments. A call that then fails upstream still counts,
+as Composio bills it.
+
+| Counted | Not counted |
+| --- | --- |
+| `apps_run_tool` calls the gateway sends to Composio (`toolRun`) | blocked calls, per-minute rate-limited calls, refused calls themselves |
+| Confirmed calls when the approval executes them (`executeApproved`) | pending confirmations, meta tools (list, search, get tool, connection requests), Remote MCP apps |
+
+Team and personal accounts both count toward the workspace that started the
+run. `enforce` refuses past the limit only after re-reading the policy with
+`RefreshGateNow`, so a workspace that upgraded or added seats moments ago is
+admitted. A cached policy whose period has already ended (the first minute of
+a month) is re-read the same way before counting a call or answering Billing;
+if Cloud still sends the old period, the call is admitted without counting and
+Billing shows no limit for that moment. The agent gets a tool error with the count, the limit and the reset
+time; the call is logged in `app_tool_call` as `quota_exceeded`, and a refused
+confirmed call fails its request. Owners and admins get one
+`app_tool_calls_quota_exceeded` Inbox item per limit and period, also when
+the limit returns to one already notified; a delivery with no recipient leaves
+the marker unset for the next refusal. Attempts past
+the limit are recorded in `entitlement_limit_overage` under gate
+`app_tool_calls`. `off`, and every self-hosted deployment, touches no table;
+the per-account per-minute limit applies regardless.
+
+Clients read `GET /api/workspaces/{id}/app-call-usage` (member-readable),
+which returns `action` and, while a limit applies, `used`, `limit`,
+`period_start` and `reset_at`; `reached` only under `enforce`. Owners and
+admins also get `members`: the period's calls per person who started the run
+or approved the call (`user_id` null for runs no person started), read from
+the `app_tool_call` rows whose `metered_period_start` is the period. The
+quota returns the period it counted a call in and the gateway records it, so
+the breakdown matches the counter even for a call that finishes after the
+month turned. Refused calls, an approved call that fails its checks before
+running, Remote MCP calls and every call while the gate is off have none.
+
 ## Paid features
 
 A paid feature is restricted for a workspace whose plan does not include it.
@@ -273,3 +331,39 @@ Clients read `GET /api/workspaces/{id}/features`, which returns only
 `available` (off or observe) or `locked` (enforce) per feature, and render
 read-only and upgrade states from it. The server enforces on every write
 regardless.
+
+## Dashboard history limit
+
+`dashboard_history_days` caps how many calendar days back the workspace
+dashboard can read. Its `limit` is a day count (1–365) and it has no period.
+Cloud sends it for every known plan: Free, Pro and Business (trials included)
+each get their own configured day count.
+
+Only `enforce` limits anything (`server/internal/handler/dashboard_history.go`).
+The six `/api/dashboard/*` endpoints then cut their cutoff to the first of the
+most recent N calendar days in the viewing time zone, whatever `days` asked
+for, including the date series' extra day of headroom and the days a weekly
+chart fetches to fill its leftmost week, and send the limit in
+`X-Dashboard-History-Limit-Days`. `off`, `observe` (including a downgraded
+stale `enforce`, marked `Downgraded` on the `Decision`) and self-hosted
+deployments read up to the request maximum of 371 days with no header. The
+runtime usage endpoints keep their own 365-day maximum and no plan limit.
+The dashboard's `365d` range follows the frontend flag
+`dashboard_history_365d`: published on by default, and
+`FF_DASHBOARD_HISTORY_365D=off` hides the range should the year-long queries
+be too slow for a deployment.
+
+`GET /api/workspaces/{id}/features` reports `limits.dashboard_history_days`
+only under `enforce`, so an observed rollout is invisible to users.
+
+Reads of `GET /api/dashboard/usage/by-agent`, the one dashboard endpoint
+fetched once per page load or range change with the range the viewer picked,
+are aggregated per workspace, UTC day, requested days and returned days in
+`dashboard_range_view` while Cloud is connected: view count, reads past the
+limit admitted under a configured observe, admitted because of a downgrade,
+and cut short under enforce, with the latest limit, action and reason. The
+write runs off the request path with its own 500 ms timeout; a failure drops
+the row and never changes the response. It selects its workspace row under
+`FOR KEY SHARE`, so a write racing workspace deletion either waits for it and
+inserts nothing or is removed by it. Counts are read requests, including
+the dashboard's periodic refresh, so use distinct workspaces for reach.

@@ -14,6 +14,7 @@ import { pathToFileURL } from "url";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import fixPath from "fix-path";
 import { createElectronBusyInstallPrompt, setupAutoUpdater } from "./updater";
+import { getEffectiveDialogLocale, setAppDialogLocale } from "./dialog-locale";
 import {
   prepareDaemonForUpdateInstall,
   resumeDaemonAfterAbortedUpdateInstall,
@@ -347,6 +348,7 @@ function handleDeepLink(url: string): void {
       });
       return;
     case "web-issue":
+    case "web-chat":
       dispatchToMainRenderer("issue:open-url", link.url);
       return;
   }
@@ -363,6 +365,10 @@ let lastKnownSystemLocale = "en";
 
 function getSystemLocale(): string {
   return app.getPreferredSystemLanguages()[0] ?? "en";
+}
+
+function getEffectiveLocale(): string {
+  return getEffectiveDialogLocale(getSystemLocale);
 }
 
 function loadRenderer(window: BrowserWindow): void {
@@ -577,8 +583,9 @@ function createMainWindow(saved: WindowState = {}): BrowserWindow {
 
   installRendererRecoveryHandlers(window as unknown as RendererRecoveryWindow, {
     isDev: is.dev,
-    showReloadPrompt: createElectronReloadPrompt((options) =>
-      dialog.showMessageBox(window, options),
+    showReloadPrompt: createElectronReloadPrompt(
+      (options) => dialog.showMessageBox(window, options),
+      getEffectiveLocale,
     ),
     getDiagnosticContext: () => {
       // No `windowUrl`: it is an absolute install path (`/Users/<name>/...`
@@ -667,8 +674,9 @@ function createIssueWindow(context: IssueWindowContext): void {
   }
   installRendererRecoveryHandlers(window as unknown as RendererRecoveryWindow, {
     isDev: is.dev,
-    showReloadPrompt: createElectronReloadPrompt((options) =>
-      dialog.showMessageBox(window, options),
+    showReloadPrompt: createElectronReloadPrompt(
+      (options) => dialog.showMessageBox(window, options),
+      getEffectiveLocale,
     ),
     getDiagnosticContext: () => {
       // No `windowUrl`: it is an absolute install path (`/Users/<name>/...`
@@ -1082,6 +1090,10 @@ if (!gotTheLock) {
       applyUnreadBadge();
     });
 
+    ipcMain.on("locale:set", (_event, rawLocale: unknown) => {
+      setAppDialogLocale(typeof rawLocale === "string" ? rawLocale : null);
+    });
+
     desktopInitialized = true;
     for (const saved of loadWindowSession(windowStateFile())) {
       createMainWindow(saved);
@@ -1099,7 +1111,7 @@ if (!gotTheLock) {
           return parent && !parent.isDestroyed()
             ? dialog.showMessageBox(parent, options)
             : dialog.showMessageBox(options);
-        }),
+        }, getEffectiveLocale),
       },
     });
     setupDaemonManager(

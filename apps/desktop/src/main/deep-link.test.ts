@@ -33,6 +33,12 @@ describe("parseDeepLink", () => {
     expect(parseDeepLink(url)).toEqual({ kind: "web-issue", url });
   });
 
+  it("keeps an instance-bearing chat URL for renderer validation", () => {
+    const url = "multica://open/chat?url=" + encodeURIComponent("https://tasks.example/acme/chat?session=chat-1");
+    expect(parseDeepLink(url)).toEqual({ kind: "web-chat", url });
+    expect(parseDeepLink("multica://open/chat/extra")).toBeNull();
+  });
+
   it("keeps the open workspace's legacy issue destination distinct", () => {
     expect(parseDeepLink("multica://open/issues/ACM-1")).toEqual({
       kind: "issue", slug: "open", issueId: "ACM-1",

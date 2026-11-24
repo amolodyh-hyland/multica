@@ -173,7 +173,7 @@ describe("chat add menu", () => {
     const upload = vi.fn();
     const { container } = render(<ChatAddMenu onSelectFile={upload} onSelectProject={vi.fn()} />, { wrapper: Wrapper });
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
-    expect(await screen.findByRole("menuitem", { name: "Attach file" })).toBeInTheDocument();
+    expect(await screen.findByRole("menuitem", { name: "Images or files" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Attach folder" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /Project context/ })).toBeInTheDocument();
     fireEvent.change(container.querySelector("input[webkitdirectory]")!, { target: { files: [file()] } });

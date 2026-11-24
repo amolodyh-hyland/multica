@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { paths } from "@multica/core/paths";
+import { issueRouteRef, paths } from "@multica/core/paths";
 import { useNavigation } from "@multica/views/navigation";
 
 /**
@@ -29,7 +29,7 @@ export function IssueDeepLinkBridge() {
   useEffect(() => {
     return window.desktopAPI.onIssueOpen(({ slug, issueId }) => {
       if (!slug || !issueId) return;
-      pushRef.current(paths.workspace(slug).issueDetail(issueId));
+      pushRef.current(paths.workspace(slug).issueDetail(issueRouteRef({ id: issueId, identifier: null })));
     });
   }, []);
 

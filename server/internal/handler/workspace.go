@@ -870,6 +870,11 @@ func (h *Handler) updateMemberRoleFrom(ctx context.Context, target db.Member, ro
 	}
 	defer tx.Rollback(ctx)
 	qtx := h.Queries.WithTx(tx)
+	if target.Role == "owner" && role != "owner" {
+		if err := lockOtherOwner(ctx, qtx, target.WorkspaceID, target.ID); err != nil {
+			return db.Member{}, err
+		}
+	}
 	if _, err := lockMemberRole(ctx, qtx, target.ID, target.Role); err != nil {
 		return db.Member{}, err
 	}
@@ -920,6 +925,10 @@ func (h *Handler) DeleteMember(w http.ResponseWriter, r *http.Request) {
 
 	requesterUserID := requestUserID(r)
 	result, err := h.revokeAndRemoveMember(r.Context(), target.WorkspaceID, target.UserID, target.ID, parseUUID(requesterUserID))
+	if errors.Is(err, errLastOwner) {
+		writeError(w, http.StatusBadRequest, errLastOwner.Error())
+		return
+	}
 	if err != nil {
 		slog.Warn("delete member failed", append(logger.RequestAttrs(r), "error", err, "member_id", memberID, "workspace_id", workspaceID)...)
 		writeError(w, http.StatusInternalServerError, "failed to delete member")
@@ -965,6 +974,10 @@ func (h *Handler) LeaveWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.revokeAndRemoveMember(r.Context(), member.WorkspaceID, member.UserID, member.ID, member.UserID)
+	if errors.Is(err, errLastOwner) {
+		writeError(w, http.StatusBadRequest, errLastOwner.Error())
+		return
+	}
 	if err != nil {
 		slog.Warn("leave workspace failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID)...)
 		writeError(w, http.StatusInternalServerError, "failed to leave workspace")
@@ -1515,12 +1528,20 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			run:  func() error { return qtx.DeleteWorkspaceAutopilotQuotaPeriods(ctx, requester.WorkspaceID) },
 		},
 		{
+			name: "delete app tool call quota periods",
+			run:  func() error { return qtx.DeleteWorkspaceAppToolCallQuotaPeriods(ctx, requester.WorkspaceID) },
+		},
+		{
 			name: "delete entitlement limit overages",
 			run:  func() error { return qtx.DeleteWorkspaceEntitlementLimitOverages(ctx, requester.WorkspaceID) },
 		},
 		{
 			name: "delete entitlement feature attempts",
 			run:  func() error { return qtx.DeleteWorkspaceEntitlementFeatureAttempts(ctx, requester.WorkspaceID) },
+		},
+		{
+			name: "delete dashboard range views",
+			run:  func() error { return qtx.DeleteWorkspaceDashboardRangeViews(ctx, requester.WorkspaceID) },
 		},
 		{
 			name: "delete chat messages",

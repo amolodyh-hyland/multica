@@ -28,7 +28,7 @@ export type DeepLink =
   | { kind: "auth-token"; token: string }
   /** `multica://invite/<invitationId>` — "Open in desktop app" on the web invite page. */
   | { kind: "invite"; invitationId: string }
-  | { kind: "web-issue"; url: string }
+  | { kind: "web-issue" | "web-chat"; url: string }
   /** `multica://<slug>/issues/<id>` — a single issue in a specific workspace. */
   | { kind: "issue"; slug: string; issueId: string };
 
@@ -86,8 +86,8 @@ export function parseDeepLink(url: string): DeepLink | null {
     return invitationId ? { kind: "invite", invitationId } : null;
   }
 
-  if (host === "open" && parsed.pathname === "/issue") {
-    return { kind: "web-issue", url };
+  if (host === "open" && (parsed.pathname === "/issue" || parsed.pathname === "/chat")) {
+    return { kind: parsed.pathname === "/issue" ? "web-issue" : "web-chat", url };
   }
 
   // Workspace-scoped destinations. Only issue detail is supported today; the

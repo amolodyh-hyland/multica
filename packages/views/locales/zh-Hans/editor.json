@@ -1,13 +1,13 @@
 {
   "dictation": {
-    "stopping": "正在停止麦克风…",
+    "stopping": "正在停止麦克风...",
     "start": "在本机语音输入",
     "stop": "停止语音输入",
     "cancel": "取消语音输入",
-    "checking": "正在检查本机语音引擎…",
-    "starting": "正在等待麦克风和语音识别权限…",
+    "checking": "正在检查本机语音引擎...",
+    "starting": "正在等待麦克风和语音识别权限...",
     "recording": "正在本机录音",
-    "transcribing": "正在转为文字…",
+    "transcribing": "正在转为文字...",
     "errors": {
       "unsupported": "本机语音输入支持 macOS 和 Windows。",
       "unavailable": "此语言没有可用的本机语音引擎。请在系统设置中安装语音语言包，然后重新打开输入框。",
@@ -62,8 +62,8 @@
     "copy_image": "复制图片",
     "image_copied": "已复制图片",
     "copy_image_failed": "无法复制图片",
-    "canvas_label": "图片画布,拖动可平移,滚动可缩放,双击可切换实际大小。",
-    "unavailable": "这张图片已失效,已跳过。"
+    "canvas_label": "图片画布，拖动可平移，滚动可缩放，双击可切换实际大小。",
+    "unavailable": "这张图片已失效，已跳过。"
   },
   "canvas": {
     "zoom_in": "放大",
@@ -78,7 +78,7 @@
     "copy_failed": "无法复制全文",
     "more_actions": "更多操作",
     "preview": "预览",
-    "preview_loading": "加载预览中…",
+    "preview_loading": "加载预览中...",
     "preview_failed": "预览加载失败",
     "preview_too_large": "文件太大，无法在线预览，请下载查看。",
     "preview_unsupported": "该文件类型暂不支持预览。",
@@ -119,7 +119,7 @@
     "copy_failed": "复制失败"
   },
   "mention": {
-    "group_users": "用户",
+    "group_users": "成员",
     "group_issues": "任务",
     "group_projects": "项目",
     "group_docs": "文档",
@@ -134,8 +134,8 @@
     "group_cancelled": "已取消"
   },
   "slash_command": {
-    "no_skills_configured": "暂无配置的技能",
-    "no_results": "没有匹配的技能",
+    "no_skills_configured": "暂无配置的 skill",
+    "no_results": "没有匹配的 skill",
     "commands": {
       "note": "添加备注——不触发任何智能体"
     }
@@ -144,9 +144,7 @@
     "html_preview": "HTML 预览",
     "close_preview": "关闭",
     "copy_code": "复制代码",
-    "show_preview": "显示预览",
-    "show_source": "显示源码",
-    "fullscreen": "放大"
+    "fullscreen": "全屏"
   },
   "dynamic_block": {
     "preview": "预览",
@@ -159,17 +157,20 @@
     "error_mermaid": "无法绘制这张图",
     "error_at_line": "{{message}}（第 {{line}} 行）",
     "view_source": "查看源码",
-    "copy_error": "复制错误"
+    "copy_error": "复制错误",
+    "title": "标题",
+    "rename": "重命名",
+    "add_title": "添加标题"
   },
   "file_card": {
     "uploading": "正在上传 {{filename}}"
   },
   "upload": {
     "failed": "{{filename}} 上传失败：{{reason}}",
-    "in_progress": "上传中…",
+    "in_progress": "上传中...",
     "interrupted": "上传已中断——文件未保存。请重新添加。",
     "remove": "移除",
-    "uploading_label": "正在上传 {{filename}}…",
+    "uploading_label": "正在上传 {{filename}}...",
     "failed_label": "{{filename}} 上传失败"
   },
   "title_editor": {
@@ -178,9 +179,9 @@
   "mermaid": {
     "diagram_label": "Mermaid 图表",
     "render_error": "无法渲染 Mermaid 图。",
-    "rendering": "渲染中…",
+    "rendering": "渲染中...",
     "viewer_title": "图表",
-    "canvas_label": "图表画布,拖动可平移,滚动可缩放。",
+    "canvas_label": "图表画布，拖动可平移，滚动可缩放。",
     "open_viewer": "打开图表查看器",
     "close_viewer": "关闭",
     "copy_source": "复制图表源码",
@@ -197,7 +198,7 @@
     "copy_markdown": "复制为 Markdown",
     "copy_csv": "复制为 CSV",
     "copied": "已复制",
-    "resize_column": "调整“{{name}}”列宽",
+    "resize_column": "调整\"{{name}}\"列宽",
     "expanded_title": "表格",
     "filter_placeholder": "筛选行",
     "clear_filter": "清除筛选",
@@ -213,8 +214,8 @@
     "send": "发送",
     "retry": "重试",
     "dismiss": "关闭",
-    "requesting": "正在等待麦克风…",
-    "transcribing": "正在转写…",
+    "requesting": "正在等待麦克风...",
+    "transcribing": "正在转写...",
     "release_to_insert": "松开插入",
     "recording": "录音中",
     "errors": {
@@ -245,7 +246,7 @@
       "title": "设置语音输入",
       "description": "语音在这台电脑上转写，录音不会离开本机。先下载一个语音模型即可开始。",
       "later": "以后再说",
-      "start": "开始口述"
+      "start": "开始语音输入"
     }
   },
   "block_menu": {

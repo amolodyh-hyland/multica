@@ -8,6 +8,7 @@ import type {
   AutopilotQuotaUsage,
   MemberLimit,
   StorageUsage,
+  AppCallUsage,
   WorkspaceSubscriptionEntitlements,
   WorkspaceSubscriptionPrices,
   WorkspaceSubscriptionSummary,
@@ -39,6 +40,8 @@ const mocks = vi.hoisted(() => ({
   memberLimit: { action: "off", limit: null, members: null, pendingInvitations: null } as MemberLimit,
   storageUsage: { action: "off", usedBytes: null, limitBytes: null, reached: null } as StorageUsage,
   refetchStorage: vi.fn(),
+  appCallUsage: { action: "off", used: null, limit: null, reached: null, resetAt: null, members: [] } as AppCallUsage,
+  members: [] as { user_id: string; name: string }[],
   prices: null as WorkspaceSubscriptionPrices | null,
   pricesLoading: false,
   pricesFetching: false,
@@ -191,7 +194,7 @@ vi.mock("../../platform", () => ({ openExternal: mocks.openExternal }));
 
 vi.mock("../../billing/autopilot-addon-dialog", () => ({
   AutopilotAddonDialog: ({ open }: { open: boolean }) =>
-    open ? <div role="dialog" aria-label="Buy more automation runs" /> : null,
+    open ? <div role="dialog" aria-label="Buy more autopilot runs" /> : null,
 }));
 
 vi.mock("../../billing/autopilot-addon-return-notice", () => ({
@@ -349,10 +352,18 @@ describe("BillingTab", () => {
     localStorage.clear();
     mocks.memberLimit = { action: "off", limit: null, members: null, pendingInvitations: null };
     mocks.storageUsage = { action: "off", usedBytes: null, limitBytes: null, reached: null };
+    mocks.appCallUsage = { action: "off", used: null, limit: null, reached: null, resetAt: null, members: [] };
+    mocks.members = [];
     mocks.useQuery.mockImplementation((options: unknown) => {
       const queryKey = (options as { queryKey?: readonly unknown[] }).queryKey;
       if (queryKey?.[0] === "workspace-storage-usage") {
         return { data: mocks.storageUsage, isPending: false, isError: false, refetch: mocks.refetchStorage };
+      }
+      if (queryKey?.[0] === "workspace-app-call-usage") {
+        return { data: mocks.appCallUsage, isPending: false, isError: false, isFetching: false, refetch: vi.fn() };
+      }
+      if (queryKey?.length === 3 && queryKey[0] === "workspaces" && queryKey[2] === "members") {
+        return { data: mocks.members, isPending: false, isError: false };
       }
       if (queryKey?.[queryKey.length - 1] === "limit") {
         return { data: mocks.memberLimit, isPending: false, isError: false };
@@ -461,6 +472,20 @@ describe("BillingTab", () => {
     expect(mocks.useQuery).not.toHaveBeenCalled();
   });
 
+  it("shows the plan's analytics history range only when Cloud reports it", () => {
+    const { unmount } = renderWithI18n(<BillingTab />);
+    expect(screen.queryByText("Analytics history")).toBeNull();
+    unmount();
+
+    mocks.entitlements.limits = {
+      ...mocks.entitlements.limits,
+      dashboardHistoryDays: { mode: "limited", limit: 30 },
+    };
+    renderWithI18n(<BillingTab />);
+    expect(screen.getByText("Analytics history")).toBeInTheDocument();
+    expect(screen.getByText("Last 30 days")).toBeInTheDocument();
+  });
+
   it("shows server prices and keeps the selected interval in sync", async () => {
     const user = userEvent.setup();
     renderWithI18n(<BillingTab />);
@@ -550,7 +575,7 @@ describe("BillingTab", () => {
 
       expect(
         screen.getByText(
-          /Stripe Checkout shows the authoritative per-seat price/,
+          /Stripe shows the final per-seat price/,
         ),
       ).toBeInTheDocument();
       expect(screen.queryByText(/\$0/)).not.toBeInTheDocument();
@@ -923,6 +948,42 @@ describe("BillingTab", () => {
       expect(mocks.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workspace-storage-usage", expect.any(String)] });
     });
 
+    it("shows this month's app calls against the plan's limit, for every person (MUL-10047)", () => {
+      const names = ["Ada", "Ben", "Cy", "Di", "Ed", "Flo"];
+      mocks.members = names.map((name) => ({ user_id: `user-${name}`, name }));
+      mocks.appCallUsage = {
+        action: "observe",
+        used: 230,
+        limit: 1500,
+        reached: null,
+        resetAt: "2030-02-01T00:00:00Z",
+        members: [
+          ...names.map((name, i) => ({ userId: `user-${name}`, calls: 60 - i * 10 })),
+          { userId: null, calls: 20 },
+        ],
+      };
+      renderWithI18n(<BillingTab />);
+
+      expect(screen.getByText("App calls")).toBeInTheDocument();
+      expect(screen.getByText("230 / 1,500")).toBeInTheDocument();
+      const byPerson = screen.getByRole("list", { name: "App calls by person" });
+      expect(within(byPerson).getAllByRole("listitem")).toHaveLength(7);
+      for (const name of names) expect(within(byPerson).getByText(name)).toBeInTheDocument();
+      expect(within(byPerson).getByText("Automated runs")).toBeInTheDocument();
+    });
+
+    it("reports enforced app calls as reached, and hides them without a limit", () => {
+      mocks.appCallUsage = { action: "enforce", used: 100, limit: 100, reached: true, resetAt: null, members: [] };
+      const { unmount } = renderWithI18n(<BillingTab />);
+      expect(screen.getByText("100 / 100")).toBeInTheDocument();
+      expect(screen.getAllByText("Limit reached").length).toBeGreaterThan(0);
+      unmount();
+
+      mocks.appCallUsage = { action: "off", used: null, limit: null, reached: null, resetAt: null, members: [] };
+      renderWithI18n(<BillingTab />);
+      expect(screen.queryByText("App calls")).not.toBeInTheDocument();
+    });
+
     it("shows members and pending invitations against the plan's limit", () => {
       mocks.memberLimit = { action: "observe", limit: 5, members: 4, pendingInvitations: 2 };
       renderWithI18n(<BillingTab />);
@@ -1027,10 +1088,34 @@ describe("BillingTab", () => {
 
     renderWithI18n(<BillingTab />);
 
-    expect(screen.getByText("Checkout canceled")).toBeInTheDocument();
+    expect(screen.getByText("Checkout cancelled")).toBeInTheDocument();
     expect(navigationState.replace).toHaveBeenCalledOnce();
     expect(navigationState.replace).toHaveBeenCalledWith(
       "/acme/settings?tab=billing&source=email",
+    );
+  });
+
+  it("hands a return for another workspace to the billing return page", () => {
+    navigationState.search =
+      "tab=billing&workspace_id=22222222-2222-2222-2222-222222222222&result=autopilot_addon&session_id=cs_test_9";
+
+    renderWithI18n(<BillingTab />);
+
+    expect(screen.queryByRole("status", { name: "Add-on return" })).not.toBeInTheDocument();
+    expect(navigationState.replace).toHaveBeenCalledOnce();
+    expect(navigationState.replace).toHaveBeenCalledWith(
+      "/billing/return?workspace_id=22222222-2222-2222-2222-222222222222&result=autopilot_addon&session_id=cs_test_9",
+    );
+  });
+
+  it("consumes a return stamped with this workspace in place", () => {
+    navigationState.search = "tab=billing&workspace_id=workspace-1&result=cancel";
+
+    renderWithI18n(<BillingTab />);
+
+    expect(screen.getByText("Checkout cancelled")).toBeInTheDocument();
+    expect(navigationState.replace).toHaveBeenCalledWith(
+      "/acme/settings?tab=billing&workspace_id=workspace-1",
     );
   });
 
@@ -1048,7 +1133,7 @@ describe("BillingTab", () => {
 
     renderWithI18n(<BillingTab />);
 
-    expect(screen.getByText("Payment canceled")).toBeInTheDocument();
+    expect(screen.getByText("Payment cancelled")).toBeInTheDocument();
     expect(screen.getByText("Nothing was charged.")).toBeInTheDocument();
   });
 
@@ -1141,6 +1226,10 @@ describe("BillingTab", () => {
       expect(screen.getByText("Unlimited")).toBeInTheDocument();
       expect(screen.queryByText("5 / 7")).not.toBeInTheDocument();
       expect(screen.queryByText(/Runs a member starts with Run now/)).not.toBeInTheDocument();
+      // The paid plan is recorded: paid features and plan limits are re-read.
+      expect(mocks.invalidateQueries).toHaveBeenCalledWith({
+        queryKey: ["workspace-features", "workspace-1"],
+      });
     } finally {
       vi.useRealTimers();
     }
@@ -1484,7 +1573,7 @@ describe("BillingTab", () => {
     ],
     [
       "seat_purchase_in_progress",
-      "Another seat purchase is being processed. Wait for it to finish; contact support if it remains here.",
+      "Another seat purchase is being processed. Wait a moment for it to finish, or contact support if it stays stuck.",
     ],
     [
       "plan_change_in_progress",
@@ -1514,6 +1603,74 @@ describe("BillingTab", () => {
     } else {
       expect(mocks.previewSeats).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it("keeps the in-progress explanation when a newer quote returns after the refusal", async () => {
+    const user = userEvent.setup();
+    Object.assign(mocks.entitlements, {
+      plan: "pro",
+      status: "active",
+    });
+    mocks.summary.hasStripeCustomer = true;
+    setSeatCapacity();
+    const quote = (version: number, additionalSeats = 1) => ({
+      currentSeats: 5,
+      additionalSeats,
+      resultingSeats: 5 + additionalSeats,
+      purchaseVersion: version,
+      currency: "usd",
+      prorationAmount: 0,
+      nextInvoiceAmount: 6000,
+      quotedAt: "2030-01-01T00:00:00Z",
+    });
+    let resolveLateQuote: (value: ReturnType<typeof quote>) => void = () => {};
+    mocks.previewSeats
+      .mockResolvedValueOnce(quote(9))
+      .mockImplementationOnce(
+        () => new Promise((resolve) => { resolveLateQuote = resolve; }),
+      )
+      .mockResolvedValue(quote(10, 2));
+    let rejectPurchase: (error: unknown) => void = () => {};
+    mocks.purchaseSeats.mockImplementation(
+      () => new Promise((_, reject) => { rejectPurchase = reject; }),
+    );
+
+    const { rerender } = renderWithI18n(<BillingTab />);
+    await user.click(screen.getByRole("button", { name: "Add seats" }));
+    await user.click(await screen.findByRole("button", { name: "Add 1 seat" }));
+
+    // The plan change that wins the race lands while the purchase is pending:
+    // the summary moves to a new version and a new quote goes out.
+    setSeatCapacity({ version: 10 });
+    mocks.summary = { ...mocks.summary };
+    rerender(<BillingTab />);
+    await waitFor(() => expect(mocks.previewSeats).toHaveBeenCalledTimes(2), {
+      timeout: 3_000,
+    });
+
+    rejectPurchase(
+      new ApiError("conflict", 409, "Conflict", {
+        code: "plan_change_in_progress",
+      }),
+    );
+    const copy =
+      "A plan change is still being processed. Try again in a few minutes.";
+    expect(await screen.findByText(copy)).toBeInTheDocument();
+
+    await act(async () => {
+      resolveLateQuote(quote(10));
+    });
+    expect(screen.getByText(copy)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Add 1 seat" }),
+    ).not.toBeInTheDocument();
+
+    // Editing the seat count asks for a fresh quote.
+    await user.clear(screen.getByLabelText("Additional seats"));
+    await user.type(screen.getByLabelText("Additional seats"), "2");
+    expect(
+      await screen.findByRole("button", { name: "Add 2 seats" }, { timeout: 3_000 }),
+    ).toBeInTheDocument();
   });
 
   it("keeps the seat dialog open while purchase submission is pending", async () => {
@@ -1558,7 +1715,7 @@ describe("BillingTab", () => {
     await user.click(screen.getByRole("button", { name: "Add 1 seat" }));
     expect(
       await screen.findByText(
-        "The purchase response could not be read. Retry this quote; the same purchase request will be reused.",
+        "We couldn't confirm the purchase response. Retry safely — you won't be charged twice.",
       ),
     ).toBeInTheDocument();
     const firstKey = mocks.purchaseSeats.mock.calls[0]?.[0].idempotencyKey;
@@ -1718,7 +1875,7 @@ describe("BillingTab", () => {
       screen.getByRole("button", { name: "Buy · $10.00 / 1,000 runs" }),
     );
     expect(
-      await screen.findByRole("dialog", { name: "Buy more automation runs" }),
+      await screen.findByRole("dialog", { name: "Buy more autopilot runs" }),
     ).toBeInTheDocument();
   });
 
@@ -1790,7 +1947,7 @@ describe("BillingTab", () => {
     expect(screen.queryByText(/0 \/ 7/)).not.toBeInTheDocument();
 
     await user.click(
-      screen.getByRole("button", { name: "Retry automation usage" }),
+      screen.getByRole("button", { name: "Retry autopilot usage" }),
     );
     expect(mocks.refetchUsage).toHaveBeenCalledOnce();
   });
@@ -1817,7 +1974,7 @@ describe("BillingTab", () => {
     ["incomplete_expired", "Subscription setup expired"],
     ["paused", "Subscription is paused"],
     ["unpaid", "Subscription is unpaid"],
-    ["canceled", "Subscription is canceled"],
+    ["canceled", "Subscription is cancelled"],
   ])("renders a recovery notice for %s", (status, title) => {
     mocks.entitlements.status = status;
 

@@ -81,12 +81,12 @@ func (q *Queries) CreateDoc(ctx context.Context, arg CreateDocParams) (Doc, erro
 const createDocComment = `-- name: CreateDocComment :one
 INSERT INTO doc_comment (
     id, workspace_id, doc_id, parent_id, author_type, author_id, content,
-    anchor_quote, anchor_prefix, anchor_suffix
+    anchor_quote, anchor_prefix, anchor_suffix, source_task_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7,
-    $8, $9, $10
+    $8, $9, $10, $11
 )
-RETURNING id, workspace_id, doc_id, parent_id, author_type, author_id, content, anchor_quote, anchor_prefix, anchor_suffix, resolved_at, resolved_by_type, resolved_by_id, created_at, updated_at
+RETURNING id, workspace_id, doc_id, parent_id, author_type, author_id, content, anchor_quote, anchor_prefix, anchor_suffix, resolved_at, resolved_by_type, resolved_by_id, created_at, updated_at, source_task_id
 `
 
 type CreateDocCommentParams struct {
@@ -100,6 +100,7 @@ type CreateDocCommentParams struct {
 	AnchorQuote  string      `json:"anchor_quote"`
 	AnchorPrefix string      `json:"anchor_prefix"`
 	AnchorSuffix string      `json:"anchor_suffix"`
+	SourceTaskID pgtype.UUID `json:"source_task_id"`
 }
 
 func (q *Queries) CreateDocComment(ctx context.Context, arg CreateDocCommentParams) (DocComment, error) {
@@ -114,6 +115,7 @@ func (q *Queries) CreateDocComment(ctx context.Context, arg CreateDocCommentPara
 		arg.AnchorQuote,
 		arg.AnchorPrefix,
 		arg.AnchorSuffix,
+		arg.SourceTaskID,
 	)
 	var i DocComment
 	err := row.Scan(
@@ -132,6 +134,7 @@ func (q *Queries) CreateDocComment(ctx context.Context, arg CreateDocCommentPara
 		&i.ResolvedByID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourceTaskID,
 	)
 	return i, err
 }
@@ -174,7 +177,9 @@ func (q *Queries) CreateDocFolder(ctx context.Context, arg CreateDocFolderParams
 
 const deleteDoc = `-- name: DeleteDoc :exec
 WITH v AS (DELETE FROM doc_version WHERE doc_version.doc_id = $1 AND doc_version.workspace_id = $2),
-c AS (DELETE FROM doc_comment WHERE doc_comment.doc_id = $1 AND doc_comment.workspace_id = $2)
+c AS (DELETE FROM doc_comment WHERE doc_comment.doc_id = $1 AND doc_comment.workspace_id = $2),
+s AS (DELETE FROM doc_collab_state WHERE doc_collab_state.doc_id = $1 AND doc_collab_state.workspace_id = $2),
+r AS (DELETE FROM doc_revision WHERE doc_revision.doc_id = $1)
 DELETE FROM doc WHERE doc.id = $1 AND doc.workspace_id = $2
 `
 
@@ -222,6 +227,8 @@ func (q *Queries) DeleteDocFolder(ctx context.Context, arg DeleteDocFolderParams
 
 const deleteWorkspaceDocs = `-- name: DeleteWorkspaceDocs :exec
 WITH v AS (DELETE FROM doc_version WHERE doc_version.workspace_id = $1),
+s AS (DELETE FROM doc_collab_state WHERE doc_collab_state.doc_id IN (SELECT id FROM doc WHERE doc.workspace_id = $1)),
+r AS (DELETE FROM doc_revision WHERE doc_revision.doc_id IN (SELECT id FROM doc WHERE doc.workspace_id = $1)),
 c AS (DELETE FROM doc_comment WHERE doc_comment.workspace_id = $1),
 f AS (DELETE FROM doc_folder WHERE doc_folder.workspace_id = $1)
 DELETE FROM doc WHERE doc.workspace_id = $1
@@ -263,8 +270,33 @@ func (q *Queries) GetDoc(ctx context.Context, arg GetDocParams) (Doc, error) {
 	return i, err
 }
 
+const getDocByIDForUpdate = `-- name: GetDocByIDForUpdate :one
+SELECT id, workspace_id, folder_id, title, content, revision, version_count, created_by_type, created_by_id, updated_by_type, updated_by_id, created_at, updated_at FROM doc WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) GetDocByIDForUpdate(ctx context.Context, id pgtype.UUID) (Doc, error) {
+	row := q.db.QueryRow(ctx, getDocByIDForUpdate, id)
+	var i Doc
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.FolderID,
+		&i.Title,
+		&i.Content,
+		&i.Revision,
+		&i.VersionCount,
+		&i.CreatedByType,
+		&i.CreatedByID,
+		&i.UpdatedByType,
+		&i.UpdatedByID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getDocComment = `-- name: GetDocComment :one
-SELECT id, workspace_id, doc_id, parent_id, author_type, author_id, content, anchor_quote, anchor_prefix, anchor_suffix, resolved_at, resolved_by_type, resolved_by_id, created_at, updated_at FROM doc_comment
+SELECT id, workspace_id, doc_id, parent_id, author_type, author_id, content, anchor_quote, anchor_prefix, anchor_suffix, resolved_at, resolved_by_type, resolved_by_id, created_at, updated_at, source_task_id FROM doc_comment
 WHERE id = $1 AND doc_id = $2 AND workspace_id = $3
 `
 
@@ -293,6 +325,7 @@ func (q *Queries) GetDocComment(ctx context.Context, arg GetDocCommentParams) (D
 		&i.ResolvedByID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourceTaskID,
 	)
 	return i, err
 }
@@ -319,6 +352,39 @@ func (q *Queries) GetDocFolder(ctx context.Context, arg GetDocFolderParams) (Doc
 		&i.CreatedByID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getDocForCollab = `-- name: GetDocForCollab :one
+SELECT d.workspace_id, d.title, d.content, d.revision,
+    s.ystate AS ystate, s.revision AS ystate_revision
+FROM doc d
+LEFT JOIN doc_collab_state s ON s.doc_id = d.id
+WHERE d.id = $1
+`
+
+type GetDocForCollabRow struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	Title          string      `json:"title"`
+	Content        string      `json:"content"`
+	Revision       int64       `json:"revision"`
+	Ystate         []byte      `json:"ystate"`
+	YstateRevision pgtype.Int8 `json:"ystate_revision"`
+}
+
+// The collaboration service's view of a doc: stored content plus the Yjs
+// state last saved with it, which is only reusable at the same revision.
+func (q *Queries) GetDocForCollab(ctx context.Context, id pgtype.UUID) (GetDocForCollabRow, error) {
+	row := q.db.QueryRow(ctx, getDocForCollab, id)
+	var i GetDocForCollabRow
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.Title,
+		&i.Content,
+		&i.Revision,
+		&i.Ystate,
+		&i.YstateRevision,
 	)
 	return i, err
 }
@@ -355,8 +421,25 @@ func (q *Queries) GetDocForUpdate(ctx context.Context, arg GetDocForUpdateParams
 	return i, err
 }
 
+const getDocRevisionContent = `-- name: GetDocRevisionContent :one
+SELECT content FROM doc_revision
+WHERE doc_id = $1 AND revision = $2
+`
+
+type GetDocRevisionContentParams struct {
+	DocID    pgtype.UUID `json:"doc_id"`
+	Revision int64       `json:"revision"`
+}
+
+func (q *Queries) GetDocRevisionContent(ctx context.Context, arg GetDocRevisionContentParams) (string, error) {
+	row := q.db.QueryRow(ctx, getDocRevisionContent, arg.DocID, arg.Revision)
+	var content string
+	err := row.Scan(&content)
+	return content, err
+}
+
 const getDocVersion = `-- name: GetDocVersion :one
-SELECT doc_id, workspace_id, number, title, content, author_type, author_id, message, action, action_ref, task_id, issue_id, created_at, updated_at FROM doc_version
+SELECT doc_id, workspace_id, number, title, content, author_type, author_id, message, action, action_ref, task_id, issue_id, created_at, updated_at, contributors FROM doc_version
 WHERE doc_id = $1 AND number = $2
 `
 
@@ -383,34 +466,54 @@ func (q *Queries) GetDocVersion(ctx context.Context, arg GetDocVersionParams) (D
 		&i.IssueID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Contributors,
 	)
 	return i, err
+}
+
+const insertDocRevision = `-- name: InsertDocRevision :exec
+INSERT INTO doc_revision (doc_id, revision, content)
+VALUES ($1, $2, $3)
+ON CONFLICT (doc_id, revision) DO UPDATE SET content = EXCLUDED.content
+`
+
+type InsertDocRevisionParams struct {
+	DocID    pgtype.UUID `json:"doc_id"`
+	Revision int64       `json:"revision"`
+	Content  string      `json:"content"`
+}
+
+func (q *Queries) InsertDocRevision(ctx context.Context, arg InsertDocRevisionParams) error {
+	_, err := q.db.Exec(ctx, insertDocRevision, arg.DocID, arg.Revision, arg.Content)
+	return err
 }
 
 const insertDocVersion = `-- name: InsertDocVersion :one
 INSERT INTO doc_version (
     doc_id, workspace_id, number, title, content, author_type, author_id,
-    message, action, action_ref, task_id, issue_id
+    message, action, action_ref, task_id, issue_id, contributors
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7,
-    $8, $9, $10, $11, $12
+    $8, $9, $10, $11, $12,
+    $13::jsonb
 )
-RETURNING doc_id, workspace_id, number, title, content, author_type, author_id, message, action, action_ref, task_id, issue_id, created_at, updated_at
+RETURNING doc_id, workspace_id, number, title, content, author_type, author_id, message, action, action_ref, task_id, issue_id, created_at, updated_at, contributors
 `
 
 type InsertDocVersionParams struct {
-	DocID       pgtype.UUID `json:"doc_id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	Number      int32       `json:"number"`
-	Title       string      `json:"title"`
-	Content     string      `json:"content"`
-	AuthorType  string      `json:"author_type"`
-	AuthorID    pgtype.UUID `json:"author_id"`
-	Message     string      `json:"message"`
-	Action      string      `json:"action"`
-	ActionRef   pgtype.Int4 `json:"action_ref"`
-	TaskID      pgtype.UUID `json:"task_id"`
-	IssueID     pgtype.UUID `json:"issue_id"`
+	DocID        pgtype.UUID `json:"doc_id"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	Number       int32       `json:"number"`
+	Title        string      `json:"title"`
+	Content      string      `json:"content"`
+	AuthorType   string      `json:"author_type"`
+	AuthorID     pgtype.UUID `json:"author_id"`
+	Message      string      `json:"message"`
+	Action       string      `json:"action"`
+	ActionRef    pgtype.Int4 `json:"action_ref"`
+	TaskID       pgtype.UUID `json:"task_id"`
+	IssueID      pgtype.UUID `json:"issue_id"`
+	Contributors []byte      `json:"contributors"`
 }
 
 func (q *Queries) InsertDocVersion(ctx context.Context, arg InsertDocVersionParams) (DocVersion, error) {
@@ -427,6 +530,7 @@ func (q *Queries) InsertDocVersion(ctx context.Context, arg InsertDocVersionPara
 		arg.ActionRef,
 		arg.TaskID,
 		arg.IssueID,
+		arg.Contributors,
 	)
 	var i DocVersion
 	err := row.Scan(
@@ -444,12 +548,13 @@ func (q *Queries) InsertDocVersion(ctx context.Context, arg InsertDocVersionPara
 		&i.IssueID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Contributors,
 	)
 	return i, err
 }
 
 const listDocComments = `-- name: ListDocComments :many
-SELECT id, workspace_id, doc_id, parent_id, author_type, author_id, content, anchor_quote, anchor_prefix, anchor_suffix, resolved_at, resolved_by_type, resolved_by_id, created_at, updated_at FROM doc_comment
+SELECT id, workspace_id, doc_id, parent_id, author_type, author_id, content, anchor_quote, anchor_prefix, anchor_suffix, resolved_at, resolved_by_type, resolved_by_id, created_at, updated_at, source_task_id FROM doc_comment
 WHERE doc_id = $1 AND workspace_id = $2
 ORDER BY created_at, id
 `
@@ -484,6 +589,7 @@ func (q *Queries) ListDocComments(ctx context.Context, arg ListDocCommentsParams
 			&i.ResolvedByID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SourceTaskID,
 		); err != nil {
 			return nil, err
 		}
@@ -566,11 +672,14 @@ func (q *Queries) ListDocThreadParticipants(ctx context.Context, arg ListDocThre
 
 const listDocVersions = `-- name: ListDocVersions :many
 SELECT
-    doc_id, workspace_id, number, title, author_type, author_id, message, action,
-    action_ref, task_id, issue_id, created_at, updated_at
-FROM doc_version
-WHERE doc_id = $1
-ORDER BY number DESC
+    v.doc_id, v.workspace_id, v.number, v.title, v.author_type, v.author_id, v.message, v.action,
+    v.action_ref, v.task_id, v.issue_id, v.contributors, v.created_at, v.updated_at,
+    c.id AS doc_thread_id, COALESCE(c.anchor_quote, '')::text AS doc_thread_quote
+FROM doc_version v
+LEFT JOIN agent_task_queue t ON t.id = v.task_id
+LEFT JOIN doc_comment c ON c.id = t.doc_thread_id AND c.doc_id = v.doc_id AND c.parent_id IS NULL
+WHERE v.doc_id = $1
+ORDER BY v.number DESC
 LIMIT $2
 `
 
@@ -580,21 +689,26 @@ type ListDocVersionsParams struct {
 }
 
 type ListDocVersionsRow struct {
-	DocID       pgtype.UUID        `json:"doc_id"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	Number      int32              `json:"number"`
-	Title       string             `json:"title"`
-	AuthorType  string             `json:"author_type"`
-	AuthorID    pgtype.UUID        `json:"author_id"`
-	Message     string             `json:"message"`
-	Action      string             `json:"action"`
-	ActionRef   pgtype.Int4        `json:"action_ref"`
-	TaskID      pgtype.UUID        `json:"task_id"`
-	IssueID     pgtype.UUID        `json:"issue_id"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	DocID          pgtype.UUID        `json:"doc_id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	Number         int32              `json:"number"`
+	Title          string             `json:"title"`
+	AuthorType     string             `json:"author_type"`
+	AuthorID       pgtype.UUID        `json:"author_id"`
+	Message        string             `json:"message"`
+	Action         string             `json:"action"`
+	ActionRef      pgtype.Int4        `json:"action_ref"`
+	TaskID         pgtype.UUID        `json:"task_id"`
+	IssueID        pgtype.UUID        `json:"issue_id"`
+	Contributors   []byte             `json:"contributors"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	DocThreadID    pgtype.UUID        `json:"doc_thread_id"`
+	DocThreadQuote string             `json:"doc_thread_quote"`
 }
 
+// An edit an agent made while answering a discussion names that discussion
+// (through the run that made it), so history can link back to it.
 func (q *Queries) ListDocVersions(ctx context.Context, arg ListDocVersionsParams) ([]ListDocVersionsRow, error) {
 	rows, err := q.db.Query(ctx, listDocVersions, arg.DocID, arg.Limit)
 	if err != nil {
@@ -616,8 +730,11 @@ func (q *Queries) ListDocVersions(ctx context.Context, arg ListDocVersionsParams
 			&i.ActionRef,
 			&i.TaskID,
 			&i.IssueID,
+			&i.Contributors,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DocThreadID,
+			&i.DocThreadQuote,
 		); err != nil {
 			return nil, err
 		}
@@ -694,6 +811,49 @@ SELECT pg_advisory_xact_lock(hashtextextended($1::uuid::text || ':doc_tree', 0))
 func (q *Queries) LockDocTree(ctx context.Context, workspaceID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, lockDocTree, workspaceID)
 	return err
+}
+
+const mergeCollabEditIntoVersion = `-- name: MergeCollabEditIntoVersion :execrows
+UPDATE doc_version SET
+    title = $1,
+    content = $2,
+    contributors = (
+        SELECT COALESCE(jsonb_agg(DISTINCT e), '[]'::jsonb)
+        FROM jsonb_array_elements(doc_version.contributors || $3::jsonb) AS e
+    ),
+    updated_at = now()
+WHERE doc_id = $4
+  AND number = $5
+  AND action = 'edit'
+  AND message = ''
+  AND author_type = 'member'
+  AND task_id IS NULL
+  AND created_at > now() - interval '30 minutes'
+`
+
+type MergeCollabEditIntoVersionParams struct {
+	Title        string      `json:"title"`
+	Content      string      `json:"content"`
+	Contributors []byte      `json:"contributors"`
+	DocID        pgtype.UUID `json:"doc_id"`
+	Number       int32       `json:"number"`
+}
+
+// Folds a save from people editing together into the latest snapshot while
+// the session lasts: an unlabeled member edit within 30 minutes of the
+// snapshot's start. Everyone who joined is added to its contributors.
+func (q *Queries) MergeCollabEditIntoVersion(ctx context.Context, arg MergeCollabEditIntoVersionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, mergeCollabEditIntoVersion,
+		arg.Title,
+		arg.Content,
+		arg.Contributors,
+		arg.DocID,
+		arg.Number,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const mergeDocEditIntoVersion = `-- name: MergeDocEditIntoVersion :execrows
@@ -803,6 +963,21 @@ func (q *Queries) MoveDocFolder(ctx context.Context, arg MoveDocFolderParams) (D
 	return i, err
 }
 
+const pruneDocRevisions = `-- name: PruneDocRevisions :exec
+DELETE FROM doc_revision
+WHERE doc_id = $1 AND revision < $2
+`
+
+type PruneDocRevisionsParams struct {
+	DocID    pgtype.UUID `json:"doc_id"`
+	KeepFrom int64       `json:"keep_from"`
+}
+
+func (q *Queries) PruneDocRevisions(ctx context.Context, arg PruneDocRevisionsParams) error {
+	_, err := q.db.Exec(ctx, pruneDocRevisions, arg.DocID, arg.KeepFrom)
+	return err
+}
+
 const renameDocFolder = `-- name: RenameDocFolder :one
 UPDATE doc_folder SET title = $1, updated_at = now()
 WHERE id = $2 AND workspace_id = $3
@@ -838,7 +1013,7 @@ UPDATE doc_comment SET
     resolved_by_id = $3,
     updated_at = now()
 WHERE id = $4 AND doc_id = $5 AND workspace_id = $6 AND parent_id IS NULL
-RETURNING id, workspace_id, doc_id, parent_id, author_type, author_id, content, anchor_quote, anchor_prefix, anchor_suffix, resolved_at, resolved_by_type, resolved_by_id, created_at, updated_at
+RETURNING id, workspace_id, doc_id, parent_id, author_type, author_id, content, anchor_quote, anchor_prefix, anchor_suffix, resolved_at, resolved_by_type, resolved_by_id, created_at, updated_at, source_task_id
 `
 
 type SetDocCommentResolutionParams struct {
@@ -877,6 +1052,7 @@ func (q *Queries) SetDocCommentResolution(ctx context.Context, arg SetDocComment
 		&i.ResolvedByID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourceTaskID,
 	)
 	return i, err
 }
@@ -931,4 +1107,30 @@ func (q *Queries) UpdateDocContent(ctx context.Context, arg UpdateDocContentPara
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const upsertDocCollabState = `-- name: UpsertDocCollabState :exec
+INSERT INTO doc_collab_state (doc_id, workspace_id, ystate, revision)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (doc_id) DO UPDATE SET
+    ystate = EXCLUDED.ystate,
+    revision = EXCLUDED.revision,
+    updated_at = now()
+`
+
+type UpsertDocCollabStateParams struct {
+	DocID       pgtype.UUID `json:"doc_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Ystate      []byte      `json:"ystate"`
+	Revision    int64       `json:"revision"`
+}
+
+func (q *Queries) UpsertDocCollabState(ctx context.Context, arg UpsertDocCollabStateParams) error {
+	_, err := q.db.Exec(ctx, upsertDocCollabState,
+		arg.DocID,
+		arg.WorkspaceID,
+		arg.Ystate,
+		arg.Revision,
+	)
+	return err
 }

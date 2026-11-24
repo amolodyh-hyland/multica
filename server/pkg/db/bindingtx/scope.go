@@ -178,6 +178,8 @@ SELECT workspace_id FROM issue WHERE id=ANY($1::uuid[])
 UNION ALL
 SELECT workspace_id FROM comment WHERE id=ANY($1::uuid[])
 UNION ALL
+SELECT workspace_id FROM doc WHERE id=ANY($1::uuid[])
+UNION ALL
 SELECT workspace_id FROM chat_session WHERE id=ANY($1::uuid[])
 UNION ALL
 SELECT workspace_id FROM issue_wakeup WHERE id=ANY($1::uuid[])

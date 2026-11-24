@@ -439,7 +439,9 @@ func daemonCommonCapabilities() []string {
 		protocol.DaemonCapabilityJoinedWakeupsV1,
 		protocol.DaemonCapabilityPublicDelegationV1,
 		protocol.DaemonCapabilityWorkflowStatusRulesV1,
+		protocol.DaemonCapabilityWorkflowStatusMapV1,
 		protocol.DaemonCapabilityCLICommentSteerV1,
+		protocol.DaemonCapabilityDocCommentV1,
 	}
 }
 

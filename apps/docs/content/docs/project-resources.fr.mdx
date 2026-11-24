@@ -11,7 +11,7 @@ import { LocalDirModeDemo } from "@/components/demos/local-dir-mode-demo";
 
 Les ressources d'un [projet](/projects) indiquent aux agents quel code utilise cet ensemble de travail et où s'exécuter. Les ressources restent rattachées au projet : inutile de recoller les URL de dépôts ou les chemins locaux dans chaque tâche.
 
-Deux types de ressources sont pris en charge aujourd'hui :
+Deux types de ressources d'exécution sont pris en charge aujourd'hui. Les références de connaissances fournissent séparément un contexte en lecture seule ; elles ne choisissent pas le répertoire de travail et n'installent pas de compétences :
 
 | Ressource | Idéal pour | Où ont lieu les exécutions |
 |---|---|---|
@@ -97,6 +97,8 @@ Un répertoire local dispose de deux modes d'exécution, définis par ressource 
 <Tab value="in_place (Direct, par défaut)" id="in-place">
 
 L'agent travaille directement dans votre répertoire, et les exécutions ont lieu une à la fois. Lorsque deux exécutions utilisent le même répertoire réel, la seconde passe en `waiting_local_directory` et reprend une fois que la première a libéré le répertoire. Deux chemins qui mènent au même répertoire via des liens symboliques différents sont sérialisés de la même manière.
+
+Si le chemin lié est introuvable au démarrage d’une exécution en attente, celle-ci signale que le dossier du projet n’existe plus. Restaurez le dossier ou mettez à jour le chemin de la ressource avant de réessayer.
 
 L'attente ne modifie pas le répertoire et n'occupe pas de slot d'exécution du daemon. Une exécution en attente peut être annulée ; sinon, elle reprend le démarrage lorsque le répertoire et la capacité d'exécution sont disponibles.
 
