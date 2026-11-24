@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -61,6 +62,7 @@ type SkillResponse struct {
 	Description string  `json:"description"`
 	Content     string  `json:"content"`
 	Config      any     `json:"config"`
+	Revision    int64   `json:"revision"`
 	CreatedBy   *string `json:"created_by"`
 	CreatedAt   string  `json:"created_at"`
 	UpdatedAt   string  `json:"updated_at"`
@@ -152,6 +154,7 @@ type SkillWithFilesResponse struct {
 // how large the skill is and which part of it is large.
 type SkillWithFileMetadataResponse struct {
 	SkillSummaryResponse
+	Revision int64 `json:"revision"`
 	// ContentSize / ContentHash describe the SKILL.md body that `content`
 	// would have carried.
 	ContentSize int64                       `json:"content_size"`
@@ -188,6 +191,7 @@ func skillToResponse(s db.Skill) SkillResponse {
 		Description: s.Description,
 		Content:     s.Content,
 		Config:      decodeSkillConfig(s.Config),
+		Revision:    s.Revision,
 		CreatedBy:   uuidToPtr(s.CreatedBy),
 		CreatedAt:   timestampToString(s.CreatedAt),
 		UpdatedAt:   timestampToString(s.UpdatedAt),
@@ -304,6 +308,15 @@ type UpdateSkillRequest struct {
 	Content     *string                  `json:"content"`
 	Config      any                      `json:"config"`
 	Files       []CreateSkillFileRequest `json:"files,omitempty"`
+	// BaseRevision is the skill revision the client edited; the write is
+	// refused with 409 if anyone saved since. Optional: omitted keeps
+	// last-write-wins for clients that predate skill revisions.
+	BaseRevision *int64 `json:"base_revision,omitempty"`
+}
+
+type UpsertSkillFileRequest struct {
+	CreateSkillFileRequest
+	BaseRevision *int64 `json:"base_revision,omitempty"`
 }
 
 type SetAgentSkillsRequest struct {
@@ -519,6 +532,7 @@ func (h *Handler) writeSkillMetadata(w http.ResponseWriter, r *http.Request, ski
 			skill.ID, skill.WorkspaceID, skill.Name, skill.Description,
 			skill.Config, skill.CreatedBy, skill.CreatedAt, skill.UpdatedAt,
 		),
+		Revision:    skill.Revision,
 		ContentSize: int64(len(skill.Content)),
 		ContentHash: contentHash(skill.Content),
 		Files:       fileResps,
@@ -609,6 +623,41 @@ func canOverwriteSkillByLocalImport(userID string, skill db.Skill) bool {
 	return skill.CreatedBy.Valid && uuidToString(skill.CreatedBy) == userID
 }
 
+// validSkillBaseRevision rejects a base_revision no skill can have. Revisions
+// start at 1, so 0 is a client bug (an unset field sent anyway), not "skip
+// the check".
+func validSkillBaseRevision(w http.ResponseWriter, base *int64) bool {
+	if base != nil && *base <= 0 {
+		writeError(w, http.StatusBadRequest, "base_revision must be a positive revision from GET /api/skills/{id}")
+		return false
+	}
+	return true
+}
+
+// checkSkillBaseRevision must run inside the write transaction, before the
+// write. It locks the skill row and answers 409 when the caller named the
+// revision it edited and someone has saved since. With no base revision it is
+// a no-op, so clients that predate skill revisions keep last-write-wins.
+func checkSkillBaseRevision(w http.ResponseWriter, r *http.Request, qtx *db.Queries, skillID pgtype.UUID, base *int64) bool {
+	if base == nil {
+		return true
+	}
+	current, err := qtx.LockSkillForVersioning(r.Context(), skillID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "skill not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to load skill")
+		}
+		return false
+	}
+	if current.Revision != *base {
+		writeRevisionConflict(w, "skill", current.ID, *base, current.Revision)
+		return false
+	}
+	return true
+}
+
 func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	skill, ok := h.loadSkillForUser(w, r, id)
@@ -631,6 +680,9 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !validSkillBaseRevision(w, req.BaseRevision) {
+		return
+	}
 
 	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(h.resolveWorkspaceID(r)))
 	if err != nil {
@@ -641,6 +693,9 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 
 	qtx := h.Queries.WithTx(tx)
 
+	if !checkSkillBaseRevision(w, r, qtx, skill.ID, req.BaseRevision) {
+		return
+	}
 	if err := ensureSkillVersionBaseline(r.Context(), qtx, skill.ID); err != nil {
 		slog.Warn("skill version baseline failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to update skill")
@@ -2543,7 +2598,7 @@ func (h *Handler) UpsertSkillFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req CreateSkillFileRequest
+	var req UpsertSkillFileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -2557,8 +2612,11 @@ func (h *Handler) UpsertSkillFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "SKILL.md is reserved for the primary skill content")
 		return
 	}
-	if err := validateSkillWriteBudget("", []CreateSkillFileRequest{req}); err != nil {
+	if err := validateSkillWriteBudget("", []CreateSkillFileRequest{req.CreateSkillFileRequest}); err != nil {
 		writeError(w, http.StatusRequestEntityTooLarge, err.Error())
+		return
+	}
+	if !validSkillBaseRevision(w, req.BaseRevision) {
 		return
 	}
 
@@ -2570,6 +2628,9 @@ func (h *Handler) UpsertSkillFile(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
 
+	if !checkSkillBaseRevision(w, r, qtx, skill.ID, req.BaseRevision) {
+		return
+	}
 	// The baseline runs before TouchSkill: it locks the skill row (the same
 	// lock TouchSkill and UpdateSkill take, so lock order is unchanged) and
 	// stamps a pre-versioning skill's baseline with its real updated_at.
@@ -2650,6 +2711,19 @@ func (h *Handler) DeleteSkillFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "skill file not found")
 		return
 	}
+	// DELETE carries no body, so the precondition travels as a query param.
+	var baseRevision *int64
+	if raw := strings.TrimSpace(r.URL.Query().Get("base_revision")); raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid base_revision")
+			return
+		}
+		baseRevision = &n
+	}
+	if !validSkillBaseRevision(w, baseRevision) {
+		return
+	}
 
 	tx, err := bindingtx.Begin(r.Context(), h.TxStarter, bindingtx.Workspaces(skill.WorkspaceID))
 	if err != nil {
@@ -2659,6 +2733,9 @@ func (h *Handler) DeleteSkillFile(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
 
+	if !checkSkillBaseRevision(w, r, qtx, skill.ID, baseRevision) {
+		return
+	}
 	if err := ensureSkillVersionBaseline(r.Context(), qtx, skill.ID); err != nil {
 		slog.Warn("skill version baseline failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to delete skill file")

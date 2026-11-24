@@ -11,7 +11,7 @@ import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@multica/ui/components/ui/dialog";
 import { useT } from "../../i18n";
 
-export function ProjectKnowledgeSection({ projectId, resources, runtimes = [] }: { projectId: string; resources: ProjectResource[]; runtimes?: AgentRuntime[] }) {
+export function ProjectKnowledgeSection({ projectId, resources, runtimes = [], readOnly = false }: { projectId: string; resources: ProjectResource[]; runtimes?: AgentRuntime[]; readOnly?: boolean }) {
   const { t } = useT("projects");
   const wsId = useWorkspaceId();
   const userId = useAuthStore((state) => state.user?.id);
@@ -26,7 +26,7 @@ export function ProjectKnowledgeSection({ projectId, resources, runtimes = [] }:
   const registerCommand = `multica --workspace-id ${wsId} knowledge register file /absolute/notes.md --owner-id ${userId ?? "<owner-id>"} --allow-read --approve-context`;
 
   async function attach() {
-    if (!registration || ref?.owner_id !== userId) return;
+    if (readOnly || !registration || ref?.owner_id !== userId) return;
     setError(null);
     try {
       const created = await create.mutateAsync(registration);
@@ -39,6 +39,7 @@ export function ProjectKnowledgeSection({ projectId, resources, runtimes = [] }:
   }
 
   async function detach(id: string) {
+    if (readOnly) return;
     setRemoving(id);
     setError(null);
     try {
@@ -58,13 +59,13 @@ export function ProjectKnowledgeSection({ projectId, resources, runtimes = [] }:
       {resources.length > 0 && <p className="pl-2 text-caption text-muted-foreground">{t(($) => $.knowledge.verify_at_run)}</p>}
       <div className="max-h-96 space-y-2 overflow-y-auto pl-2">
         {resources.map((resource) => (
-          <KnowledgeRow key={`${resource.id}:${resource.resource_type}:${JSON.stringify(resource.resource_ref)}`} resource={resource} projectId={projectId} runtimes={runtimes} removing={removing !== null} onRemove={() => void detach(resource.id)} />
+          <KnowledgeRow key={`${resource.id}:${resource.resource_type}:${JSON.stringify(resource.resource_ref)}`} resource={resource} projectId={projectId} runtimes={runtimes} removing={removing !== null} readOnly={readOnly} onRemove={() => void detach(resource.id)} />
         ))}
       </div>
       {error && !open && <p role="alert" className="text-caption text-destructive">{error}</p>}
-      <Dialog open={open} onOpenChange={(value) => { if (!create.isPending) { setOpen(value); setError(null); } }}>
+      {!readOnly && <Dialog open={open} onOpenChange={(value) => { if (!create.isPending) { setOpen(value); setError(null); } }}>
         <DialogTrigger render={<Button variant="ghost" size="sm" />}>{t(($) => $.knowledge.add)}</DialogTrigger>
-        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-lg max-h-[85%] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t(($) => $.knowledge.add)}</DialogTitle>
             <DialogDescription>{t(($) => $.knowledge.registration_hint)}</DialogDescription>
@@ -87,12 +88,12 @@ export function ProjectKnowledgeSection({ projectId, resources, runtimes = [] }:
             <Button disabled={!registration || ref?.owner_id !== userId || create.isPending} aria-busy={create.isPending} onClick={() => void attach()}>{t(($) => $.knowledge.attach)}</Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+      </Dialog>}
     </section>
   );
 }
 
-function KnowledgeRow({ resource, projectId, runtimes, removing, onRemove }: { resource: ProjectResource; projectId: string; runtimes: AgentRuntime[]; removing: boolean; onRemove: () => void }) {
+function KnowledgeRow({ resource, projectId, runtimes, removing, readOnly, onRemove }: { resource: ProjectResource; projectId: string; runtimes: AgentRuntime[]; removing: boolean; readOnly: boolean; onRemove: () => void }) {
   const { t } = useT("projects");
   const ref = projectKnowledgeRef(resource.resource_ref);
   const userId = useAuthStore((state) => state.user?.id);
@@ -124,7 +125,7 @@ function KnowledgeRow({ resource, projectId, runtimes, removing, onRemove }: { r
       <p>{label}</p>
       {remedy && <p className="text-muted-foreground">{remedy}</p>}
       {check.isError && <p role="alert" className="text-destructive">{check.error instanceof Error ? check.error.message : t(($) => $.knowledge.check_failed)}</p>}
-      {ref?.owner_id === userId && <Button variant="outline" size="xs" disabled={check.isPending} aria-busy={check.isPending} onClick={() => check.mutate([resource.id])}>
+      {!readOnly && ref?.owner_id === userId && <Button variant="outline" size="xs" disabled={check.isPending} aria-busy={check.isPending} onClick={() => check.mutate([resource.id])}>
         {check.isPending ? t(($) => $.knowledge.checking) : t(($) => $.knowledge.check)}
       </Button>}
       {status?.status !== "stale" && status?.status !== "missing" && <details>
@@ -136,7 +137,7 @@ function KnowledgeRow({ resource, projectId, runtimes, removing, onRemove }: { r
         <pre className="whitespace-pre-wrap text-micro">{JSON.stringify(resource.resource_ref, null, 2)}</pre>
         {status && <pre className="whitespace-pre-wrap text-micro">{JSON.stringify(status, null, 2)}</pre>}
       </details>
-      <Button variant="ghost" size="xs" disabled={removing} onClick={onRemove}>{t(($) => $.knowledge.remove)}</Button>
+      {!readOnly && <Button variant="ghost" size="xs" disabled={removing} onClick={onRemove}>{t(($) => $.knowledge.remove)}</Button>}
     </article>
   );
 }

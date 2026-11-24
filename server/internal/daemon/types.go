@@ -74,6 +74,9 @@ type IssueStatusData struct {
 // observer's — and goes into the per-turn prompt as is.
 type ProjectWorkflowData struct {
 	Brief string `json:"brief"`
+	// StatusMap marks a status-map brief (MUL-9913); an older server sends
+	// the per-step command brief and leaves it false.
+	StatusMap bool `json:"status_map,omitempty"`
 }
 
 // Task represents a claimed task from the server.
@@ -175,6 +178,13 @@ type Task struct {
 	DelegationID                  string                   `json:"delegation_id,omitempty"`
 	DelegationTitle               string                   `json:"delegation_title,omitempty"`
 	DelegationInstructions        string                   `json:"delegation_instructions,omitempty"`
+	DocID                         string                   `json:"doc_id,omitempty"`                  // non-empty for doc discussion tasks (MUL-9933)
+	DocThreadID                   string                   `json:"doc_thread_id,omitempty"`           // the discussion's first comment; replies go under it
+	DocCommentID                  string                   `json:"doc_comment_id,omitempty"`          // the comment that triggered the run
+	DocTitle                      string                   `json:"doc_title,omitempty"`               // the doc's title
+	DocThreadQuote                string                   `json:"doc_thread_quote,omitempty"`        // the doc text the discussion is about
+	DocCommentContent             string                   `json:"doc_comment_content,omitempty"`     // the triggering comment; empty when it was deleted before the claim
+	DocCommentAuthorName          string                   `json:"doc_comment_author_name,omitempty"` // who wrote the triggering comment
 
 	ChatSource *protocol.ChatSource `json:"chat_source,omitempty"`
 	// ChatFeishuSource is the Feishu ids of the message a Feishu chat task

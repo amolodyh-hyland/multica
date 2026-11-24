@@ -74,7 +74,7 @@ export function ChatFolderAttachment({ files, onSelectFile, onClose }: {
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-h-[85vh]">
+      <DialogContent className="max-h-[85%]">
         <DialogHeader>
           <DialogTitle>{t(($) => $.folder.title)}</DialogTitle>
           <DialogDescription>{t(($) => $.folder.description)}</DialogDescription>

@@ -290,6 +290,7 @@ export function AgentDetailInspector({
             <SettingsCard>
               <SettingsRow
                 label={t(($) => $.inspector.prop_runtime)}
+                description={qoderRuntime ? undefined : t(($) => $.inspector.runtime_switch_hint)}
                 size="select-wide"
               >
                 <RuntimePicker

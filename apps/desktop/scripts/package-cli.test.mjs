@@ -20,7 +20,7 @@ beforeEach(() => {
   mkdirSync(bin);
   writeFileSync(marker, "");
   writeFileSync(voiceMarker, "");
-  for (const script of ["bundle-cli.mjs", "package.mjs"]) {
+  for (const script of ["bundle-cli.mjs", "bundle-dictation.mjs", "package.mjs"]) {
     copyFileSync(fileURLToPath(new URL(script, import.meta.url)), join(scripts, script));
   }
   // Record staging without loading the native engine or fetching packages.

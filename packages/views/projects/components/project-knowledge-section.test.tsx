@@ -17,13 +17,24 @@ const ref = {
   entry_id: "entry1", content_hash: `sha256:${"a".repeat(64)}`, format: "knowledge-text-v1" as const, entry_point: "notes.md",
 };
 const resource: ProjectResource = { id: "resource1", project_id: "project1", workspace_id: "workspace1", resource_type: "knowledge_file", resource_ref: ref, label: null, position: 0, created_by: "owner1", created_at: "2026-10-23T00:00:00Z" };
-function renderSection(resources: ProjectResource[] = [], runtimes: AgentRuntime[] = []) {
+function renderSection(resources: ProjectResource[] = [], runtimes: AgentRuntime[] = [], readOnly = false) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  const view = (items: ProjectResource[]) => <QueryClientProvider client={qc}><ProjectKnowledgeSection projectId="project1" resources={items} runtimes={runtimes} /></QueryClientProvider>;
+  const view = (items: ProjectResource[]) => <QueryClientProvider client={qc}><ProjectKnowledgeSection projectId="project1" resources={items} runtimes={runtimes} readOnly={readOnly} /></QueryClientProvider>;
   const rendered = renderWithI18n(view(resources));
   return { ...rendered, rerenderSection: (items: ProjectResource[]) => rendered.rerender(view(items)) };
 }
 beforeEach(() => { vi.clearAllMocks(); });
+
+it("keeps guest knowledge references visible without mutation or machine-check controls", () => {
+  renderSection([resource], [], true);
+  expect(screen.getByText("notes.md")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Add knowledge reference" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Remove reference" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Check status" })).not.toBeInTheDocument();
+  expect(api.createProjectResource).not.toHaveBeenCalled();
+  expect(api.deleteProjectResource).not.toHaveBeenCalled();
+  expect(api.checkProjectKnowledgeStatus).not.toHaveBeenCalled();
+});
 
 it("works without resources and keeps context separate from execution", () => {
   renderSection();

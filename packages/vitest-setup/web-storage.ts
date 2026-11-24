@@ -6,7 +6,7 @@
 function createMemoryStorage(): Storage {
   const values = new Map<string, string>();
 
-  return {
+  const storage = {
     get length() {
       return values.size;
     },
@@ -20,6 +20,16 @@ function createMemoryStorage(): Storage {
       values.set(key, String(value));
     },
   };
+
+  // Native Storage enumerates persisted keys, not its API methods. Cleanup
+  // uses that enumeration to remove drafts for workspaces absent from cache.
+  return new Proxy(storage, {
+    ownKeys: () => Array.from(values.keys()),
+    getOwnPropertyDescriptor: (_target, key) =>
+      typeof key === "string" && values.has(key)
+        ? { configurable: true, enumerable: true, value: values.get(key) }
+        : undefined,
+  });
 }
 
 // Suites on the node environment have no DOM storage to stand in for.
