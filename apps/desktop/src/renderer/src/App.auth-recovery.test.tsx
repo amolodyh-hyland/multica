@@ -178,6 +178,7 @@ beforeEach(() => {
       onContextMenu: () => () => {},
       onInviteOpen: () => () => {},
       onIssueOpen: () => () => {},
+      onIssueUrlOpen: () => () => {},
       onSystemLocaleChanged: () => () => {},
       reportAuthSession: vi.fn(),
       runtimeConfig: {
