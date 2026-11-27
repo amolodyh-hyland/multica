@@ -53,6 +53,10 @@ func TestIssueWakeupAuthorizationUsesEffectiveRuntimeAndKeepsRefusals(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := s.authorize(ctx, f.q, agent.WorkspaceID, owner, issue, agent); !errors.Is(err, ErrWakeupAgentNotInvocable) {
+		t.Fatalf("dormant override without its agent assigned: %v", err)
+	}
+	f.Exec(t, "UPDATE issue SET assignee_type='agent',assignee_id=$2 WHERE id=$1", issue, agentID)
 	if err := s.authorize(ctx, f.q, agent.WorkspaceID, owner, issue, agent); err != nil {
 		t.Fatalf("authorized issue override with no default: %v", err)
 	}
