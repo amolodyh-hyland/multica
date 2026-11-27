@@ -17,6 +17,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/db/bindingtx"
 
 	"github.com/multica-ai/multica/server/internal/channelmedia"
+	"github.com/multica-ai/multica/server/internal/chattitle"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
@@ -1060,7 +1061,7 @@ func (s *ChatSession) bindMediaRefs(ctx context.Context, qtx SessionQueries, in 
 			if strings.TrimSpace(source) == "" {
 				source = mediaTypeTitle(media.ref.Type)
 			}
-			title := DeriveChatTitle(source)
+			title := chattitle.DeriveFromFilename(source)
 			if title == "" {
 				continue
 			}

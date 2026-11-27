@@ -26,6 +26,11 @@ var ErrWakeupInput = errors.New("invalid wakeup")
 var ErrWakeupConflict = errors.New("wakeup changed; refresh and retry")
 var ErrWakeupForbidden = errors.New("wakeup permission denied")
 
+// ErrWakeupAgentNotInvocable is the ErrWakeupForbidden case where the rule's
+// agent is missing, archived, has no runtime, or may not be run by the member,
+// so a client can point the user at the agent instead of at the rule.
+var ErrWakeupAgentNotInvocable = fmt.Errorf("%w: the agent cannot be run", ErrWakeupForbidden)
+
 // WakeupEventTypes is independent of plugin availability. These facts have
 // transactional capture into matching receipts, including non-HTTP writers.
 var WakeupEventTypes = eventcontract.WakeupTypes
@@ -323,7 +328,7 @@ func (s *IssueWakeupService) EditInstruction(ctx context.Context, issueID, id, m
 	}
 	agent, err := q.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: w.AgentID, WorkspaceID: issue.WorkspaceID})
 	if err != nil {
-		return ErrWakeupForbidden
+		return ErrWakeupAgentNotInvocable
 	}
 	if err = s.authorize(ctx, q, issue.WorkspaceID, member, issue.ID, agent); err != nil {
 		return err
@@ -470,7 +475,7 @@ func (s *IssueWakeupService) save(ctx context.Context, issueID, member, source, 
 	}
 	agent, err := q.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: agentID, WorkspaceID: issue.WorkspaceID})
 	if err != nil {
-		return out, ErrWakeupForbidden
+		return out, ErrWakeupAgentNotInvocable
 	}
 	if err = s.authorize(ctx, q, issue.WorkspaceID, member, issue.ID, agent); err != nil {
 		return out, err
@@ -633,14 +638,7 @@ func (s *IssueWakeupService) save(ctx context.Context, issueID, member, source, 
 }
 
 func (s *IssueWakeupService) authorize(ctx context.Context, q *db.Queries, ws, member, issueID pgtype.UUID, a db.Agent) error {
-	if !member.Valid || a.ArchivedAt.Valid {
-		return ErrWakeupForbidden
-	}
-	effective, err := q.GetIssueAgentRuntime(ctx, db.GetIssueAgentRuntimeParams{AgentID: a.ID, IssueID: issueID})
-	if err != nil {
-		return err
-	}
-	if !effective.Valid {
+	if !member.Valid {
 		return ErrWakeupForbidden
 	}
 	if _, err := q.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{UserID: member, WorkspaceID: ws}); err != nil {
@@ -649,8 +647,15 @@ func (s *IssueWakeupService) authorize(ctx context.Context, q *db.Queries, ws, m
 		}
 		return err
 	}
-	if !CanMemberInvokeAgent(ctx, q, a, member, ws) {
-		return ErrWakeupForbidden
+	if a.ArchivedAt.Valid || !CanMemberInvokeAgent(ctx, q, a, member, ws) {
+		return ErrWakeupAgentNotInvocable
+	}
+	effective, err := q.GetIssueAgentRuntime(ctx, db.GetIssueAgentRuntimeParams{AgentID: a.ID, IssueID: issueID})
+	if err != nil {
+		return err
+	}
+	if !effective.Valid {
+		return ErrWakeupAgentNotInvocable
 	}
 	return nil
 }

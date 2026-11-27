@@ -256,6 +256,10 @@
     "duplicate": "建立副本",
     "delete": "刪除"
   },
+  "plain_text": {
+    "notice": "內容過長，以純文字顯示。",
+    "download": "下載為 .txt"
+  },
   "dictation": {
     "stopping": "正在停止麥克風…",
     "start": "在此裝置上聽寫",

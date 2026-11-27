@@ -36,6 +36,35 @@ func parseTestUUID(t *testing.T, s string) pgtype.UUID {
 	}
 	return id
 }
+
+func TestIssueWakeupAuthorizationUsesEffectiveRuntimeAndKeepsRefusals(t *testing.T) {
+	f, s, issue, agentID := wakeFixture(t)
+	ctx := context.Background()
+	owner := parseTestUUID(t, f.UserID)
+	runtimeID := f.Runtime(t, "wakeup issue override")
+	f.InsertNoID(t, "issue_runtime_override", testutil.Cols{
+		"workspace_id": f.WorkspaceID, "issue_id": issue, "agent_id": agentID,
+		"runtime_id": runtimeID, "updated_by": owner,
+	}, "issue_id=$1", issue)
+	f.Exec(t, "UPDATE agent SET runtime_id=NULL WHERE id=$1", agentID)
+	agent, err := f.q.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+		ID: parseTestUUID(t, agentID), WorkspaceID: parseTestUUID(t, f.WorkspaceID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.authorize(ctx, f.q, agent.WorkspaceID, owner, issue, agent); err != nil {
+		t.Fatalf("authorized issue override with no default: %v", err)
+	}
+	outsider := pgtype.UUID{Bytes: [16]byte{99}, Valid: true}
+	if err := s.authorize(ctx, f.q, agent.WorkspaceID, outsider, issue, agent); !errors.Is(err, ErrWakeupForbidden) {
+		t.Fatalf("nonmember received override access: %v", err)
+	}
+	f.Exec(t, "DELETE FROM issue_runtime_override WHERE issue_id=$1", issue)
+	if err := s.authorize(ctx, f.q, agent.WorkspaceID, owner, issue, agent); !errors.Is(err, ErrWakeupAgentNotInvocable) {
+		t.Fatalf("missing effective runtime: %v", err)
+	}
+}
 func wakeCreate(t *testing.T, f principalFixture, s *IssueWakeupService, issue pgtype.UUID, in WakeupInput) db.IssueWakeup {
 	t.Helper()
 	w, e := s.Create(context.Background(), issue, parseTestUUID(t, f.UserID), pgtype.UUID{}, in)
