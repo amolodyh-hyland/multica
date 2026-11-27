@@ -39,6 +39,7 @@ import { useStopRunsBeforeSend } from "./use-stop-runs-before-send";
 import { useCommentUploads } from "./use-comment-uploads";
 import { useQuickActionMenu } from "../hooks/use-quick-action-menu";
 import { useStickyComposer } from "../hooks/use-sticky-composer";
+import { registerComposerFocus } from "./composer-focus";
 
 interface CommentInputProps {
   issueId: string;
@@ -119,6 +120,9 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation, annotat
     editorRef,
   });
   const dictation = useComposerDictation({ editorRef, resetKey: draftKey, activate: lazy.activate, ready: lazy.ready });
+  const activateRef = useRef(lazy.activate);
+  activateRef.current = lazy.activate;
+  useEffect(() => registerComposerFocus(issueId, () => activateRef.current()), [issueId]);
   // Inactive shells must not mount query observers or duplicate cold reads.
   const quickActionMenu = useQuickActionMenu(issueId, { enabled: lazy.active, triggerPreview, previewContent });
   const { isDragOver, dropZoneProps } = useFileDropZone({

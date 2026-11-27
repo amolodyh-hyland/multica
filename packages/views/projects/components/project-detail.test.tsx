@@ -166,8 +166,14 @@ vi.mock("../../editor", () => ({
   TitleEditor: ({ defaultValue }: { defaultValue: string }) => (
     <div>{defaultValue}</div>
   ),
-  ContentEditor: ({ value, placeholder, onUpdate }: { value: string; placeholder: string; onUpdate: (value: string) => void }) => (
-    <textarea aria-label={placeholder} defaultValue={value} onChange={(event) => onUpdate(event.target.value)} />
+  ContentEditor: ({ value, placeholder, onUpdate, flushPendingOnUnmount }: { value: string; placeholder: string; onUpdate: (value: string) => void; flushPendingOnUnmount?: boolean }) => (
+    <textarea
+      data-testid={flushPendingOnUnmount ? "project-description" : undefined}
+      data-flush-on-unmount={flushPendingOnUnmount ? "true" : undefined}
+      aria-label={placeholder}
+      defaultValue={value}
+      onChange={(event) => onUpdate(event.target.value)}
+    />
   ),
   ReadonlyContent: ({ content }: { content: string }) => <div>{content}</div>,
 }));
@@ -356,6 +362,13 @@ describe("ProjectDetail tabs", () => {
     expect(screen.queryByTestId("issue-view-header")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Description" })).toBeInTheDocument();
     expect(within(screen.getByRole("complementary")).queryByText("Description")).not.toBeInTheDocument();
+  });
+
+  it("saves a pending description edit when the tab or page closes", () => {
+    renderProjectDetail();
+    // Switching tabs unmounts the editor, so a still-debounced edit has to
+    // flush then; ContentEditor's own tests cover the flush itself.
+    expect(screen.getByTestId("project-description")).toHaveAttribute("data-flush-on-unmount", "true");
   });
 
   it("opens the panel with the properties, above the insights", () => {
